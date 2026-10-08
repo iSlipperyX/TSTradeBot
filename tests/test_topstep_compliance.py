@@ -279,3 +279,47 @@ def test_xfa_payout_progress():
 def test_session_must_end_before_topstep_flat_time():
     with pytest.raises(ValueError, match="15:10"):
         SessionConfig(flatten_at="15:09")
+
+
+# ------------------------------------------------------------------ preflight
+
+def _preflight(tmp_path, accounts=None, **cfg):
+    import httpx
+
+    from topstep_bot.api.rest import ProjectXClient
+    from topstep_bot.config import Secrets
+    from topstep_bot.preflight import run_preflight
+
+    from .conftest import run
+    from .test_live_runner import FakeTopstepX
+
+    fake = FakeTopstepX()
+    original = fake.handler
+
+    def handler(request):
+        if accounts is not None and request.url.path == "/api/Account/search":
+            return httpx.Response(200, json={"success": True, "accounts": accounts})
+        return original(request)
+
+    config = BotConfig.model_validate({"data_dir": str(tmp_path), "news": {"enabled": False}, **cfg})
+    client = ProjectXClient("u", "k", transport=httpx.MockTransport(handler))
+    try:
+        report = run(run_preflight(config, Secrets(username="u", api_key="k"), client=client, run_backtests=False))
+    finally:
+        run(client.close())
+    return report, {c.name: c for c in report.checks}
+
+
+def test_preflight_refuses_live_funded_accounts(tmp_path):
+    report, checks = _preflight(tmp_path, [{"id": 7, "name": "LFA-50K-1", "balance": 10_000.0, "canTrade": True,
+                                             "simulated": False}])
+    assert report.verdict == "NOT READY"
+    assert "Live" in checks["Account type"].detail
+
+
+def test_preflight_reports_topstep_rules(tmp_path):
+    report, checks = _preflight(tmp_path, account={"topstep_daily_loss_limit": True})
+    assert "$1,000.00" in checks["Topstep Daily Loss Limit"].detail
+    assert "$1,650.00" in checks["Consistency Target"].detail
+    assert "50 MNQ" in checks["Position limit"].detail
+    assert "Your computer" in checks

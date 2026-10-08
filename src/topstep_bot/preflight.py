@@ -18,7 +18,8 @@ from pathlib import Path
 from topstep_bot.config import BotConfig, Secrets
 from topstep_bot.factory import starting_balance
 from topstep_bot.instruments import SPECS, offline_contract
-from topstep_bot.risk.topstep import PLANS, LossLimitTracker
+from topstep_bot.risk.guards import api_trading_block, hosting_warning
+from topstep_bot.risk.topstep import PLANS, LossLimitTracker, max_contracts_allowed, product_limit
 
 UTC = timezone.utc
 OK, WARN, FAIL, INFO = "ok", "warn", "fail", "info"
@@ -106,6 +107,36 @@ async def run_preflight(
         rep.add(WARN, "Daily loss limit", f"{_money(cfg.risk.personal_daily_loss_limit)} is over half your MLL")
     else:
         rep.add(OK, "Daily loss limit", f"{_money(cfg.risk.personal_daily_loss_limit)} per day")
+    # ---- Topstep rules that depend on this computer and the settings
+    hosted = hosting_warning()
+    if hosted:
+        rep.add(WARN, "Your computer", f"{hosted}. Topstep requires automated trading to run from your own personal "
+                "computer - a VPS, VPN or remote server can get the account removed. Ignore this if it is your own PC")
+    else:
+        rep.add(OK, "Your computer", "looks like a personal computer (Topstep prohibits VPS/VPN/remote servers)")
+    dll = cfg.account.topstep_daily_loss_limit
+    if dll is not None:
+        rep.add(OK, "Topstep Daily Loss Limit", f"{_money(dll)}: the bot stops new trades at 90% of it and closes trades "
+                f"at 95%; your own limit {_money(cfg.risk.personal_daily_loss_limit)} comes first")
+    else:
+        rep.add(INFO, "Topstep Daily Loss Limit", "none configured. If you added one at checkout, set "
+                "account.topstep_daily_loss_limit: true")
+    if cfg.account.stage == "combine":
+        cap = cfg.risk.daily_profit_target or 0.4 * plan.profit_target
+        rep.add(OK if cap < plan.consistency_day_limit else WARN, "Consistency Target",
+                f"best day must stay at or below {_money(plan.consistency_day_limit)} (55% of the target); the bot stops "
+                f"opening trades at {_money(cap)}" + (" and closes out at 50%" if cfg.risk.consistency_guard else
+                                                       " (consistency_guard is OFF)"))
+    root = cfg.instrument.symbol
+    spec = SPECS.get(root)
+    if spec is None:
+        rep.add(WARN, "Product", f"{root} has no built-in spec (fees, trading hours) - double-check it is allowed on Topstep")
+    else:
+        cap_now = max_contracts_allowed(plan, cfg.account.stage, starting_balance(cfg), root, offline_contract(root).is_micro)
+        extra = f" (Topstep's product limit for {root})" if product_limit(root, plan) is not None else ""
+        rep.add(OK, "Position limit", f"at most {cap_now} {root} contract(s){extra}"
+                + (" - grows with the Scaling Plan" if cfg.account.stage == "express" else ""))
+
     if cfg.risk.ramp_up_days:
         rep.add(INFO, "Ramp-up", f"first {cfg.risk.ramp_up_days} live day(s) on a new account risk "
                 f"{cfg.risk.ramp_up_risk_fraction:.0%} of normal ({_money(cfg.risk.risk_per_trade * cfg.risk.ramp_up_risk_fraction)}/trade)")
@@ -131,6 +162,10 @@ async def run_preflight(
             return rep
         rep.account_name = account.name
         rep.add(OK, "Login", f"connected as {secrets.username}")
+        blocked = api_trading_block(account)
+        if blocked:
+            rep.add(FAIL, "Account type", blocked)
+            return rep
         rep.add(OK if account.can_trade else FAIL, "Account", f"{account.name} (id {account.id}), balance {_money(account.balance)}"
                 + ("" if account.can_trade else " - NOT allowed to trade right now"))
         hint_plan, hint_stage = account_hints(account.name)
@@ -139,13 +174,9 @@ async def run_preflight(
             mismatch.append(f"plan looks like {hint_plan}")
         if hint_stage and hint_stage != cfg.account.stage:
             mismatch.append(f"type looks like {hint_stage}")
-        if "DLL" in account.name.upper():
-            dll = cfg.account.topstep_daily_loss_limit or plan.legacy_daily_loss_limit
-            personal = cfg.risk.personal_daily_loss_limit
-            rep.add(OK if personal < dll else FAIL, "Topstep Daily Loss Limit",
-                    f"this account appears to have a Topstep DLL of {_money(dll)}; your personal limit "
-                    f"{_money(personal)} " + ("stops the bot well before it" if personal < dll else
-                                              "is NOT below it - lower risk.personal_daily_loss_limit"))
+        if "DLL" in account.name.upper() and cfg.account.topstep_daily_loss_limit is None:
+            rep.add(WARN, "Topstep Daily Loss Limit", f"the account name suggests a Topstep DLL of {_money(plan.daily_loss_limit)}; "
+                    "the bot will enforce it - set account.topstep_daily_loss_limit: true to make that explicit")
         if mismatch:
             rep.add(WARN, "Account type", f"config says {cfg.account.plan} {cfg.account.stage}, but the account name suggests "
                     + " and ".join(mismatch) + " - fix account.plan / account.stage")
