@@ -88,7 +88,7 @@ class InstrumentConfig(_Section):
 
 
 class StrategyConfig(_Section):
-    name: str = "orb"
+    name: str = "noise_breakout"
     params: dict[str, Any] = Field(default_factory=dict)
 
 

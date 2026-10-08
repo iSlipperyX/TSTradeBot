@@ -46,7 +46,7 @@ def test_backtest_is_deterministic():
 
 
 def test_report_renders():
-    cfg = BotConfig()
+    cfg = BotConfig.model_validate({"strategy": {"name": "orb"}})
     res = run(run_backtest(cfg, BARS, offline_contract("MNQ")))
     html = build_report(res)
     assert "Opening Range Breakout" in html and "const DATA" in html

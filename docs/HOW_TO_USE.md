@@ -501,10 +501,49 @@ let training do it) and override any parameter under `strategy.params`, e.g.
 ```yaml
 strategy:
   name: noise_breakout
-  params: {exit_mode: checkpoint}
+  params: {band_mult: 1.25}
 ```
 
-<!-- RESEARCH -->
+### What 10½ years of real data says
+
+Every strategy was tested on **real 1-minute Nasdaq-100 futures data from January 2015 to July
+2025** (NQ prices, traded as MNQ), with the bot's own trading code, $150 risk per trade, the default
+risk limits, TopstepX fees and 1 tick of slippage per fill. Then two harder tests:
+
+- **Walk-forward (out-of-sample):** for each year 2018–2025, settings were chosen using only the
+  three years before it, then traded on that year "blind" — exactly what `train` does.
+- **Robustness:** the same settings on a different market (S&P 500 futures, Dec 2022–Jul 2024), on
+  the most recent 60 days (Aug–Oct 2026), and with 2–3 ticks of slippage instead of 1.
+
+| Strategy | Walk-forward 2018–2025 | Positive years | S&P futures | 3 ticks slippage | Verdict |
+|---|---|---|---|---|---|
+| `noise_breakout` (checkpoint exits) | +$9.6k, PF 1.19, max DD $2.5k | 5 of 8 | **profitable in both periods** | still profitable | **Most robust — the default** |
+| `orb_momentum` | **+$50.4k**, PF 1.30, max DD $7.6k | **8 of 8** | lost money in 2023–24 | barely breakeven over 10 years | Strongest on Nasdaq, fragile elsewhere |
+| `orb` | +$10.9k, PF 1.11 | 6 of 8 | lost money | lost money | Weak |
+| `ema_trend` | +$5.8k, PF 1.06 | 5 of 8 | – | – | Weak |
+| `late_day_momentum` | −$3.6k, PF 0.88 | 3 of 8 | – | – | Did not hold up |
+| `vwap_reversion` | −$8.4k, PF 0.61 | 0 of 8 | – | – | Lost every year — avoid |
+
+Over the full 2015–2025 period with fixed settings, `noise_breakout` (checkpoint exits) made
++$18.6k with a $4.6k maximum drawdown and was profitable in 9 of 11 years; the older per-bar
+trailing exit made +$10.4k with nearly twice the drawdown. On the most recent year of data
+(Jul 2024–Jul 2025) it made +$3,300 over 100 trades with a $550 maximum drawdown.
+
+What this means for you:
+
+- **No strategy is a sure thing.** Every strategy had losing years with fixed settings, and the past
+  two months were mixed for all of them (too few trades to mean much either way).
+- **`orb_momentum` lives on wide stops.** Its edge is real on Nasdaq futures since 2018, when its
+  stops (10% of the day's average range) are well over 100 ticks wide; where they are only ~20 ticks
+  (S&P futures, Nasdaq before 2018) costs eat the edge. Trade it on MNQ/NQ only, and check it with
+  `risk.slippage_ticks: 2`.
+- **Choosing a strategy because it looked best recently doesn't work well.** Picking whichever
+  strategy had the best past three years chose `noise_breakout` every year and made +$9.6k; sticking
+  with `orb_momentum` made five times more. That is why `train` judges strategies on data they
+  never saw, and why you should re-train every month or two rather than chase last week's winner.
+- These results were produced with real exchange data but simulated fills. Expect live results to
+  be somewhat worse.
+
 
 ### `noise_breakout` — Intraday Momentum (Noise Area)
 
@@ -514,23 +553,24 @@ open over the last `lookback_days` (14) sessions; that average forms a "noise ba
 open. At each half-hour checkpoint, a close above the band goes long and below goes short. No fixed
 target — winners run until the session flatten time. Needs about 15 trading days of history.
 
-Two exit styles (`exit_mode`):
+This is the default strategy. Two exit styles (`exit_mode`):
 
-- `checkpoint` — as in the paper: the trailing exit (the band or VWAP, whichever is tighter) is only
-  judged at the half-hour checkpoints, while a wider safety stop (`stop_atr` × ATR) stays at the
-  broker the whole time.
-- `trail` (default) — the broker stop itself trails the band/VWAP on every bar. Tighter, but it gets
-  shaken out of good trades much more often.
+- `checkpoint` (default) — as in the paper: the trailing exit (the band or VWAP, whichever is
+  tighter) is only judged at the half-hour checkpoints, while a wider safety stop (`stop_atr` × ATR)
+  stays at the broker the whole time.
+- `trail` — the broker stop itself trails the band/VWAP on every bar. Tighter, but it gets shaken
+  out of good trades much more often (see the table above).
 
 ### `orb_momentum` — Opening Range Momentum (5-minute ORB)
 
 Adapted from Zarattini & Aziz (2023), *"Can Day Trading Really Be Profitable? Evidence of Sustainable
 Long-term Profits from Opening Range Breakout (ORB) Day Trading Strategy vs. Benchmark in the US
-Stock Market"*. If the first 5-minute candle after the 8:30 CT open closes up, buy right away (short
-if it closes down; skip a doji). The stop goes at the other end of that candle (`stop_mode: range`)
-or at `atr_stop_frac` × the average daily range (`stop_mode: atr`, as in the authors' 2024
-follow-up); the target is `target_r` × the risk (10 by default — most trades are simply held until
-the session flatten time). One trade a day.
+Stock Market"*, and its 2024 follow-up. If the first 5-minute candle after the 8:30 CT open closes up,
+buy right away (short if it closes down; skip a doji). By default the stop is `atr_stop_frac` (10%)
+× the average daily range of the last 14 sessions and the trade is held until the session flatten
+time (`target_r: 0`), as in the 2024 follow-up. The 2023 paper's version — stop at the other end of
+the candle, target 10× the risk — is `stop_mode: range, target_r: 10`. One trade a day. Best on
+Nasdaq futures; see the table above before using it elsewhere.
 
 ### `late_day_momentum` — Late-Day Momentum (first & last half hour)
 
@@ -539,8 +579,10 @@ Economics. The market's move from the previous session's close to 9:00 CT (the e
 half hour) tends to continue in the last half hour of the day. At `entry_time` (14:25 CT) the bot
 enters in the direction of that morning move — optionally only if the move since 14:00 agrees
 (`confirm_with_12th`) and the morning move was at least `min_move_pct` — with a safety stop
-`stop_atr` × ATR away, and exits at the session flatten time. One trade a day, late in the session,
-so it complements the opening strategies.
+`stop_atr` × ATR away, and exits at the session flatten time. One trade a day, late in the session.
+It did **not** hold up on Nasdaq futures in testing — the effect was documented on the SPY ETF, and
+the short holding time Topstep's 15:10 deadline allows leaves little room after costs. Included so
+you can test it on your own data; don't trade it unless `train` says it held up.
 
 ### `orb` — Opening Range Breakout
 
@@ -560,7 +602,7 @@ image). Stop at `atr_stop_mult` × ATR, target at `target_r` × risk, exit on th
 
 Buys when price closes more than `band_k` standard deviations below the session VWAP, RSI is below
 `rsi_low`, and the bar closes up (a reversal bar); targets a return to VWAP with a stop just beyond
-the bar's low. Shorts are the mirror image.
+the bar's low. Shorts are the mirror image. It lost money in every year of testing — not recommended.
 
 Every strategy shares the same position sizing, risk limits and session rules — a strategy only
 decides *when* to trade and *where* the stop and target go.
@@ -880,7 +922,7 @@ instrument:
   timeframe_minutes: 5         # 1-60
 
 strategy:
-  name: orb                    # orb | orb_momentum | noise_breakout | late_day_momentum | ema_trend | vwap_reversion
+  name: noise_breakout         # noise_breakout | orb_momentum | orb | ema_trend | late_day_momentum | vwap_reversion
   params: {}
 
 risk:

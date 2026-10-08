@@ -13,9 +13,10 @@ class OpeningRangeMomentum(Strategy):
     in the US Stock Market" (SSRN 4416622), which traded QQQ.
 
     The first few minutes after the open reveal who is in control. If the opening candle closes up,
-    buy right away (short if it closes down; skip a doji). The stop goes at the other end of the
-    opening candle - or, as in the authors' 2024 follow-up, at a fraction of the average daily range -
-    and the target is far away (10R), so most trades are simply held to the session's end.
+    buy right away (short if it closes down; skip a doji). By default the stop is 10% of the 14-day
+    average daily range and the trade is held to the session's end, as in the authors' 2024
+    follow-up ("A Profitable Day Trading Strategy for The U.S. Equity Market"); the 2023 paper's
+    version (stop at the other end of the candle, 10R target) is ``stop_mode: range, target_r: 10``.
     Differences from the paper: futures instead of QQQ, fixed-dollar risk sizing, and Topstep's
     flat-by-15:10 rule (the bot exits at session.flatten_at).
     """
@@ -23,17 +24,17 @@ class OpeningRangeMomentum(Strategy):
     name = "orb_momentum"
     title = "Opening Range Momentum (5-min ORB)"
     description = (
-        "Research-based (Zarattini & Aziz 2023). Trades the direction of the first 5-minute candle after "
-        "the 8:30 CT open: up candle -> long, down candle -> short, doji -> no trade. Stop at the other end "
-        "of that candle (or a fraction of the average daily range); target 10x the risk; otherwise held "
-        "until the session flatten time. At most one trade a day."
+        "Research-based (Zarattini & Aziz 2023/2024). Trades the direction of the first 5-minute candle after "
+        "the 8:30 CT open: up candle -> long, down candle -> short, doji -> no trade. Stop at 10% of the "
+        "average daily range, held until the session flatten time. One trade a day. Strong on Nasdaq "
+        "futures since 2018 in testing, but it lost money on S&P futures and is sensitive to slippage."
     )
     defaults = {
         "range_minutes": 5,
-        "stop_mode": "range",  # range | atr
+        "stop_mode": "atr",  # atr (the 2024 follow-up) | range (the 2023 paper: the other end of the candle)
         "atr_days": 14,
         "atr_stop_frac": 0.10,  # stop_mode atr: stop distance = this x the average daily range
-        "target_r": 10.0,  # 0 = no target (hold until the session flatten time)
+        "target_r": 0,  # 0 = no target: hold until the session flatten time (the 2023 paper used 10)
         "min_body_ticks": 1,  # opening candles with a smaller body are dojis: no trade
         "buffer_ticks": 0,
         "direction": "both",

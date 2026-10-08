@@ -38,8 +38,14 @@ def ctx(close_ct, position=0):
 
 # --------------------------------------------------------- Opening Range Momentum
 
-def test_orb_momentum_trades_the_opening_candle_direction(mnq):
+def test_orb_momentum_defaults_follow_the_2024_paper(mnq):
     s = create_strategy("orb_momentum", {}, mnq, 5)
+    assert s.p["stop_mode"] == "atr" and s.p["atr_stop_frac"] == 0.10 and s.p["target_r"] == 0
+    assert s.warmup_days == 15  # needs 14 sessions for the average daily range
+
+
+def test_orb_momentum_trades_the_opening_candle_direction(mnq):
+    s = create_strategy("orb_momentum", {"stop_mode": "range", "target_r": 10}, mnq, 5)  # the 2023 paper
     s.on_new_day(DAY)
     sig = s.on_bar(bar(ct(2026, 3, 3, 8, 30), 100.0, 104.0, 99.0, 103.0), ctx(ct(2026, 3, 3, 8, 35)))
     assert sig.side == OrderSide.BUY and sig.stop_price == 99.0  # stop at the candle's low
@@ -48,7 +54,7 @@ def test_orb_momentum_trades_the_opening_candle_direction(mnq):
 
 
 def test_orb_momentum_skips_dojis_and_late_starts(mnq):
-    s = create_strategy("orb_momentum", {"min_body_ticks": 2}, mnq, 5)
+    s = create_strategy("orb_momentum", {"min_body_ticks": 2, "stop_mode": "range"}, mnq, 5)
     s.on_new_day(DAY)
     assert s.on_bar(bar(ct(2026, 3, 3, 8, 30), 100.0, 101.0, 99.0, 100.25), ctx(ct(2026, 3, 3, 8, 35))) is None
     s.on_new_day(DAY + timedelta(days=1))
@@ -112,9 +118,10 @@ def test_late_day_momentum_needs_a_previous_close_and_valid_times(mnq):
 # ------------------------------------------------- noise breakout checkpoint exits
 
 def test_noise_checkpoint_mode_keeps_safety_stop_and_never_trails(mnq):
-    s = create_strategy("noise_breakout", {"exit_mode": "checkpoint"}, mnq, 5)
+    s = create_strategy("noise_breakout", {}, mnq, 5)
+    assert s.p["exit_mode"] == "checkpoint"  # the paper's design is the default
     assert s.trailing_stop(bar(ct(2026, 3, 3, 10, 0), 1, 1, 1, 1), ctx(ct(2026, 3, 3, 10, 5), position=1)) is None
-    trail = create_strategy("noise_breakout", {}, mnq, 5)
+    trail = create_strategy("noise_breakout", {"exit_mode": "trail"}, mnq, 5)
     assert trail.p["exit_mode"] == "trail"
     with pytest.raises(ValueError, match="exit_mode"):
         create_strategy("noise_breakout", {"exit_mode": "sometimes"}, mnq, 5)
@@ -205,7 +212,7 @@ def test_candidates_skip_settings_invalid_for_the_timeframe():
 
 def test_train_end_to_end_on_synthetic_data(monkeypatch):
     monkeypatch.setitem(__import__("topstep_bot.training").training.GRIDS, "orb_momentum",
-                        [{"target_r": 0}, {"stop_mode": "atr", "atr_days": 5}])
+                        [{"target_r": 3}, {"stop_mode": "range", "target_r": 10}])
     cfg = BotConfig.model_validate({"strategy": {"name": "orb"}})
     bars = synthetic_bars("MNQ", days=100, seed=3)
     report = train(cfg, bars, offline_contract("MNQ"), strategies=["orb_momentum"], folds=2, workers=1)
@@ -219,7 +226,7 @@ def test_training_report_html_and_cli_save(tmp_path, monkeypatch, restore_loggin
     from topstep_bot import cli
     from topstep_bot.backtest.train_report import build_training_report
 
-    monkeypatch.setitem(__import__("topstep_bot.training").training.GRIDS, "orb_momentum", [{"target_r": 0}])
+    monkeypatch.setitem(__import__("topstep_bot.training").training.GRIDS, "orb_momentum", [{"target_r": 3}])
     cfg = BotConfig.model_validate({"strategy": {"name": "orb"}})
     bars = synthetic_bars("MNQ", days=100, seed=3)
     report = train(cfg, bars, offline_contract("MNQ"), strategies=["orb_momentum"], folds=2, workers=1)

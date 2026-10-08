@@ -37,7 +37,7 @@ def test_service_times_still_parse(tmp_path):
     ("risk:\n  risk_per_trade: -5\n", "risk.risk_per_trade"),
     ("strategy:\n  name: orbb\n", "Unknown strategy 'orbb'"),
     ("strategy:\n  name: orb\n  params: {target: 2}\n", "Unknown parameter(s) for 'orb': target"),
-    ("instrument:\n  timeframe_minutes: 10\nstrategy:\n  params: {range_minutes: 15}\n", "multiple of the bar timeframe"),
+    ("instrument:\n  timeframe_minutes: 10\nstrategy:\n  name: orb\n  params: {range_minutes: 15}\n", "multiple of the bar timeframe"),
     ("mode: paper\n  risk: 1\n", "not valid YAML"),
     ("- just\n- a list\n", "should contain settings"),
 ])

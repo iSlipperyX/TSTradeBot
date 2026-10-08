@@ -26,7 +26,8 @@ class LateDayMomentum(Strategy):
         "Research-based (Gao, Han, Li & Zhou 2018, Journal of Financial Economics). The move from "
         "yesterday's close to 9:00 CT tends to continue in the session's last half hour. Enters around "
         "14:25 CT in the direction of that morning move, with an ATR safety stop, and exits at the "
-        "session flatten time. At most one trade a day, late in the session."
+        "session flatten time. At most one trade a day. Did NOT hold up on Nasdaq futures 2018-2025 in "
+        "testing (the effect was found on the SPY ETF) - train it on your data before using it."
     )
     defaults = {
         "signal_end": "09:00",  # morning move = previous regular-session close -> this time (CT)

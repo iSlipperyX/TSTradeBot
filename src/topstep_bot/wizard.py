@@ -45,7 +45,7 @@ def render_config(
     account_id: int | None = None,
     symbol: str = "MNQ",
     timeframe: int = 5,
-    strategy: str = "orb",
+    strategy: str = "noise_breakout",
     risk_per_trade: float = 150,
     daily_loss: float = 500,
     max_trades: int = 4,
@@ -237,7 +237,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         [(s, f"{SPECS[s].description} - ${SPECS[s].tick_value:g}/tick") for s in SYMBOL_CHOICES],
         "MNQ",
     )
-    strategy = _pick("5. Strategy", [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "orb")
+    strategy = _pick("5. Strategy", [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "noise_breakout")
 
     # ---- risk
     mll = PLANS[plan].max_loss_limit

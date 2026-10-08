@@ -19,10 +19,10 @@ class NoiseAreaMomentum(Strategy):
     exits only at checkpoints), and fixed-risk sizing instead of volatility targeting.
 
     ``exit_mode``:
-      * "trail" - the broker stop trails the band/VWAP on every bar (tight; frequent shake-outs).
-      * "checkpoint" - as in the paper: the trailing exit is only judged at the half-hour
+      * "checkpoint" (default) - as in the paper: the trailing exit is only judged at the half-hour
         checkpoints, while a wider safety stop (``stop_atr`` x ATR) stays at the broker the whole
         time, because Topstep accounts must never be left unprotected.
+      * "trail" - the broker stop trails the band/VWAP on every bar (tight; frequent shake-outs).
     """
 
     name = "noise_breakout"
@@ -30,8 +30,9 @@ class NoiseAreaMomentum(Strategy):
     description = (
         "Research-based trend strategy (Zarattini, Aziz & Barbon 2024). Builds a 'noise band' around "
         "the day's open from the average move at each time of day over the past 14 sessions. When "
-        "price closes outside the band at a half-hour checkpoint it follows the move, trails the stop "
-        "at the band or VWAP, and is always flat by the session flatten time."
+        "price closes outside the band at a half-hour checkpoint it follows the move; it exits at a later "
+        "checkpoint if price closes back through the band or VWAP, and is always flat by the session "
+        "flatten time. The most robust strategy in testing (Nasdaq and S&P futures, 2015-2025)."
     )
     defaults = {
         "lookback_days": 14,
@@ -42,7 +43,7 @@ class NoiseAreaMomentum(Strategy):
         "stop_buffer_ticks": 4,
         "max_trades_per_day": 3,
         "direction": "both",
-        "exit_mode": "trail",  # trail | checkpoint
+        "exit_mode": "checkpoint",  # checkpoint (as in the paper) | trail
         "stop_atr": 2.0,  # exit_mode checkpoint: safety stop distance in ATRs of the bar timeframe
     }
 
