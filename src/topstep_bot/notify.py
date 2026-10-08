@@ -11,12 +11,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 import httpx
 
 from topstep_bot.config import NotificationsConfig, Secrets
 
 log = logging.getLogger(__name__)
+
+_SECRET_URL_PARTS = re.compile(r"(/bot)\d+:[\w-]+|(/api/webhooks/\d+/)[\w-]+")
+
+
+def redact(text: object) -> str:
+    """Hide Telegram bot tokens and Discord webhook secrets in error messages before they're logged
+    (httpx puts the full request URL, which contains them, into its exception text)."""
+    return _SECRET_URL_PARTS.sub(lambda m: (m.group(1) or m.group(2)) + "<secret>", str(text))
 
 
 class Notifier:
@@ -63,14 +72,19 @@ class Notifier:
         assert self._client is not None
         while True:
             text = await self._queue.get()
+            targets = []
+            if self.discord:
+                targets.append(("Discord", self.discord, {"content": text[:1900]}))
+            if self.telegram:
+                token, chat_id = self.telegram
+                targets.append(("Telegram", f"https://api.telegram.org/bot{token}/sendMessage",
+                                {"chat_id": chat_id, "text": text[:4000]}))
             try:
-                if self.discord:
-                    await self._post(self.discord, {"content": text[:1900]})
-                if self.telegram:
-                    token, chat_id = self.telegram
-                    await self._post(f"https://api.telegram.org/bot{token}/sendMessage", {"chat_id": chat_id, "text": text})
-            except Exception as exc:  # noqa: BLE001 - alerts are best effort
-                log.warning("Notification failed: %s", exc)
+                for name, url, body in targets:  # one failing channel must not silence the other
+                    try:
+                        await self._post(url, body)
+                    except Exception as exc:  # noqa: BLE001 - alerts are best effort
+                        log.warning("%s alert failed: %s", name, redact(exc))
             finally:
                 self._queue.task_done()
 

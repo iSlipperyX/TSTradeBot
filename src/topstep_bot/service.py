@@ -27,7 +27,8 @@ from pathlib import Path
 import httpx
 
 from topstep_bot.config import BotConfig, Secrets
-from topstep_bot.keepawake import keep_awake
+from topstep_bot.keepawake import console_stays_responsive, keep_awake
+from topstep_bot.notify import redact
 
 log = logging.getLogger("topstep_bot.service")
 
@@ -40,17 +41,17 @@ HEALTHY_AFTER = 600  # seconds of uptime that reset the crash backoff
 def notify(secrets: Secrets, text: str) -> None:
     """Best-effort alert from the supervisor (it has no event loop)."""
     text = f"[Topstep Bot service] {text}"
-    try:
-        if secrets.telegram_bot_token and secrets.telegram_chat_id:
-            httpx.post(
-                f"https://api.telegram.org/bot{secrets.telegram_bot_token}/sendMessage",
-                json={"chat_id": secrets.telegram_chat_id, "text": text},
-                timeout=10,
-            )
-        if secrets.discord_webhook_url:
-            httpx.post(secrets.discord_webhook_url, json={"content": text[:1900]}, timeout=10)
-    except httpx.HTTPError as exc:
-        log.warning("Alert failed: %s", exc)
+    targets = []
+    if secrets.telegram_bot_token and secrets.telegram_chat_id:
+        targets.append((f"https://api.telegram.org/bot{secrets.telegram_bot_token}/sendMessage",
+                        {"chat_id": secrets.telegram_chat_id, "text": text}))
+    if secrets.discord_webhook_url:
+        targets.append((secrets.discord_webhook_url, {"content": text[:1900]}))
+    for url, body in targets:  # one failing channel must not silence the other
+        try:
+            httpx.post(url, json=body, timeout=10)
+        except httpx.HTTPError as exc:
+            log.warning("Alert failed: %s", redact(exc))
 
 
 def _setup_logging(log_dir: Path = Path("logs")) -> None:
@@ -178,7 +179,7 @@ class Supervisor:
 def run_service(cfg: BotConfig, secrets: Secrets, *, config_path: str | None, mode: str | None) -> int:
     _setup_logging()
     log.info("Topstep Bot 24/7 service started (mode: %s). Stop with Ctrl+C or Telegram /stop.", mode or cfg.mode)
-    with keep_awake(cfg.service.keep_awake):
+    with keep_awake(cfg.service.keep_awake), console_stays_responsive():
         try:
             return Supervisor(cfg, secrets, config_path=config_path, mode=mode).loop()
         except KeyboardInterrupt:

@@ -18,29 +18,35 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from topstep_bot import __version__
-from topstep_bot.config import BotConfig, Secrets, load_config, load_secrets
+from topstep_bot.config import BotConfig, ConfigError, Secrets, load_config, load_secrets
 
 console = Console()
 UTC = timezone.utc
 log = logging.getLogger("topstep_bot")
+LOG_DIR = Path("logs")
 
 
 # --------------------------------------------------------------------- helpers
 
-def setup_logging(level: str = "INFO", log_dir: Path = Path("logs")) -> None:
+def setup_logging(level: str = "INFO", log_dir: Path = LOG_DIR, filename: str = "bot.log") -> Path:
+    """Console logging at ``level`` plus a detailed rotating log file. Returns the file's path."""
     log_dir.mkdir(exist_ok=True)
+    path = log_dir / filename
     root = logging.getLogger()
-    root.handlers.clear()
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()
     root.setLevel(logging.DEBUG)
     console_handler = RichHandler(console=console, show_path=False, rich_tracebacks=True, markup=False)
     console_handler.setLevel(level.upper())
-    file_handler = RotatingFileHandler(log_dir / "bot.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8")
+    file_handler = RotatingFileHandler(path, maxBytes=5_000_000, backupCount=5, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s"))
     root.addHandler(console_handler)
     root.addHandler(file_handler)
     for noisy in ("httpx", "httpcore", "websockets"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    return path
 
 
 def _load(args: argparse.Namespace) -> BotConfig:
@@ -235,7 +241,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         console.print(
             Panel(
                 "[bold red]LIVE MODE[/] - the bot will place REAL orders on your TopstepX account.\n"
-                "Rule violations and losses are real. Make sure you have paper traded this exact configuration.\n"
+                "Rule violations and losses are real. Run 'preflight' first (menu: Start trading today) and watch the\n"
+                "first trades with TopstepX open alongside.\n"
                 "Stop any time with Ctrl+C, the dashboard's Stop button, Telegram /stop, or by creating a file named KILL here.",
                 border_style="red",
             )
@@ -283,23 +290,31 @@ def cmd_run(args: argparse.Namespace) -> int:
             for task in background:
                 task.cancel()
             for controller in telegram:
-                if not controls.restart_requested:
+                if controls.failure and runner.supervised:
+                    pass  # the 24/7 service restarts the bot and sends its own alert
+                elif controls.failure:
+                    await controller.send(f"⛔ Topstep Bot stopped after an internal error: {controls.failure}. "
+                                          "Check logs/bot.log and restart it on your PC.")
+                elif not controls.restart_requested:
                     await controller.send("⏹ Topstep Bot has stopped. Restart it on your PC to resume.")
                 await controller.close()
             for server in dashboard:
                 await server.stop()
 
-    from topstep_bot.keepawake import keep_awake
+    from topstep_bot.keepawake import console_stays_responsive, keep_awake
     from topstep_bot.service import RESTART_EXIT_CODE
 
     try:
-        with keep_awake(cfg.service.keep_awake):
+        with keep_awake(cfg.service.keep_awake), console_stays_responsive():
             asyncio.run(main())
     except SetupError as exc:
         console.print(f"[red]{exc}[/]")
         return 2
     except KeyboardInterrupt:
         console.print("Stopped.")
+    if controls.failure:
+        console.print(f"[red]The bot stopped itself after an internal error:[/] {controls.failure}. Details: logs/bot.log")
+        return 1
     return RESTART_EXIT_CODE if controls.restart_requested else 0
 
 
@@ -586,7 +601,7 @@ def interactive_menu(parser: argparse.ArgumentParser) -> int:
     argv = {"paper": ["run", "--mode", "paper"], "live": ["run", "--mode", "live"],
             "autostart": ["autostart", "on"]}.get(name, [name])
     args = parser.parse_args(argv)
-    return args.func(args)
+    return dispatch(args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -656,6 +671,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def dispatch(args: argparse.Namespace) -> int:
+    """Run one command. Every failure is shown in plain words and written to a log file, so a
+    problem can always be diagnosed afterwards - even if the window has closed."""
+    # The trading bot logs to bot.log (cmd_run raises the detail to the configured level). Other
+    # commands use their own file, as they may run while the bot is writing bot.log.
+    log_file = setup_logging("WARNING", filename="bot.log" if args.command == "run" else "commands.log")
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        return 130
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/]")
+        return 2
+    except ConfigError as exc:
+        console.print(f"[red]Configuration problem:[/] {exc}\nFix it in config.yaml (Notepad is fine), or re-run setup.")
+        return 2
+    except ValueError as exc:  # a problem the user can fix (unknown symbol, not enough data, ...)
+        log.warning("%s failed: %s", args.command, exc, exc_info=True)
+        console.print(f"[red]{exc}[/]")
+        return 2
+    except Exception as exc:  # noqa: BLE001 - last line of defence: record it, explain it
+        log.exception("Unexpected error in '%s'", args.command)
+        console.print(f"[red]Unexpected error:[/] {exc!r}\nThe full details were saved in [bold]{log_file.parent.resolve()}[/] "
+                      f"({log_file.name}) - include that file if you ask for help (it contains no passwords or keys).")
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
         try:
@@ -669,15 +711,4 @@ def main(argv: list[str] | None = None) -> int:
             return interactive_menu(parser)
         except KeyboardInterrupt:
             return 0
-    if args.command != "run":
-        logging.basicConfig(level=logging.WARNING)
-    try:
-        return args.func(args)
-    except KeyboardInterrupt:
-        return 130
-    except FileNotFoundError as exc:
-        console.print(f"[red]{exc}[/]")
-        return 2
-    except ValueError as exc:
-        console.print(f"[red]Configuration problem:[/] {exc}")
-        return 2
+    return dispatch(args)

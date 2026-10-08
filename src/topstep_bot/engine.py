@@ -117,10 +117,12 @@ class TradingCore:
 
     # ------------------------------------------------------------- day handling
 
-    async def begin_day(self, day: date, balance: float, realized: float = 0.0, trades: int = 0) -> None:
+    async def begin_day(
+        self, day: date, balance: float, realized: float = 0.0, closed_today: list[tuple[datetime, float]] | None = None
+    ) -> None:
         self.current_day = day
         self.balance = balance
-        self.risk.start_day(day, balance, realized, trades)
+        self.risk.start_day(day, balance, realized, closed_today)
         self._day_min_equity = balance
         if self.strategy_day != day:
             self.strategy.on_new_day(day)

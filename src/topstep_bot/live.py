@@ -8,8 +8,8 @@ Data flow:
   * Orders (live mode): the realtime user hub reports order/position/fill changes, and a
     periodic REST reconcile repairs anything missed.
 
-Stop the bot with Ctrl+C, the dashboard's Stop button, or by creating a file named KILL
-in the working directory (which also flattens and halts trading).
+Stop the bot with Ctrl+C, the dashboard's Stop button, Telegram /stop, or by creating a file
+named KILL in the working directory (which also flattens and halts trading).
 
 When started by the 24/7 service (topstep-bot service) the runner also writes a heartbeat
 file, restarts itself once a day during the CME maintenance halt, and announces restarts
@@ -52,12 +52,13 @@ class SetupError(Exception):
 
 @dataclass
 class Controls:
-    """Requests coming from the dashboard or signal handlers."""
+    """Requests coming from the dashboard, Telegram, the 24/7 service or the bot itself."""
 
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     flatten_requested: bool = False
     flatten_reason: str = "flatten requested from dashboard"
-    restart_requested: bool = False
+    restart_requested: bool = False  # quiet daily maintenance restart (exit code 75)
+    failure: str | None = None  # the bot stopped itself after an internal error (exit code 1)
 
 
 async def select_account(client: ProjectXClient, cfg: BotConfig) -> Account:
@@ -154,16 +155,23 @@ class LiveRunner:
         acct = await self.broker.get_account()
         core.balance = acct.balance
 
-        # Today's realized results so far (handles restarts mid-day).
+        # Today's closed trades so far, so a mid-day restart keeps the day's P&L, trade count,
+        # losing streak and cooldown. Live: from TopstepX (includes anything traded by hand).
+        # Paper: the simulated broker starts empty each run, so use the journal.
         today = core.schedule.trading_day(self.now())
-        session_start = session_open_for(today, core.schedule.tz)
-        realized, trades = await self.broker.realized_pnl_since(session_start)
+        if cfg.mode == "live":
+            realized, closed_today = await self.broker.realized_pnl_since(session_open_for(today, core.schedule.tz))
+        else:
+            closed_today = self.journal.closed_trades(label, today)
+            realized = sum(pnl for _, pnl in closed_today)
+        if closed_today:
+            log.info("Restoring today's %d closed trade(s), net $%.2f", len(closed_today), realized)
         last_eod = self.journal.get_state(f"last_eod:{label}")
         if last_eod is None or last_eod < today.isoformat():
             core.tracker.end_of_day(acct.balance - realized)  # yesterday's close balance
 
         await self._warmup()
-        await core.begin_day(today, acct.balance, realized, trades)
+        await core.begin_day(today, acct.balance, realized, closed_today)
         await self._setup_news()
         self._apply_ramp_up()
         return core
@@ -204,6 +212,8 @@ class LiveRunner:
             asyncio.create_task(self._reconcile_loop(), name="reconcile"),
             asyncio.create_task(self._news_loop(), name="news"),
         ]
+        for task in self._tasks:
+            task.add_done_callback(self._loop_ended)
         core.event(
             "info",
             f"Bot started in {self.cfg.mode.upper()} mode: {core.strategy.title} on {self.contract.name} "
@@ -241,6 +251,19 @@ class LiveRunner:
         await self.notifier.stop()
         await self.client.close()
         self.journal.close()
+
+    def _loop_ended(self, task: asyncio.Task) -> None:
+        """A background loop must run until shutdown. If one dies, stop (and flatten) rather than keep
+        running half-blind; the 24/7 service then restarts the bot."""
+        if task.cancelled() or self.controls.stop.is_set():
+            return
+        exc = task.exception()
+        reason = f"the {task.get_name()} loop " + (f"crashed ({exc!r})" if exc else "ended unexpectedly")
+        log.critical("Internal error: %s", reason, exc_info=exc)
+        if self.core:
+            self.core.event("critical", f"Internal error: {reason}. Stopping the bot (it flattens first).", "error")
+        self.controls.failure = reason
+        self.controls.stop.set()
 
     # ------------------------------------------------------------------ loops
 
@@ -340,21 +363,23 @@ class LiveRunner:
         while True:
             await asyncio.sleep(6 * 3600)
             if self.core and self.core.schedule.news:
-                await self.core.schedule.news.refresh()
+                try:
+                    await self.core.schedule.news.refresh()
+                except Exception:  # noqa: BLE001 - keep the last calendar; trading goes on
+                    log.exception("Economic calendar refresh failed")
 
     def _apply_ramp_up(self) -> None:
-        """First live trading days on an account run at reduced risk (replaces a paper-trading period)."""
+        """The first live trading days on an account run at reduced risk (replaces a paper-trading period).
+
+        Only days on which the bot actually closed a trade count, so days spent idle (holidays, news,
+        no signal) don't use up the ramp-up.
+        """
         core = self.core
         rcfg = self.cfg.risk
         if core is None or self.cfg.mode != "live" or rcfg.ramp_up_days <= 0:
             return
         today = core.schedule.trading_day(self.now()).isoformat()
-        key = f"live_days:{core.account_label}"
-        days = self.journal.get_state(key, [])
-        if today not in days:
-            days.append(today)
-            self.journal.set_state(key, days)
-        completed = len([d for d in days if d < today])
+        completed = len([d for d in self.journal.trading_days(core.account_label) if d < today])
         scale = rcfg.ramp_up_risk_fraction if completed < rcfg.ramp_up_days else 1.0
         if scale != core.risk.risk_scale:
             core.risk.risk_scale = scale

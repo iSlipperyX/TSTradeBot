@@ -25,6 +25,7 @@ import httpx
 
 from topstep_bot.config import TelegramConfig
 from topstep_bot.control import BotActions
+from topstep_bot.notify import redact
 
 log = logging.getLogger(__name__)
 
@@ -103,14 +104,14 @@ class TelegramController:
             msg = await self._call("sendMessage", **params)
             return msg.get("message_id") if isinstance(msg, dict) else None
         except (TelegramError, httpx.HTTPError) as exc:
-            log.warning("Telegram send failed: %s", exc)
+            log.warning("Telegram send failed: %s", redact(exc))
             return None
 
     async def _edit(self, message_id: int, text: str) -> None:
         try:
             await self._call("editMessageText", chat_id=self.chat_id, message_id=message_id, text=text[:MAX_TEXT])
         except (TelegramError, httpx.HTTPError) as exc:
-            log.debug("Telegram edit failed: %s", exc)
+            log.debug("Telegram edit failed: %s", redact(exc))
 
     # ------------------------------------------------------------ lifecycle
 
@@ -155,7 +156,7 @@ class TelegramController:
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60)
             except httpx.HTTPError as exc:
-                log.debug("Telegram network error: %s", exc)
+                log.debug("Telegram network error: %s", redact(exc))
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
 

@@ -191,6 +191,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         "Your [bold]username[/] is your TopstepX login name (not your email). Create an API key in the same API page."
     )
     account_id = None
+    hint_plan, hint_stage = None, None
     if Confirm.ask("Enter API credentials now? (No = skip; you can still backtest on sample data)", default=True):
         username = Prompt.ask("TopstepX username").strip()
         api_key = Prompt.ask("API key (input hidden)", password=True).strip()
@@ -203,21 +204,28 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
             if accounts:
                 options = [(str(a.id), f"{a.name}  balance ${a.balance:,.2f}  {'can trade' if a.can_trade else 'NOT tradable'}") for a in accounts]
                 account_id = int(_pick("Which account should the bot use?", options, options[0][0]))
+                from topstep_bot.preflight import account_hints
+
+                chosen = next(a for a in accounts if a.id == account_id)
+                hint_plan, hint_stage = account_hints(chosen.name)
         except ProjectXError as exc:
             console.print(f"[red]Login failed:[/] {exc}\nCheck the username/API key; you can fix them in {env_path} later.")
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]Could not reach TopstepX:[/] {exc}")
 
     # ---- account
+    if hint_plan or hint_stage:
+        console.print(f"[dim]From the account name, the defaults below are set to {hint_plan or '?'} {hint_stage or '?'} - "
+                      "just press Enter if that's right.[/]")
     plan = _pick(
         "2. Account size",
         [(p.name, f"profit target ${p.profit_target:,.0f}, max loss limit ${p.max_loss_limit:,.0f}, max {p.max_minis} minis") for p in PLANS.values()],
-        "50K",
+        hint_plan or "50K",
     )
     stage = _pick(
         "3. Account type",
         [("combine", "Trading Combine (evaluation)"), ("express", "Express Funded Account (XFA)"), ("practice", "Practice account")],
-        "combine",
+        hint_stage or "combine",
     )
 
     # ---- instrument & strategy
@@ -260,9 +268,11 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         Panel.fit(
             f"[green bold]Saved {config_path}[/]\n\n"
             "Next steps:\n"
-            "  1. [bold]Backtest[/] the strategy and read the report.\n"
-            "  2. [bold]Paper trade[/] for a few weeks (real prices, simulated orders).\n"
-            "  3. Only then switch [bold]mode: live[/] in config.yaml - start on a Combine or practice account.",
+            "  1. [bold]Train[/] (menu) - tests every strategy on real recent data, on days it never saw while\n"
+            "     tuning, and can save the best settings. Or just [bold]backtest[/] the one you picked.\n"
+            "  2. [bold]Start trading today[/] (menu) - runs every safety check, then goes live. The first live\n"
+            "     days trade at reduced risk. Paper trading first is optional, not required.\n"
+            "  Start on a Combine or practice account, never one you can't afford to lose.",
             border_style="green",
         )
     )

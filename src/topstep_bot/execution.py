@@ -139,6 +139,10 @@ class OrderManager:
         self.on_trade_closed: Callable[[ManagedTrade], Awaitable[None]] | None = None
         self.on_event: Callable[[str, str], None] | None = None
         self._lock = asyncio.Lock()
+        # Bumped on every change to our trade/orders/position. reconcile() fetches the broker's view
+        # without holding the lock, and discards that view if anything changed while it was fetching
+        # (otherwise a fill arriving mid-fetch looks like "position closed" or "stop missing").
+        self._version = 0
         broker.on_order = self.handle_order
         broker.on_position = self.handle_position
         broker.on_fill = self.handle_fill
@@ -196,6 +200,7 @@ class OrderManager:
     ) -> ManagedTrade | None:
         """Open a trade. With ``limit_price`` the entry can't fill worse than that price."""
         async with self._lock:
+            self._version += 1
             if self.trade is not None or self.position != 0:
                 log.info("Entry ignored: already in a trade")
                 return None
@@ -275,6 +280,7 @@ class OrderManager:
     async def cancel_unfilled_entry(self, reason: str) -> bool:
         """Cancel an entry that hasn't filled (e.g. its limit price was never reached)."""
         async with self._lock:
+            self._version += 1
             t = self.trade
             if t is None or t.state != TradeState.PENDING or t.entry_order_id is None:
                 return False
@@ -321,6 +327,7 @@ class OrderManager:
         if order.contract_id != self.contract.id:
             return
         async with self._lock:
+            self._version += 1
             t = self.trade
             if t is None:
                 return
@@ -364,6 +371,7 @@ class OrderManager:
         if fill.contract_id != self.contract.id:
             return
         async with self._lock:
+            self._version += 1
             t = self.trade
             if t is None or t.state not in (TradeState.OPEN, TradeState.EXITING):
                 return
@@ -375,13 +383,22 @@ class OrderManager:
         if pos.contract_id != self.contract.id:
             return
         async with self._lock:
+            self._version += 1
             self.position = pos.size
             self.position_avg = pos.avg_price
             t = self.trade
             if t is None:
                 return
-            if t.state == TradeState.PENDING and pos.size != 0 and (pos.size > 0) == (t.side == OrderSide.BUY):
+            same_side = pos.size != 0 and (pos.size > 0) == (t.side == OrderSide.BUY)
+            if t.state == TradeState.PENDING and same_side:
                 await self._entry_filled(t, pos.avg_price, abs(pos.size))
+            elif t.state == TradeState.OPEN and same_side and abs(pos.size) > t.filled_size:
+                # The rest of a partially filled entry arrived: protect the whole position at once.
+                self._event("info", f"Entry fill completed: {abs(pos.size)} contracts @ {pos.avg_price}")
+                t.filled_size = abs(pos.size)
+                t.entry_price = pos.avg_price
+                if not self.use_native_brackets:
+                    await self._resize_protection(t)
             elif t.state in (TradeState.OPEN, TradeState.EXITING) and pos.size == 0:
                 await self._safe_cancel(t.stop_order_id)
                 await self._safe_cancel(t.target_order_id)
@@ -415,6 +432,7 @@ class OrderManager:
 
     async def exit(self, reason: str) -> None:
         async with self._lock:
+            self._version += 1
             await self._exit_locked(self.trade, reason)
 
     async def _exit_locked(self, t: ManagedTrade | None, reason: str) -> None:
@@ -444,6 +462,7 @@ class OrderManager:
     async def flatten_all(self, reason: str) -> None:
         """Close any position and cancel every working order on this contract."""
         async with self._lock:
+            self._version += 1
             await self._exit_locked(self.trade, reason)
             keep = self.trade.stop_order_id if self.trade else None
             try:
@@ -458,6 +477,7 @@ class OrderManager:
     async def update_stop(self, new_stop: float) -> bool:
         """Move the protective stop - only ever in the trade's favour."""
         async with self._lock:
+            self._version += 1
             t = self.trade
             if t is None or t.state != TradeState.OPEN or t.stop_order_id is None:
                 return False
@@ -478,10 +498,15 @@ class OrderManager:
 
     async def reconcile(self) -> None:
         """Compare our view with the broker's and repair any difference."""
+        async with self._lock:
+            version = self._version  # taken while no change is in progress
         positions = await self.broker.positions()
         orders = [o for o in await self.broker.open_orders() if o.contract_id == self.contract.id]
         pos = next((p for p in positions if p.contract_id == self.contract.id and p.size != 0), None)
         async with self._lock:
+            if self._version != version:
+                log.debug("Reconcile skipped: state changed while fetching the broker's view")
+                return
             self.position = pos.size if pos else 0
             if pos:
                 self.position_avg = pos.avg_price
@@ -528,18 +553,24 @@ class OrderManager:
                     elif o.side == t.side.opposite and o.type == OrderType.LIMIT:
                         t.target_order_id = o.id
                 working_ids = {o.id for o in orders}
+            t.filled_size = abs(pos.size)
             if t.stop_order_id not in working_ids:
                 self._event("warning", "Protective stop missing at broker - re-placing")
-                t.filled_size = abs(pos.size)
                 await self._place_stop(t)
-            elif abs(pos.size) != t.filled_size:
-                t.filled_size = abs(pos.size)
-                for oid in (t.stop_order_id, t.target_order_id):
-                    if oid in working_ids:
-                        try:
-                            await self.broker.modify_order(oid, size=t.filled_size)
-                        except Exception as exc:  # noqa: BLE001
-                            self._event("warning", f"Could not resize order {oid}: {exc}")
+                return
+            sizes = {o.id: o.size for o in orders}
+            if any(sizes.get(oid, t.filled_size) != t.filled_size for oid in (t.stop_order_id, t.target_order_id)):
+                await self._resize_protection(t, sizes)
+
+    async def _resize_protection(self, t: ManagedTrade, sizes: dict[int, int] | None = None) -> None:
+        """Make the stop and target cover exactly the position (e.g. after a partial entry fill)."""
+        for oid in (t.stop_order_id, t.target_order_id):
+            if oid is None or (sizes is not None and sizes.get(oid, t.filled_size) == t.filled_size):
+                continue
+            try:
+                await self.broker.modify_order(oid, size=t.filled_size)
+            except Exception as exc:  # noqa: BLE001 - reconcile compares sizes again and retries
+                self._event("warning", f"Could not resize order {oid} to {t.filled_size}: {exc}")
 
     def _recover_own_trade(self, pos: Position, orders: list[Order]) -> bool:
         """After a crash/restart, re-adopt a position that is still protected by one of OUR stops."""
@@ -593,7 +624,7 @@ class OrderManager:
                 if o.type != OrderType.MARKET:
                     await self._safe_cancel(o.id)
             return
-        # adopt: manage it with a protective stop at the configured maximum stop distance
+        # adopt: manage it, keeping its existing stop or adding one 40 ticks from the entry
         side = OrderSide.BUY if pos.size > 0 else OrderSide.SELL
         existing_stop = next((o for o in orders if o.type == OrderType.STOP and o.side == side.opposite), None)
         stop = existing_stop.stop_price if existing_stop else None

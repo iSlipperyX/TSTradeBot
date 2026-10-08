@@ -105,7 +105,11 @@ function meter(id, frac, text, color) { $(id + "-bar").style.width = Math.max(0,
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 async function act(name, confirmText) {
   if (confirmText && !confirm(confirmText)) return;
-  await fetch("/api/" + name, {method:"POST", headers:{"X-Token": TOKEN}}); refresh(); }
+  try {
+    const r = await fetch("/api/" + name, {method:"POST", headers:{"X-Token": TOKEN}});
+    if (!r.ok) alert("The bot refused that request (" + r.status + "). Reload this page and try again.");
+  } catch (e) { alert("Could not reach the bot - is it still running?"); }
+  refresh(); }
 $("pause").onclick = () => act("pause");
 $("resume").onclick = () => act("resume");
 $("flatten").onclick = () => act("flatten", "Close the position, cancel orders and halt trading?");
@@ -120,7 +124,7 @@ function render(s) {
   const r = s.risk;
   let state = ["--good", "Trading normally"];
   if (s.halted) state = ["--crit", "Halted: " + s.halted];
-  else if (r.paused) state = ["--warn", "Paused from dashboard"];
+  else if (r.paused) state = ["--warn", "Paused: no new trades (press Resume to continue)"];
   else if (r.locked) state = ["--warn", "Done for today: " + r.locked];
   const st = $("status"); st.querySelector(".dot").style.background = css(state[0]); st.lastChild.textContent = state[1];
   setMoney("balance", s.balance); setMoney("daypnl", r.day_pnl); setMoney("openpnl", s.open_pnl);

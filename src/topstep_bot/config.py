@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, field_validator, model_validator
 
 DEFAULT_CONFIG_PATH = Path("config.yaml")
 DEFAULT_ENV_PATH = Path(".env")
@@ -208,7 +208,13 @@ class ServiceConfig(_Section):
     @field_validator("daily_restart_time", "check_in_time", mode="before")
     @classmethod
     def _parse_times(cls, v: Any) -> time | None:
-        return None if v in (None, "", "off") else _parse_hhmm(v)
+        # YAML reads an unquoted `off` / `no` / `false` as the boolean False - that means "disabled",
+        # not midnight (False is an int in Python, so it must be caught before _parse_hhmm).
+        if v is None or v is False or (isinstance(v, str) and v.strip().lower() in ("", "off", "no", "false", "none")):
+            return None
+        if v is True:
+            raise ValueError("use a time like \"16:05\", or off to disable")
+        return _parse_hhmm(v)
 
     @field_serializer("daily_restart_time", "check_in_time")
     def _dump_times(self, v: time | None) -> str | None:
@@ -245,6 +251,18 @@ class BotConfig(_Section):
     news: NewsConfig = Field(default_factory=NewsConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
+
+    @model_validator(mode="after")
+    def _check_strategy(self) -> BotConfig:
+        """Build the strategy once so a typo in its name or parameters is reported at load time."""
+        from topstep_bot.instruments import SPECS, offline_contract
+        from topstep_bot.models import Contract
+        from topstep_bot.strategies import create_strategy
+
+        symbol = self.instrument.symbol
+        contract = offline_contract(symbol) if symbol in SPECS else Contract("CHECK", symbol, 0.25, 1.0, root=symbol)
+        create_strategy(self.strategy.name, self.strategy.params, contract, self.instrument.timeframe_minutes)
+        return self
 
     @property
     def data_path(self) -> Path:
@@ -291,6 +309,21 @@ def load_secrets() -> Secrets:
     )
 
 
+class ConfigError(ValueError):
+    """config.yaml can't be used as written. The message says where and why, in plain words."""
+
+
+def _describe(exc: ValidationError) -> str:
+    lines = []
+    for err in exc.errors():
+        where = ".".join(str(p) for p in err["loc"]) or "config"
+        msg = err["msg"].removeprefix("Value error, ")
+        if err["type"] == "extra_forbidden":
+            msg = "unknown setting (check the spelling and indentation)"
+        lines.append(f"  {where}: {msg}")
+    return "\n".join(lines)
+
+
 def load_config(path: Path | str | None = None) -> BotConfig:
     """Load config.yaml (or defaults if missing) and the .env file beside it."""
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
@@ -299,8 +332,16 @@ def load_config(path: Path | str | None = None) -> BotConfig:
         if path:
             raise FileNotFoundError(f"Config file not found: {cfg_path}")
         return BotConfig()
-    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-    return BotConfig.model_validate(raw)
+    try:
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"{cfg_path} is not valid YAML (check indentation and quotes):\n  {exc}") from None
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{cfg_path} should contain settings like 'mode: paper', one per line")
+    try:
+        return BotConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ConfigError(f"{cfg_path} has {exc.error_count()} problem(s):\n{_describe(exc)}") from None
 
 
 def save_config(cfg: BotConfig, path: Path | str = DEFAULT_CONFIG_PATH) -> None:

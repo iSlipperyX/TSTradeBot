@@ -134,6 +134,26 @@ class Journal:
             rows = self.conn.execute("SELECT * FROM trades ORDER BY exit_time DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]
 
+    def closed_trades(self, account: str, trading_day: date) -> list[tuple[datetime, float]]:
+        """(exit time, net P&L) of each trade closed on ``trading_day``, oldest first."""
+        rows = self.conn.execute(
+            "SELECT exit_time, net_pnl FROM trades WHERE account = ? AND trading_day = ? AND exit_time IS NOT NULL "
+            "ORDER BY exit_time",
+            (account, trading_day.isoformat()),
+        )
+        out = []
+        for r in rows:
+            ts = datetime.fromisoformat(r["exit_time"])
+            out.append((ts if ts.tzinfo else ts.replace(tzinfo=UTC), r["net_pnl"] or 0.0))
+        return out
+
+    def trading_days(self, account: str) -> list[str]:
+        """Trading days (ISO dates) on which ``account`` closed at least one trade, oldest first."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT trading_day FROM trades WHERE account = ? ORDER BY trading_day", (account,)
+        )
+        return [r["trading_day"] for r in rows]
+
     def daily(self, account: str | None = None) -> list[dict]:
         if account:
             rows = self.conn.execute("SELECT * FROM daily WHERE account = ? ORDER BY trading_day", (account,))

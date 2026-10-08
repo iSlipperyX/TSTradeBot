@@ -84,13 +84,19 @@ class ProjectXBroker(Broker):
             return order_id
         except httpx.TransportError:
             # The request may or may not have reached the server. Look for it by tag before failing.
-            if tag:
-                found = await self._find_by_tag(tag)
-                if found is not None:
-                    log.warning("Order %s was placed despite a network error (id %s)", tag, found)
-                    return found
+            found = await self._find_by_tag(tag)
+            if found is not None:
+                log.warning("Order %s was placed despite a network error (id %s)", tag, found)
+                return found
             raise
         except ProjectXError as exc:
+            if exc.payload.get("success") is None and (exc.code or 0) >= 500:
+                # HTTP 5xx: like a network error, the order may still have been created.
+                found = await self._find_by_tag(tag)
+                if found is not None:
+                    log.warning("Order %s was placed despite a server error (id %s)", tag, found)
+                    return found
+                raise
             # With 'Position Brackets' mode, bracket params are rejected but the order is still created.
             order_id = exc.payload.get("orderId")
             if exc.code == 2 and order_id:
@@ -114,12 +120,16 @@ class ProjectXBroker(Broker):
         except Exception:  # noqa: BLE001
             pass
 
-    async def _find_by_tag(self, tag: str) -> int | None:
+    async def _find_by_tag(self, tag: str | None) -> int | None:
+        if not tag:
+            return None
         since = datetime.now(UTC) - timedelta(minutes=10)
-        for order in await self.client.search_orders(self.account_id, since):
-            if order.custom_tag == tag:
-                return order.id
-        return None
+        try:
+            orders = await self.client.search_orders(self.account_id, since)
+        except Exception as exc:  # noqa: BLE001 - report the original failure, not this one
+            log.warning("Could not check whether order %s was placed: %s", tag, exc)
+            return None
+        return next((o.id for o in orders if o.custom_tag == tag), None)
 
     async def cancel_order(self, order_id: int) -> None:
         await self.client.cancel_order(self.account_id, order_id)
