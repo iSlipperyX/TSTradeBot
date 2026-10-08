@@ -248,7 +248,11 @@ def test_knowledge_actions_and_telegram(tmp_path):
     tg = TelegramController("TOKEN", CHAT, actions, TelegramConfig(), transport=httpx.MockTransport(fake.handler))
     run(tg.handle_update(msg("/knowledge")))
     assert "Knowledge base" in fake.sent[-1]["text"]
-    run(tg.handle_update(msg("/train")))
+
+    async def train():
+        await tg.handle_update(msg("/train"))
+        await tg.idle()  # training answers in the background, so Telegram keeps working meanwhile
+    run(train())
     assert fake.sent[-1]["text"] == "trained" and calls[-1].startswith("Telegram")
 
 
