@@ -7,6 +7,8 @@
 * Every recommendation is then followed bar by bar to a result (stop, target, strategy exit or
   session end), so you can see how good each strategy's ideas really are on live data.
   Results for ideas that weren't traded are hypothetical (stop-first if a bar hits both).
+* Each result is also handed to the knowledge base (knowledge.py): this is how the bot learns
+  which strategy works at which time of day, whether it traded the signal or not.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from topstep_bot.knowledge import UNINFORMATIVE_EXITS, Observation
 from topstep_bot.models import Bar, OrderSide, Signal
 from topstep_bot.strategies import STRATEGIES, Strategy, StrategyContext, create_strategy
 
@@ -36,7 +39,7 @@ class Recommendation:
     created: datetime  # UTC time of the bar close that produced it
     strategy: str
     title: str
-    active: bool  # True = the configured strategy (auto-traded)
+    active: bool  # True = traded (or skipped) by the bot itself
     side: OrderSide
     entry: float
     stop: float | None
@@ -46,6 +49,8 @@ class Recommendation:
     reason: str
     status: str  # idea | tracking | taken | skipped | closed
     note: str = ""
+    slot: str = ""  # time-of-day slot and regime at signal time (knowledge base keys)
+    regime: str = ""
     trade_tag: str | None = None
     exit_price: float | None = None
     outcome_usd: float | None = None
@@ -77,15 +82,17 @@ class Recommendation:
 
 
 class RecommendationBook:
-    def __init__(self, core: TradingCore, strategies: list[str] | None = None, max_items: int = 200):
+    def __init__(self, core: TradingCore, strategies: list[str] | None = None, *, max_items: int = 200,
+                 quiet: bool = False):
         self.core = core
+        self.quiet = quiet  # backtests/training: no logging, alerts or journal writes
         self.items: deque[Recommendation] = deque(maxlen=max_items)
         self._ids = itertools.count(1)
         self._day: date | None = None
         self.shadows: list[Strategy] = []
         wanted = strategies or [n for n in STRATEGIES if n != core.strategy.name]
         for name in wanted:
-            if name == core.strategy.name or name not in STRATEGIES:
+            if name == core.strategy.name or name not in STRATEGIES or name == "adaptive":
                 continue
             try:
                 self.shadows.append(create_strategy(name, {}, core.contract, core.cfg.instrument.timeframe_minutes))
@@ -131,7 +138,7 @@ class RecommendationBook:
             try:
                 sig = strat.on_bar(bar, ctx)
                 open_rec = self._open_for(strat.name)
-                if open_rec is not None:
+                if open_rec is not None and not open_rec.active:  # the bot manages its own trades itself
                     new_stop = strat.trailing_stop(bar, ctx)
                     if new_stop is not None and open_rec.stop is not None:
                         better = new_stop > open_rec.stop if open_rec.side == OrderSide.BUY else new_stop < open_rec.stop
@@ -145,9 +152,11 @@ class RecommendationBook:
             if sig is None:
                 continue
             if sig.action == "exit":
-                if open_rec is not None and open_rec.status == "taken":
+                if open_rec is None or open_rec.active:
+                    continue
+                if open_rec.status == "taken":
                     actions.append(("exit", open_rec.trade_tag, f"{strat.title} exit: {sig.reason}"))
-                elif open_rec is not None:
+                else:
                     self._close(open_rec, bar.close, f"strategy exit: {sig.reason}")
             elif sig.side is not None and open_rec is None:
                 self._add_idea(strat, sig, bar, close_time)
@@ -160,11 +169,14 @@ class RecommendationBook:
             new = create_strategy(name, {}, self.core.contract, self.core.cfg.instrument.timeframe_minutes)
         else:
             self.shadows.remove(new)
-        self.shadows.append(self.core.strategy)
+        if self.core.strategy.name != "adaptive":
+            self.shadows.append(self.core.strategy)
         return new
 
     def _add_idea(self, strat: Strategy, sig: Signal, bar: Bar, close_time: datetime) -> None:
         core = self.core
+        if any(r.active and r.strategy == strat.name and r.created == close_time for r in self.items):
+            return  # the bot already acted on this very signal (adaptive strategy): don't count it twice
         entry = bar.close
         plan = core.plan_entry(sig, entry)
         note = ""
@@ -178,7 +190,7 @@ class RecommendationBook:
         rec = Recommendation(
             id=f"R{next(self._ids)}", created=close_time, strategy=strat.name, title=strat.title, active=False,
             side=sig.side, entry=entry, stop=stop, target=target, size=size, risk_usd=risk,
-            reason=sig.reason, status="idea", note=note,
+            reason=sig.reason, status="idea", note=note, slot=core.slot(close_time), regime=core.regime.value,
         )
         self._store(rec, new=True)
 
@@ -194,12 +206,15 @@ class RecommendationBook:
     ) -> None:
         """Called by the engine for every entry signal of the configured strategy."""
         strat = self.core.strategy
+        name = sig.meta.get("strategy", strat.name)  # the adaptive strategy names the sub-strategy that signalled
+        title = STRATEGIES[name].title if name in STRATEGIES else strat.title
         rec = Recommendation(
-            id=f"R{next(self._ids)}", created=ctx.bar_close, strategy=strat.name, title=strat.title, active=True,
+            id=f"R{next(self._ids)}", created=ctx.bar_close, strategy=name, title=title, active=True,
             side=sig.side, entry=entry_ref,
             stop=plan.stop if plan else sig.stop_price, target=plan.target if plan else sig.target_price,
             size=plan.size if plan else 0, risk_usd=plan.planned_risk if plan else None,
             reason=sig.reason, status=status, note=note, trade_tag=tag, hypothetical=status != "taken",
+            slot=sig.meta.get("slot") or self.core.slot(ctx.bar_close), regime=sig.meta.get("regime") or self.core.regime.value,
         )
         self._store(rec, new=True)
 
@@ -217,7 +232,7 @@ class RecommendationBook:
 
     def _open_for(self, strategy: str) -> Recommendation | None:
         for rec in self.items:
-            if rec.strategy == strategy and rec.is_open and not rec.active:
+            if rec.strategy == strategy and rec.is_open:
                 return rec
         return None
 
@@ -258,12 +273,28 @@ class RecommendationBook:
             rec.status = "closed"
         rec.closed_at = self.core.clock()
         self._store(rec)
+        self._learn(rec, why)
+
+    def _learn(self, rec: Recommendation, why: str) -> None:
+        """Hand a finished recommendation to the knowledge base (if its ending says something)."""
+        kb = self.core.knowledge
+        if kb is None or rec.outcome_r is None or any(k in why for k in UNINFORMATIVE_EXITS):
+            return
+        local = self.core.schedule.local(rec.created)
+        kb.record(Observation(
+            day=self.core.schedule.trading_day(rec.created).isoformat(), time=local.strftime("%H:%M"),
+            strategy=rec.strategy, side=rec.side.label, slot=rec.slot or self.core.slot(rec.created),
+            regime=rec.regime or "calm", r=rec.outcome_r, usd=rec.outcome_usd,
+            source="shadow" if rec.hypothetical else "real", why=why,
+        ), save=not self.quiet)
 
     # ------------------------------------------------------------- output
 
     def _store(self, rec: Recommendation, new: bool = False) -> None:
         if new:
             self.items.appendleft(rec)
+        if self.quiet:
+            return
         data = self.to_dict(rec)
         if new:
             log.info(
@@ -304,6 +335,8 @@ class RecommendationBook:
             "reason": rec.reason,
             "status": rec.status,
             "note": rec.note,
+            "slot": rec.slot,
+            "regime": rec.regime,
             "result": rec.result,
             "exit_price": rec.exit_price,
             "outcome_usd": rec.outcome_usd,
@@ -315,12 +348,12 @@ class RecommendationBook:
         today = self.core.schedule.trading_day(self.core.clock())
         todays = [r for r in self.items if self.core.schedule.trading_day(r.created) == today]
         summary = []
-        names = [self.core.strategy] + self.shadows
-        for strat in names:
-            mine = [r for r in todays if r.strategy == strat.name]
+        for strat in [self.core.strategy, *self.shadows]:
+            active = strat is self.core.strategy
+            mine = [r for r in todays if (r.active if active else (r.strategy == strat.name and not r.active))]
             closed = [r for r in mine if r.result]
             summary.append({
-                "strategy": strat.name, "title": strat.title, "active": strat is self.core.strategy,
+                "strategy": strat.name, "title": strat.title, "active": active,
                 "ideas": len(mine), "closed": len(closed), "wins": sum(1 for r in closed if r.result == "won"),
                 "pnl": round(sum(r.outcome_usd or 0 for r in closed), 2),
             })

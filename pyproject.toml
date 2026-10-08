@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topstep-bot"
-version = "1.0.0"
+version = "1.1.0"
 description = "Automated futures trading bot for Topstep accounts via the TopstepX (ProjectX Gateway) API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 topstep-bot = "topstep_bot.cli:main"
@@ -32,3 +32,11 @@ topstep_bot = ["dashboard/*.html"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = ["E501", "UP017", "UP042", "B027"]

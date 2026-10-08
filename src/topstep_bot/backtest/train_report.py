@@ -1,4 +1,4 @@
-"""Self-contained HTML report for `topstep-bot train` (opens offline, light and dark mode)."""
+"""Self-contained HTML report for `topstep-bot tune` (opens offline, light and dark mode)."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def build_training_report(report: TrainingReport, symbol: str, timeframe: int) -
         current = (f"<p class='sub'>Your current setting ({html.escape(report.current_label)}) on the same test windows: "
                    f"{_money(c.net)} over {c.trades} trades, profit factor {_pf(c.profit_factor)}.</p>")
     return TEMPLATE.format(
-        title=html.escape(f"Training · {symbol} {timeframe}-minute bars"),
+        title=html.escape(f"Walk-forward tuning · {symbol} {timeframe}-minute bars"),
         subtitle=html.escape(f"{report.first_day} → {report.last_day} · {report.candidates} candidate settings · "
                              f"{len(report.folds)} walk-forward windows"),
         verdict_class=verdict[0], verdict_title=html.escape(verdict[1]), verdict_text=html.escape(verdict[2]),
@@ -109,7 +109,7 @@ def write_training_report(report: TrainingReport, out_dir: Path | str, symbol: s
 
 TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Training Report</title>
+<title>Walk-forward Tuning Report</title>
 <style>
 :root {{ color-scheme: light; --bg:#f9f9f7; --surface:#fcfcfb; --border:rgba(11,11,11,.10); --text:#0b0b0b;
   --text2:#52514e; --muted:#898781; --grid:#e1e0d9; --axis:#c3c2b7; --good:#006300; --good-bg:#e7f5e7;
@@ -169,7 +169,7 @@ chosen on the most recent train window.</p></section>
 <section class="panel"><h2>Settings chosen in each window</h2><div class="tablewrap"><table>
 <thead><tr><th>Strategy</th>{window_head}</tr></thead><tbody>{window_rows}</tbody></table></div>
 <p class="muted">If a strategy keeps choosing similar settings, its edge is more likely to be real than lucky.</p></section>
-<footer>Generated {generated} by topstep-bot train. Hypothetical results from historical simulation, judged only on
+<footer>Generated {generated} by topstep-bot tune. Hypothetical results from historical simulation, judged only on
 data the selection never saw - still no guarantee of future results.</footer>
 </main>
 <script>

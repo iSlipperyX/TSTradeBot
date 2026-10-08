@@ -80,9 +80,10 @@ class LateDayMomentum(Strategy):
         if abs(move) * 100 < self.p["min_move_pct"] or move == 0:
             return None
         long = move > 0
-        if self.p["confirm_with_12th"]:
-            if self.close_1400 is None or (bar.close > self.close_1400) != long or bar.close == self.close_1400:
-                return None
+        if self.p["confirm_with_12th"] and (
+            self.close_1400 is None or (bar.close > self.close_1400) != long or bar.close == self.close_1400
+        ):
+            return None
         if not self.allows("long" if long else "short"):
             return None
         distance = self.p["stop_atr"] * self.atr.value

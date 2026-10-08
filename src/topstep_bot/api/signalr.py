@@ -12,6 +12,7 @@ Wire format: JSON records terminated by the 0x1E record separator.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import itertools
 import json
@@ -105,7 +106,7 @@ class HubConnection:
         try:
             await asyncio.wait_for(self._connected.wait(), timeout)
             return True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
 
     async def send(self, method: str, *args: Any) -> None:
@@ -150,10 +151,8 @@ class HubConnection:
                 delay = self._reconnect_delays[min(failures, len(self._reconnect_delays) - 1)]
                 failures += 1
                 log.info("%s hub reconnecting in %ss", self.name, delay)
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._stopping.wait(), delay)
-                except asyncio.TimeoutError:
-                    pass
         finally:
             dispatcher.cancel()
 

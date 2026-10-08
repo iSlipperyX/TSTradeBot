@@ -1,10 +1,8 @@
-import asyncio
 import json
 from datetime import timedelta
 
 from topstep_bot.broker.paper import PaperBroker
 from topstep_bot.config import BotConfig
-from topstep_bot.dashboard import DashboardServer
 from topstep_bot.factory import build_core
 from topstep_bot.journal import Journal
 from topstep_bot.models import OrderSide, Signal
@@ -77,36 +75,30 @@ def test_engine_ignores_signal_when_stop_on_wrong_side(mnq):
     run(go())
 
 
-async def _http(port: int, method: str, path: str, headers: dict | None = None) -> tuple[int, bytes]:
-    reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    lines = [f"{method} {path} HTTP/1.1", f"Host: {headers.pop('Host', '127.0.0.1') if headers else '127.0.0.1'}"]
-    lines += [f"{k}: {v}" for k, v in (headers or {}).items()]
-    writer.write(("\r\n".join(lines) + "\r\n\r\n").encode())
-    await writer.drain()
-    data = await reader.read()
-    writer.close()
-    status = int(data.split(b" ", 2)[1])
-    return status, data.split(b"\r\n\r\n", 1)[1]
+def test_bot_api_requires_token_and_local_host(mnq):
+    """The bot's private API (used by the controller): token on every request, local Host only."""
+    import httpx
 
+    from topstep_bot.control import BotActions
+    from topstep_bot.live import Controls
+    from topstep_bot.worker_api import build_worker_api
 
-def test_dashboard_requires_token_and_local_host(mnq):
     async def go():
         core, _, _ = make_core(mnq)
         await core.begin_day(core.schedule.trading_day(T0), 50_000)
-        calls = []
-        server = DashboardServer("127.0.0.1", 0, core.snapshot, {"pause": lambda payload: calls.append("pause")})
-        server.port = 0
-        server._server = await asyncio.start_server(server._handle, "127.0.0.1", 0)
-        port = server._server.sockets[0].getsockname()[1]
-        status, body = await _http(port, "GET", "/api/status")
-        assert status == 200 and json.loads(body)["account"] == "test"
-        status, page = await _http(port, "GET", "/")
-        assert status == 200 and server.token.encode() in page
-        assert (await _http(port, "POST", "/api/pause"))[0] == 403
-        assert (await _http(port, "POST", "/api/pause", {"X-Token": "wrong"}))[0] == 403
-        assert (await _http(port, "GET", "/api/status", {"Host": "evil.example"}))[0] == 403
-        assert (await _http(port, "POST", "/api/pause", {"X-Token": server.token}))[0] == 200
-        assert calls == ["pause"]
+        server = build_worker_api(BotActions(core, Controls()), core.snapshot, 0, "secret-token")
+        await server.start()
+        base = f"http://127.0.0.1:{server.port}"
+        async with httpx.AsyncClient(base_url=base) as c:
+            assert (await c.get("/status")).status_code == 403  # no token, even for reads
+            ok = await c.get("/status", headers={"X-Token": "secret-token"})
+            assert ok.json()["bot"]["account"] == "test"
+            bad_host = await c.get("/status", headers={"X-Token": "secret-token", "Host": "evil.example"})
+            assert bad_host.status_code == 403
+            r = await c.post("/action/pause", json={"source": "test"}, headers={"X-Token": "secret-token"})
+            assert r.json()["ok"] and core.risk.paused
+            r = await c.post("/action/nope", headers={"X-Token": "secret-token"})
+            assert r.json()["ok"] is False and "unknown action" in r.json()["message"]
         await server.stop()
     run(go())
 

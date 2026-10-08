@@ -29,12 +29,12 @@ def build_script(project_dir: Path, config_path: Path) -> str:
     launcher = f'"{exe}"' if exe.exists() else f'"{sys.executable}" -m topstep_bot'
     return (
         "@echo off\r\n"
-        "REM Starts the Topstep Bot 24/7 service when you sign in to Windows.\r\n"
+        "REM Starts Topstep Bot (dashboard + Telegram + the bot) when you sign in to Windows.\r\n"
         "REM Remove with: topstep-bot autostart off  (or delete this file)\r\n"
         f'cd /d "{project_dir}"\r\n'
         "REM Give the network a moment to come up after sign-in.\r\n"
         "timeout /t 30 /nobreak >nul\r\n"
-        f'start "Topstep Bot" /min {launcher} -c "{config_path}" service --yes\r\n'
+        f'start "Topstep Bot" /min {launcher} -c "{config_path}" start --yes\r\n'
     )
 
 

@@ -14,9 +14,17 @@ instrument:
   symbol: MNQ                # MNQ, MES, NQ, ES, M2K, RTY, MYM, YM, MGC, GC, MCL, CL
   timeframe_minutes: 5
 
+# adaptive = every strategy, all day, trading only what the bot has learned is working. Or one
+# strategy alone, most robust in the 10-year test first: noise_breakout, orb_momentum, orb,
+# ema_trend, late_day_momentum, vwap_reversion (vwap_pullback is newer and untested).
+# 'topstep-bot tune' compares them on your data.
 strategy:
-  name: noise_breakout                # noise_breakout, orb_momentum, orb, ema_trend, late_day_momentum, vwap_reversion - or let 'train' pick
-  params: {}                 # override strategy defaults here, e.g. {target_r: 1.5}
+  name: adaptive
+  params: {}                   # override strategy defaults here, e.g. {target_r: 1.5}
+
+knowledge:                      # what the bot learns while it runs (drives the adaptive strategy)
+  auto_train: true              # retrain on the last 60 days of history at startup when stale (daily)
+  history_days: 60
 
 risk:
   risk_per_trade: 150          # $ lost if a trade hits its stop (position size is calculated from this)

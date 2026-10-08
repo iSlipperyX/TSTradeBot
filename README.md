@@ -12,17 +12,16 @@ strategy can't accidentally break them.
 1. Install [Python 3.11+](https://www.python.org/downloads/) (tick "Add python.exe to PATH").
 2. Double-click **`start.bat`**. The first run installs everything.
 3. Pick **1** to set up your TopstepX API key, account, strategy and risk (or **11** for a demo).
-4. Pick **5 (train)** to find the strategy and settings that held up on real data they never saw.
-5. Pick **2 (start trading today)**: every safety check runs first, and the first live days trade
-   at reduced risk. Choose 24/7 to keep it running.
+4. Pick **5 (train)** so the bot learns which strategy works at which time of day from recent real data,
+   then **4 (backtest)** and read the report.
+5. Pick **6 (paper)** to watch it on live prices, or **2 (start trading today)**: every safety check runs
+   first, and the first live days trade at reduced risk. The dashboard's **Paper | Live** switch flips
+   between them later (start small).
 
 Other systems: `pip install -e .` then run `topstep-bot`.
 
 ## Features
 
-- **Training** — walk-forward selection of strategy settings: chosen on one stretch of real
-  history, judged only on the next stretch it never saw, with an HTML report and one-step saving
-  to `config.yaml`. See [what 10½ years of real Nasdaq data says](docs/HOW_TO_USE.md#14-the-strategies).
 - **Topstep-aware risk engine** — trailing Maximum Loss Limit (end-of-day, locks at the start
   balance, checked in real time with open P&L), contract caps incl. the XFA scaling plan, flat by
   15:10 CT, a 40% daily profit cap protecting the Combine consistency rule, plus your own daily loss
@@ -35,21 +34,34 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   only tighten, stops resized on partial fills, reconciliation with the account every 15 s,
   idempotent order tags, no blind retries of order placement, and re-adoption of the bot's own
   position after a crash.
-- **6 strategies** — research-based 5-minute Opening Range Momentum (Zarattini/Aziz 2023), Intraday
-  Momentum "noise area" (Zarattini/Aziz/Barbon 2024) and Late-Day Momentum (Gao/Han/Li/Zhou 2018),
-  plus classic Opening Range Breakout, EMA trend and VWAP mean reversion; easy to add your own.
-- **24/7 service** — auto-restart after crashes or hangs (heartbeat), daily maintenance restart,
-  keeps the PC awake, start at Windows sign-in, morning check-in message.
+- **Adaptive all-day trading** — the default `adaptive` strategy runs every strategy through the whole
+  session and trades only the ones the bot's **knowledge base** shows to be working at that time of day
+  (open / midday / close) in the current volatility regime. The bot **learns while it runs**: every
+  signal from every strategy — traded or not — is followed to its outcome and added to the base, and it
+  retrains on the last 60 days of real data each day. Nothing unproven is traded.
+- **Tuning** — `tune` picks strategy settings walk-forward: chosen on one stretch of real
+  history, judged only on the next stretch it never saw, with an HTML report and one-step saving
+  to `config.yaml`. See [what 10½ years of real Nasdaq data says](docs/HOW_TO_USE.md#12-the-strategies).
+- **7 building-block strategies** — research-based Intraday Momentum "noise area" (Zarattini/Aziz/Barbon
+  2024), 5-minute Opening Range Momentum (Zarattini/Aziz 2023) and Late-Day Momentum (Gao/Han/Li/Zhou
+  2018), plus classic Opening Range Breakout, EMA trend, VWAP mean reversion and VWAP trend pullback;
+  each can also run alone. Easy to add your own.
+- **24/7 operation** — the controller restarts the bot after crashes or hangs (heartbeat), does a daily
+  maintenance restart, keeps the PC awake, starts at Windows sign-in and sends a morning check-in.
 - **Same-day start** — a preflight that checks the account, MLL, contract, data, PC clock,
   calendar, news and alerts and backtests every strategy on the latest data before going live.
 - **News blackouts** — no new entries around high-impact USD releases, from a live economic calendar.
 - **Backtester** using the exact live code path, a conservative fill model, TopstepX fees, and a
   Combine pass-rate simulation, with an interactive HTML report.
 - **Paper trading** on live TopstepX prices with simulated fills.
-- **Local dashboard** (http://127.0.0.1:8765) with guardrail meters and Pause / Flatten / Stop
+- **Separate controller** — the dashboard (http://127.0.0.1:8765) and Telegram run apart from the trading
+  bot, so they stay online if it stops or crashes: see why, then start/restart it remotely; Paper/Live switch.
+- **Local dashboard** with guardrail meters and Pause / Flatten / Stop
   buttons; KILL-file kill switch; emergency flatten command.
 - **Recommended trades** — every strategy's signals on the dashboard and in Telegram, sized with your
   risk rules, tracked to a result; take any of them with one tap (re-priced, never oversized).
+- **Knowledge tab** — what works when, per strategy, time of day and regime, with a Retrain button;
+  `/knowledge` and `/train` in Telegram.
 - **Live settings** — change risk, limits, times, news pause and the auto-traded strategy from the
   dashboard or Telegram, within safe bounds, with confirmation and a full audit trail.
 - **Logging** — daily logs, an errors-only file, a JSON event log, crash reports, secrets masked,
@@ -58,7 +70,7 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   owner-only, confirmations for dangerous actions; the setup wizard finds your chat ID for you.
 - **Journal** (SQLite) and Telegram/Discord alerts.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
-- 170+ automated tests, including end-to-end runs against a simulated TopstepX server.
+- 190+ automated tests, including end-to-end runs against a simulated TopstepX server.
 
 ## Commands
 
@@ -67,11 +79,12 @@ topstep-bot                 interactive menu
 topstep-bot setup           setup wizard
 topstep-bot go-live         preflight checks, then live trading (24/7 or this session)
 topstep-bot preflight       the checks alone
-topstep-bot train           walk-forward training         (--days, --strategies, --save ...)
+topstep-bot start           dashboard + Telegram + bot, 24/7 (--mode paper|live)
+topstep-bot run             the trading bot only (normally started by 'start')
+topstep-bot train           learn which strategy works at which time of day from recent real data
+topstep-bot tune            walk-forward test of each strategy's settings (--days, --strategies, --save ...)
 topstep-bot backtest        backtest + HTML report        (--download, --days, --strategy, --data ...)
-topstep-bot run             start the bot                 (--mode paper|live)
-topstep-bot service         run 24/7 with auto-restart
-topstep-bot autostart on    start the service at Windows sign-in (off / status)
+topstep-bot autostart on    start everything at Windows sign-in (off / status)
 topstep-bot check           test connection, list accounts
 topstep-bot download        save history to data/
 topstep-bot flatten         EMERGENCY: close everything on the account
@@ -93,12 +106,16 @@ src/topstep_bot/
   backtest/       runner, metrics, Combine simulation, HTML reports, data loading
   dashboard/      local web dashboard
   engine.py       trading core shared by backtests and live trading
+  knowledge.py    the knowledge base (what works when) and its training
+  recommendations.py  every strategy's signals tracked to an outcome (feeds the knowledge base)
   execution.py    order/trade lifecycle (entry, stop, target, OCO, reconciliation)
-  live.py         live/paper runner
-  training.py     walk-forward training
-  recommendations.py  trade ideas from every strategy;  remote.py  live settings changes
+  controller.py   dashboard + Telegram + supervision of the bot process
+  worker_api.py   the bot's private local API (used by the controller)
+  web.py          tiny local HTTP server shared by both
+  live.py         live/paper runner (the bot process)
+  training.py     walk-forward tuning ('tune');  remote.py  live settings changes
   logging_setup.py    log files, redaction, crash reports
-  service.py      24/7 supervisor;  autostart.py, keepawake.py
+  service.py      bot <-> controller contract;  autostart.py, keepawake.py
   preflight.py    same-day readiness checks;  news.py  economic calendar
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram
   telegram_control.py  Telegram bot remote control

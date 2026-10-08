@@ -1,22 +1,24 @@
 """Control the bot from Telegram.
 
-The bot long-polls the Telegram Bot API from your PC (no webhook, no open ports), so every
-order is still placed by the bot on your own computer, as Topstep requires.
+Telegram runs in the controller process (controller.py), not inside the trading bot, so it keeps
+working when the bot is stopped or has crashed - you can see why and start/restart it remotely.
+It long-polls the Telegram Bot API from your PC (no webhook, no open ports), so every order is
+still placed on your own computer, as Topstep requires.
 
 Security:
   * Only messages from TELEGRAM_CHAT_ID are obeyed (optionally narrowed to specific user IDs
     with ``telegram.allowed_user_ids``); everything else is ignored.
   * Commands sent while the bot was offline are discarded at startup, so an old /flatten
     can't fire unexpectedly.
-  * /flatten and /stop require tapping a confirmation button within 60 seconds.
-  * Remote commands can pause, resume, flatten or stop - they cannot change risk limits.
-
-Commands: /status /pause /resume /flatten /stop /trades /log /help
+  * Anything that trades, stops or changes settings needs a confirmation tap within 60 seconds.
+  * Settings stay within safe bounds; mode (paper/live), account and Topstep rules can't be changed here.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import inspect
 import logging
 import time
 from typing import Any
@@ -24,7 +26,6 @@ from typing import Any
 import httpx
 
 from topstep_bot.config import TelegramConfig
-from topstep_bot.control import BotActions
 from topstep_bot.notify import redact
 
 log = logging.getLogger(__name__)
@@ -34,8 +35,12 @@ COMMANDS = [
     ("pause", "Stop opening new trades"),
     ("resume", "Allow new trades again"),
     ("flatten", "Close everything and halt trading"),
-    ("stop", "Shut the bot down (flattens first)"),
+    ("restart", "Restart the bot (flattens first)"),
+    ("startbot", "Start the bot if it is stopped"),
+    ("stop", "Stop the bot (Telegram and the dashboard stay online)"),
     ("ideas", "Recommended trades - tap Take to trade one"),
+    ("knowledge", "What the bot has learned: which strategy works when"),
+    ("train", "Retrain the knowledge base on recent history now"),
     ("settings", "Show the settings you can change"),
     ("set", "Change a setting, e.g. /set risk 150"),
     ("reset", "Undo all setting changes made remotely"),
@@ -43,7 +48,7 @@ COMMANDS = [
     ("log", "Recent bot activity"),
     ("help", "Show the commands"),
 ]
-DANGEROUS = {"flatten", "stop"}
+DANGEROUS = {"flatten", "stop", "restart", "startbot"}
 CONFIRM_SECONDS = 60
 MAX_TEXT = 4000
 
@@ -51,9 +56,10 @@ KEYBOARD = {
     "inline_keyboard": [
         [{"text": "📊 Status", "callback_data": "cmd:status"}, {"text": "⏸ Pause", "callback_data": "cmd:pause"},
          {"text": "▶️ Resume", "callback_data": "cmd:resume"}],
-        [{"text": "💡 Ideas", "callback_data": "cmd:ideas"}, {"text": "📜 Trades", "callback_data": "cmd:trades"}],
-        # "Stop bot" is deliberately not a quick button: it shuts the program down. Type /stop if you mean it.
-        [{"text": "🛑 Flatten & halt", "callback_data": "cmd:flatten"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
+        [{"text": "💡 Ideas", "callback_data": "cmd:ideas"}, {"text": "📜 Trades", "callback_data": "cmd:trades"},
+         {"text": "🧠 Knowledge", "callback_data": "cmd:knowledge"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
+        [{"text": "🛑 Flatten & halt", "callback_data": "cmd:flatten"}, {"text": "🔄 Restart bot", "callback_data": "cmd:restart"},
+         {"text": "▶️ Start bot", "callback_data": "cmd:startbot"}],
     ]
 }
 
@@ -67,8 +73,8 @@ class TelegramError(Exception):
 def help_text() -> str:
     lines = ["Topstep Bot commands:"] + [f"/{name} - {desc}" for name, desc in COMMANDS]
     lines.append("\nExamples: /set risk 150 - /set dailyloss 400 - /set strategy orb - /set news off")
-    lines.append("/flatten, /stop, setting changes and taking ideas all ask for confirmation. "
-                 "A stopped bot can only be restarted on your PC.")
+    lines.append("Trading, stopping/starting and setting changes all ask for confirmation. "
+                 "Telegram keeps working while the bot is stopped - use /startbot or /restart.")
     return "\n".join(lines)
 
 
@@ -77,7 +83,7 @@ class TelegramController:
         self,
         token: str,
         chat_id: str | int,
-        actions: BotActions,
+        actions: Any,
         cfg: TelegramConfig,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
@@ -205,10 +211,8 @@ class TelegramController:
         message = cq.get("message") or {}
         chat_id = message.get("chat", {}).get("id")
         user = cq.get("from", {})
-        try:
+        with contextlib.suppress(TelegramError, httpx.HTTPError):
             await self._call("answerCallbackQuery", callback_query_id=cq["id"])
-        except (TelegramError, httpx.HTTPError):
-            pass
         if not self._authorized(chat_id, user.get("id")):
             self._reject(chat_id, user.get("id"))
             return
@@ -240,24 +244,28 @@ class TelegramController:
         name = user.get("username") or user.get("first_name") or user.get("id")
         return f"Telegram ({name})"
 
-    def _execute(self, action: str, source: str) -> str:
-        return {
-            "pause": self.actions.pause,
-            "resume": self.actions.resume,
-            "flatten": self.actions.flatten,
-            "stop": self.actions.stop,
-        }[action](source)
+    async def _do(self, name: str, *args: Any) -> Any:
+        """Call an action (in-process BotActions, or the controller's async proxy)."""
+        result = getattr(self.actions, name)(*args)
+        return await result if inspect.isawaitable(result) else result
+
+    async def _execute(self, action: str, source: str) -> str:
+        method = {"pause": "pause", "resume": "resume", "flatten": "flatten", "stop": "stop",
+                  "restart": "restart_bot", "startbot": "start_bot"}[action]
+        if not hasattr(self.actions, method):
+            raise RuntimeError(f"/{action} is only available when the controller is running")
+        return await self._do(method, source)
 
     async def _execute_confirmed(self, action: str, payload, source: str) -> str:
         if action == "set":
             key, value = payload
-            return self.actions.change_setting(key, value, source)
+            return await self._do("change_setting", key, value, source)
         if action == "reset":
-            return self.actions.reset_settings(source)
+            return await self._do("reset_settings", source)
         if action == "take":
             rec_id, size = payload
-            return await self.actions.take_idea(rec_id, source, size)
-        return self._execute(action, source)
+            return await self._do("take_idea", rec_id, source, size)
+        return await self._execute(action, source)
 
     async def _ask(self, question: str, action: str, payload=None, yes: str | None = None) -> None:
         confirm = {"inline_keyboard": [[{"text": yes or f"Yes, {action}", "callback_data": f"yes:{action}"},
@@ -267,7 +275,7 @@ class TelegramController:
             self.pending[message_id] = (action, time.monotonic(), payload)
 
     async def _confirm_take(self, rec_id: str, half: bool) -> None:
-        idea = self.actions.find_idea(rec_id)
+        idea = await self._do("find_idea", rec_id)
         if idea is None or not idea["size"]:
             await self.send("That idea can't be taken (not found, or no valid size).")
             return
@@ -281,47 +289,52 @@ class TelegramController:
         )
 
     async def _send_ideas(self) -> None:
-        ideas = self.actions.open_ideas()
+        ideas = await self._do("open_ideas")
         rows = [[{"text": f"Take {i['id']} ({i['side']} {i['size']})", "callback_data": f"take:{i['id']}"},
                  {"text": "½ size", "callback_data": f"takeh:{i['id']}"}] for i in ideas]
-        await self.send(self.actions.ideas_text(), {"inline_keyboard": rows} if rows else KEYBOARD)
+        await self.send(await self._do("ideas_text"), {"inline_keyboard": rows} if rows else KEYBOARD)
+
+    QUESTIONS = {
+        "flatten": "⚠️ Close any open position, cancel all orders and HALT trading until the bot is restarted?",
+        "stop": "⚠️ Stop the bot? It flattens first. Telegram and the dashboard stay online, so you can start it "
+                "again with /startbot. (To just stop new trades, use /pause.)",
+        "restart": "🔄 Restart the bot? It flattens any open position first, then starts again.",
+        "startbot": "▶️ Start the bot? It will trade automatically in its current mode.",
+    }
 
     async def dispatch(self, command: str, source: str, args: list[str] | None = None) -> None:
         args = args or []
+        try:
+            await self._dispatch(command, source, args)
+        except (ValueError, RuntimeError) as exc:
+            await self.send(f"❌ {exc}")
+
+    async def _dispatch(self, command: str, source: str, args: list[str]) -> None:
         if command in ("status", "start"):
-            await self.send(self.actions.status_text(), KEYBOARD)
+            await self.send(await self._do("status_text"), KEYBOARD)
         elif command in ("pause", "resume"):
-            await self.send(self._execute(command, source), KEYBOARD)
+            await self.send(await self._execute(command, source), KEYBOARD)
         elif command in DANGEROUS:
             if not self.cfg.confirm_dangerous:
-                await self.send(self._execute(command, source))
+                await self.send(await self._execute(command, source))
                 return
-            question = (
-                "⚠️ Close any open position, cancel all orders and HALT trading until the bot is restarted?"
-                if command == "flatten"
-                else "⚠️ SHUT THE PROGRAM DOWN? It flattens first, the 24/7 service also exits, and it can only be "
-                "restarted from your PC. (To just stop new trades, use /pause instead.)"
-            )
-            confirm = {"inline_keyboard": [[{"text": f"Yes, {command}", "callback_data": f"yes:{command}"},
-                                            {"text": "Cancel", "callback_data": "no"}]]}
-            message_id = await self.send(question, confirm)
-            if message_id is not None:
-                self.pending[message_id] = (command, time.monotonic())
+            await self._ask(self.QUESTIONS[command], command)
         elif command == "trades":
-            await self.send(self.actions.trades_text())
+            await self.send(await self._do("trades_text"))
         elif command == "ideas":
             await self._send_ideas()
         elif command == "settings":
-            await self.send(self.actions.settings_text())
+            await self.send(await self._do("settings_text"))
+        elif command == "knowledge":
+            await self.send(await self._do("knowledge_text"))
+        elif command == "train":
+            await self.send("🧠 Training on recent history - this takes a few seconds...")
+            await self.send(await self._do("train", source))
         elif command == "set":
             if len(args) < 2:
                 await self.send("Usage: /set <setting> <value>, e.g. /set risk 150. Send /settings for the list.")
                 return
-            try:
-                p = self.actions.preview_setting(args[0], " ".join(args[1:]))
-            except (ValueError, RuntimeError) as exc:
-                await self.send(f"❌ {exc}")
-                return
+            p = await self._do("preview_setting", args[0], " ".join(args[1:]))
             if not p["changed"]:
                 await self.send(f"{p['label']} is already {p['new']}.")
                 return
@@ -332,6 +345,6 @@ class TelegramController:
             await self._ask("Undo every setting changed from the dashboard/Telegram and go back to config.yaml?", "reset",
                             yes="Yes, reset")
         elif command == "log":
-            await self.send(self.actions.log_text())
+            await self.send(await self._do("log_text"))
         else:
             await self.send(help_text(), KEYBOARD)

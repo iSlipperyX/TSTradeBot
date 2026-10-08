@@ -1,4 +1,4 @@
-"""Walk-forward training: find the strategy and settings that held up on data they had never seen.
+"""Walk-forward tuning (`topstep-bot tune`): find the strategy and settings that held up on data they had never seen.
 
 Tuning settings until a backtest looks perfect is the classic way to build a strategy that fails
 live. Training here works the honest way:
@@ -38,7 +38,7 @@ from topstep_bot.models import Bar, Contract
 
 def _grid(**axes: list) -> list[dict]:
     keys = list(axes)
-    return [dict(zip(keys, values)) for values in itertools.product(*axes.values())]
+    return [dict(zip(keys, values, strict=True)) for values in itertools.product(*axes.values())]
 
 
 # Candidate settings per strategy. Kept deliberately small: the more combinations are tried, the
@@ -60,6 +60,7 @@ GRIDS: dict[str, list[dict]] = {
                   for (f, s), t, a, r in itertools.product([(9, 21), (20, 50)], [50, 200], [1.5, 3.0], [2.0, 4.0])],
     "vwap_reversion": [dict(band_k=k, stop_atr_mult=a, rsi_low=lo, rsi_high=hi)
                        for k, a, (lo, hi) in itertools.product([2.0, 2.5, 3.0], [1.0, 2.0], [(30, 70), (20, 80)])],
+    "vwap_pullback": [],  # tested with its defaults only
 }
 
 MIN_HISTORY_DAYS = 80
@@ -495,8 +496,8 @@ def save_strategy(config_path: Path, strategy: str, params: dict, note: str = ""
             end += 1
         while end > start + 1 and lines[end - 1].strip() == "":
             end -= 1  # keep the blank line before the next section
-        while start > 0 and lines[start - 1].startswith("# Trained "):
-            start -= 1  # replace an earlier training note too
+        while start > 0 and lines[start - 1].startswith(("# Tuned ", "# Trained ")):
+            start -= 1  # replace an earlier tuning note too
         new = "".join(lines[:start]) + block + "".join(lines[end:])
     backup = path.with_name(path.name + ".bak")
     if original:

@@ -52,17 +52,15 @@ class VwapReversion(Strategy):
         if ctx.position == 0 and ctx.local_close.time() <= self.cutoff:
             bullish_bar = bar.close > bar.open
             bearish_bar = bar.close < bar.open
-            if bar.close < lower and rsi < self.p["rsi_low"] and bullish_bar and self.allows("long"):
-                if vwap - bar.close >= min_target:
-                    stop = bar.low - self.p["stop_atr_mult"] * atr
-                    return Signal("long", stop, vwap, f"stretched {bar.close:.2f} below VWAP band, RSI {rsi:.0f}")
-            if bar.close > upper and rsi > self.p["rsi_high"] and bearish_bar and self.allows("short"):
-                if bar.close - vwap >= min_target:
-                    stop = bar.high + self.p["stop_atr_mult"] * atr
-                    return Signal("short", stop, vwap, f"stretched {bar.close:.2f} above VWAP band, RSI {rsi:.0f}")
-        elif ctx.position > 0 and bar.close >= vwap:
-            return Signal("exit", reason="back at VWAP")
-        elif ctx.position < 0 and bar.close <= vwap:
+            stretched_low = bar.close < lower and rsi < self.p["rsi_low"] and vwap - bar.close >= min_target
+            stretched_high = bar.close > upper and rsi > self.p["rsi_high"] and bar.close - vwap >= min_target
+            if stretched_low and bullish_bar and self.allows("long"):
+                stop = bar.low - self.p["stop_atr_mult"] * atr
+                return Signal("long", stop, vwap, f"stretched {bar.close:.2f} below VWAP band, RSI {rsi:.0f}")
+            if stretched_high and bearish_bar and self.allows("short"):
+                stop = bar.high + self.p["stop_atr_mult"] * atr
+                return Signal("short", stop, vwap, f"stretched {bar.close:.2f} above VWAP band, RSI {rsi:.0f}")
+        elif ctx.position > 0 and bar.close >= vwap or ctx.position < 0 and bar.close <= vwap:
             return Signal("exit", reason="back at VWAP")
         return None
 

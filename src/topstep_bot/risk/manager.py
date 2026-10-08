@@ -147,7 +147,7 @@ class RiskManager:
         after the daily trade count, but every loss limit and session rule still applies.
         """
         if self.paused and not manual:
-            return "new trades are paused"
+            return "paused (dashboard/Telegram)"
         if self.lock_reason:
             return self.lock_reason
         session_reason = self.schedule.entry_block_reason(now)

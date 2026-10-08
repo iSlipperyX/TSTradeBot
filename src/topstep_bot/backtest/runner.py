@@ -34,7 +34,7 @@ class BacktestResult:
 
 
 def _bar_seconds(bars: list[Bar]) -> int:
-    gaps = sorted((b.ts - a.ts).total_seconds() for a, b in zip(bars, bars[1:50]) if b.ts > a.ts)
+    gaps = sorted((b.ts - a.ts).total_seconds() for a, b in zip(bars, bars[1:50], strict=False) if b.ts > a.ts)
     return int(gaps[0]) if gaps else 60
 
 
@@ -91,6 +91,14 @@ async def run_backtest(
     if not enforce_mll:
         core.tracker.max_loss_limit = 1e12
         core.tracker.floor = -1e12
+    if hasattr(core.strategy, "bind_knowledge"):
+        # The adaptive strategy is backtested walk-forward: it starts knowing nothing and learns
+        # from every strategy's outcomes as the data plays, exactly as it does live. (No peeking.)
+        from topstep_bot.knowledge import KnowledgeBase
+        from topstep_bot.recommendations import RecommendationBook
+
+        core.recommender = RecommendationBook(core, quiet=True)
+        core.attach_knowledge(KnowledgeBase.from_config(cfg, None))
     tf = timedelta(minutes=cfg.instrument.timeframe_minutes)
     breaches: list[tuple[datetime, float, float]] = []
     in_breach = False

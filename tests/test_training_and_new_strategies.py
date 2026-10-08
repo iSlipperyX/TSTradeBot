@@ -91,14 +91,14 @@ def _session(s, day, closes):
 
 def test_late_day_momentum_follows_the_morning_move(mnq):
     s = create_strategy("late_day_momentum", {}, mnq, 5)
-    for i in range(15):  # warm the ATR up
+    for _ in range(15):  # warm the ATR up
         s.atr.update(102.0, 98.0, 100.0)
     _session(s, DAY - timedelta(days=1), {"14:55": 100.0, "15:00": 100.0})  # yesterday closed at 100
     sig = _session(s, DAY, {"09:00": 101.0, "14:00": 99.0, "14:25": 99.5})
     assert sig.side == OrderSide.BUY  # morning move was up (+1%), so buy into the close
     assert sig.stop_price == pytest.approx(99.5 - 2.0 * s.atr.value) and sig.target_price is None
     confirmed = create_strategy("late_day_momentum", {"confirm_with_12th": True}, mnq, 5)
-    for i in range(15):
+    for _ in range(15):
         confirmed.atr.update(102.0, 98.0, 100.0)
     _session(confirmed, DAY - timedelta(days=1), {"15:00": 100.0})
     assert _session(confirmed, DAY, {"09:00": 101.0, "14:00": 100.0, "14:25": 99.5}) is None  # afternoon disagrees
@@ -106,7 +106,7 @@ def test_late_day_momentum_follows_the_morning_move(mnq):
 
 def test_late_day_momentum_needs_a_previous_close_and_valid_times(mnq):
     s = create_strategy("late_day_momentum", {"min_move_pct": 0.5}, mnq, 5)
-    for i in range(15):
+    for _ in range(15):
         s.atr.update(102.0, 98.0, 100.0)
     assert _session(s, DAY, {"09:00": 101.0, "14:25": 101.0}) is None  # first day: no previous close
     assert _session(s, DAY + timedelta(days=1), {"09:00": 101.2, "14:25": 101.0}) is None  # +0.2% < 0.5%
@@ -172,7 +172,7 @@ def test_make_folds_rolls_forward_without_overlap():
     for f in folds:
         assert f.train[1] < f.test[0]  # always judged on later, unseen days
         assert (f.train[1] - f.train[0]).days + 1 == 3 * ((f.test[1] - f.test[0]).days + 1)
-    assert all(a.test[1] < b.test[0] for a, b in zip(folds, folds[1:]))
+    assert all(a.test[1] < b.test[0] for a, b in zip(folds, folds[1:], strict=False))
     assert folds[-1].test[1] == days[-1]
     with pytest.raises(ValueError, match="Not enough history"):
         make_folds(days[:40], folds=4)
@@ -222,7 +222,7 @@ def test_train_end_to_end_on_synthetic_data(monkeypatch):
     assert report.to_dict()["folds"][0]["train"][0] <= report.to_dict()["folds"][0]["test"][0]
 
 
-def test_training_report_html_and_cli_save(tmp_path, monkeypatch, restore_logging):
+def test_tuning_report_html_and_cli_save(tmp_path, monkeypatch, restore_logging):
     from topstep_bot import cli
     from topstep_bot.backtest.train_report import build_training_report
 
@@ -234,7 +234,7 @@ def test_training_report_html_and_cli_save(tmp_path, monkeypatch, restore_loggin
     assert page.startswith("<!doctype html>") and "orb_momentum" in page and "Settings chosen in each window" in page
     assert "{" not in page.split("<script>")[0].split("</style>")[1]  # no unformatted template fields
 
-    # The CLI saves the recommendation (when there is one) into config.yaml, keeping a backup.
+    # `tune` saves the recommendation (when there is one) into config.yaml, keeping a backup.
     (tmp_path / "config.yaml").write_text(CONFIG, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     rec = report.results[0]
@@ -242,7 +242,7 @@ def test_training_report_html_and_cli_save(tmp_path, monkeypatch, restore_loggin
     report.recommended = rec
     monkeypatch.setattr("topstep_bot.training.train", lambda *a, **k: report)
     monkeypatch.setattr(cli, "_history", lambda cfg, args, allow_synthetic=True: (bars, False))
-    assert cli.main(["-c", "config.yaml", "train", "--save", "--no-open", "--workers", "1"]) == 0
+    assert cli.main(["-c", "config.yaml", "tune", "--save", "--no-open", "--workers", "1"]) == 0
     assert load_config(tmp_path / "config.yaml").strategy.name == "orb_momentum"
     assert (tmp_path / "config.yaml.bak").exists() and list((tmp_path / "reports").glob("training_*.html"))
 
@@ -267,17 +267,17 @@ risk:
 def test_save_strategy_rewrites_only_the_strategy_block(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(CONFIG, encoding="utf-8")
-    backup = save_strategy(path, "orb_momentum", {"stop_mode": "atr", "atr_stop_frac": 0.1}, note="Trained today")
+    backup = save_strategy(path, "orb_momentum", {"stop_mode": "atr", "atr_stop_frac": 0.1}, note="Tuned today")
     text = path.read_text(encoding="utf-8")
     assert "# my settings" in text and "# micro nasdaq" in text and "risk_per_trade: 120          # keep me" in text
-    assert "# Trained today" in text
+    assert "# Tuned today" in text
     cfg = load_config(path)
     assert cfg.strategy.name == "orb_momentum" and cfg.strategy.params == {"stop_mode": "atr", "atr_stop_frac": 0.1}
     assert cfg.risk.risk_per_trade == 120
     assert backup.read_text(encoding="utf-8") == CONFIG
-    save_strategy(path, "noise_breakout", {}, note="Trained today")  # again: replaces block and old note
+    save_strategy(path, "noise_breakout", {}, note="Tuned today")  # again: replaces block and old note
     text = path.read_text(encoding="utf-8")
-    assert text.count("strategy:") == 1 and text.count("# Trained") == 1
+    assert text.count("strategy:") == 1 and text.count("# Tuned") == 1
     assert yaml.safe_load(text)["strategy"] == {"name": "noise_breakout", "params": {}}
 
 
@@ -287,6 +287,6 @@ def test_save_strategy_appends_when_missing_and_restores_on_error(tmp_path):
     save_strategy(path, "orb", {"target_r": 3.0})
     assert load_config(path).strategy.params == {"target_r": 3.0}
     before = path.read_text(encoding="utf-8")
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         save_strategy(path, "orb", {"not_a_param": 1})
     assert path.read_text(encoding="utf-8") == before  # bad result rolled back

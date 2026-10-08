@@ -131,8 +131,13 @@ def setup_logging(
     console: Any = None,
     retention_days: int = 30,
     file_prefix: str = "bot",
+    shared_files: bool = True,
 ) -> Path:
-    """Configure logging for the whole program. Returns the log folder."""
+    """Configure logging for the whole program. Returns the log folder.
+
+    ``shared_files=False`` (the controller) writes only ``<file_prefix>.log`` so two processes never
+    rotate the same file - on Windows that fails while the other process has it open.
+    """
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     redact = RedactingFilter(secrets)
@@ -169,7 +174,8 @@ def setup_logging(
         screen.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", DATE_FORMAT))
     screen.setLevel(level.upper())
 
-    for handler in (main_file, errors_file, events_file, screen, stats):
+    handlers = [main_file, errors_file, events_file, screen, stats] if shared_files else [main_file, screen, stats]
+    for handler in handlers:
         handler.addFilter(redact)
         root.addHandler(handler)
     for name in NOISY_LOGGERS:

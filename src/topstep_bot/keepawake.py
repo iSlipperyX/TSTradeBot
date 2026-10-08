@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import logging
 import sys
-from contextlib import contextmanager
-from typing import Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 
 log = logging.getLogger(__name__)
 
@@ -60,17 +60,18 @@ def console_stays_responsive() -> Iterator[bool]:
             kernel32 = ctypes.windll.kernel32
             handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
             mode = ctypes.c_uint32()
-            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)) and mode.value & ENABLE_QUICK_EDIT_MODE:
-                if kernel32.SetConsoleMode(handle, (mode.value | ENABLE_EXTENDED_FLAGS) & ~ENABLE_QUICK_EDIT_MODE):
-                    original = mode.value
-                    log.debug("Console QuickEdit turned off while the bot runs")
+            if (
+                kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+                and mode.value & ENABLE_QUICK_EDIT_MODE
+                and kernel32.SetConsoleMode(handle, (mode.value | ENABLE_EXTENDED_FLAGS) & ~ENABLE_QUICK_EDIT_MODE)
+            ):
+                original = mode.value
+                log.debug("Console QuickEdit turned off while the bot runs")
         except (AttributeError, OSError) as exc:  # not a real console (e.g. output redirected)
             log.debug("Could not change console mode: %s", exc)
     try:
         yield original is not None
     finally:
         if original is not None:
-            try:
+            with suppress(AttributeError, OSError):
                 ctypes.windll.kernel32.SetConsoleMode(ctypes.windll.kernel32.GetStdHandle(STD_INPUT_HANDLE), original)
-            except (AttributeError, OSError):
-                pass

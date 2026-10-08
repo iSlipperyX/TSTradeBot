@@ -9,7 +9,7 @@ from typing import Any
 
 from topstep_bot.api import parse
 from topstep_bot.api.signalr import HubConnection
-from topstep_bot.models import Account, Fill, Order, Position, Quote, Tick
+from topstep_bot.models import Quote, Tick
 
 log = logging.getLogger(__name__)
 UTC = timezone.utc

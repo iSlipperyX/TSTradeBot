@@ -45,7 +45,7 @@ def render_config(
     account_id: int | None = None,
     symbol: str = "MNQ",
     timeframe: int = 5,
-    strategy: str = "noise_breakout",
+    strategy: str = "adaptive",
     risk_per_trade: float = 150,
     daily_loss: float = 500,
     max_trades: int = 4,
@@ -67,9 +67,17 @@ instrument:
   symbol: {symbol}                # MNQ, MES, NQ, ES, M2K, RTY, MYM, YM, MGC, GC, MCL, CL
   timeframe_minutes: {timeframe}
 
+# adaptive = every strategy, all day, trading only what the bot has learned is working. Or one
+# strategy alone, most robust in the 10-year test first: noise_breakout, orb_momentum, orb,
+# ema_trend, late_day_momentum, vwap_reversion (vwap_pullback is newer and untested).
+# 'topstep-bot tune' compares them on your data.
 strategy:
-  name: {strategy}                # noise_breakout, orb_momentum, orb, ema_trend, late_day_momentum, vwap_reversion - or let 'train' pick
-  params: {{}}                 # override strategy defaults here, e.g. {{target_r: 1.5}}
+  name: {strategy}
+  params: {{}}                   # override strategy defaults here, e.g. {{target_r: 1.5}}
+
+knowledge:                      # what the bot learns while it runs (drives the adaptive strategy)
+  auto_train: true              # retrain on the last 60 days of history at startup when stale (daily)
+  history_days: 60
 
 risk:
   risk_per_trade: {risk_per_trade:g}          # $ lost if a trade hits its stop (position size is calculated from this)
@@ -237,7 +245,8 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         [(s, f"{SPECS[s].description} - ${SPECS[s].tick_value:g}/tick") for s in SYMBOL_CHOICES],
         "MNQ",
     )
-    strategy = _pick("5. Strategy", [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "noise_breakout")
+    strategy = _pick("5. Strategy (adaptive is recommended: it trades all day and learns what works)",
+                     [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "adaptive")
 
     # ---- risk
     mll = PLANS[plan].max_loss_limit
@@ -271,10 +280,12 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         Panel.fit(
             f"[green bold]Saved {config_path}[/]\n\n"
             "Next steps:\n"
-            "  1. [bold]Train[/] (menu) - tests every strategy on real recent data, on days it never saw while\n"
-            "     tuning, and can save the best settings. Or just [bold]backtest[/] the one you picked.\n"
-            "  2. [bold]Start trading today[/] (menu) - runs every safety check, then goes live. The first live\n"
-            "     days trade at reduced risk. Paper trading first is optional, not required.\n"
+            "  1. [bold]Train[/] the bot (menu): it learns which strategy works when from recent real data.\n"
+            "     ([bold]Tune[/] instead tests each strategy on days it never saw and can save the best settings.)\n"
+            "  2. [bold]Backtest[/] (menu) and read the report.\n"
+            "  3. [bold]Start in paper mode[/] (menu): real prices, simulated orders, with the dashboard. Or\n"
+            "     [bold]Start trading today[/] to run every safety check and go live; the first live days trade\n"
+            "     at reduced risk. Later, the dashboard's [bold]Paper | Live[/] switch flips between them.\n"
             "  Start on a Combine or practice account, never one you can't afford to lose.",
             border_style="green",
         )

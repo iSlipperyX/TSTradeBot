@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -117,10 +118,8 @@ class ProjectXBroker(Broker):
 
     async def _cancel_later(self, order_id: int, delay: float) -> None:
         await asyncio.sleep(delay)
-        try:
-            await self.client.cancel_order(self.account_id, order_id)  # fails harmlessly if already filled
-        except Exception:  # noqa: BLE001
-            pass
+        with contextlib.suppress(Exception):  # fails harmlessly if already filled
+            await self.client.cancel_order(self.account_id, order_id)
 
     async def _find_by_tag(self, tag: str | None) -> int | None:
         if not tag:

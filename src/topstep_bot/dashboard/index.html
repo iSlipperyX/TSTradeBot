@@ -5,237 +5,404 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Topstep Bot</title>
 <style>
-:root { color-scheme: light; --bg:#f6f6f4; --surface:#fcfcfb; --surface2:#f1f0ed; --border:#e4e3df; --text:#0b0b0b; --text2:#52514e;
-  --muted:#8a8984; --track:#ecebe7; --accent:#2a78d6; --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
-  --neg:#b02a2a; --pos:#0a7a0a; --live:#d03b3b; --paper:#2a78d6; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; --bg:#121211;
-  --surface:#1a1a19; --surface2:#222220; --border:#2e2e2b; --text:#ffffff; --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27;
-  --accent:#3987e5; --neg:#ff8a8a; --pos:#7ddc7d; --paper:#3987e5; } }
-:root[data-theme="dark"] { color-scheme: dark; --bg:#121211; --surface:#1a1a19; --surface2:#222220; --border:#2e2e2b; --text:#ffffff;
-  --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27; --accent:#3987e5; --neg:#ff8a8a; --pos:#7ddc7d; --paper:#3987e5; }
-* { box-sizing: border-box; }
+:root { color-scheme: light; --bg:#f5f5f3; --surface:#ffffff; --surface2:#f3f2ef; --border:#e4e3df; --text:#111110; --text2:#55544f;
+  --muted:#8a8984; --track:#ecebe7; --accent:#2a78d6; --good:#0ca30c; --warn:#d99a00; --crit:#d03b3b;
+  --neg:#b02a2a; --pos:#0a7a0a; --live:#d03b3b; --paper:#2a78d6; --shadow:0 1px 2px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; --bg:#111110;
+  --surface:#1a1a19; --surface2:#222220; --border:#2e2e2b; --text:#f5f5f3; --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27;
+  --accent:#3987e5; --neg:#ff8a8a; --pos:#7ddc7d; --paper:#3987e5; --warn:#e6a817; --shadow:none; } }
+:root[data-theme="dark"] { color-scheme: dark; --bg:#111110; --surface:#1a1a19; --surface2:#222220; --border:#2e2e2b; --text:#f5f5f3;
+  --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27; --accent:#3987e5; --neg:#ff8a8a; --pos:#7ddc7d; --paper:#3987e5; --warn:#e6a817; --shadow:none; }
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
 body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
-main { max-width:1150px; margin:0 auto; padding:20px 16px 40px; }
-header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-h1 { font-size:20px; margin:0; } h2 { font-size:14px; margin:0 0 10px; color:var(--text2); font-weight:600; }
-.badge { font-size:12px; font-weight:700; padding:3px 8px; border-radius:999px; color:#fff; }
-.pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--text2); cursor:pointer; background:var(--surface); }
-.dot { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:middle; }
-.meta { color:var(--text2); font-size:12px; margin-left:auto; }
-.grid { display:grid; gap:12px; margin-top:14px; }
-.cards { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
+main { max-width:1120px; margin:0 auto; padding:16px 16px 48px; }
+h2 { font-size:13px; margin:0 0 10px; color:var(--text2); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+button { font:inherit; font-weight:600; padding:7px 13px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer; }
+button:hover:not(:disabled) { border-color:var(--text2); } button:disabled { opacity:.45; cursor:default; }
+button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+button.danger { background:var(--crit); color:#fff; border-color:var(--crit); }
+button.small { padding:4px 10px; font-size:12.5px; }
+.row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.spacer { flex:1; }
+.muted { color:var(--muted); } .neg { color:var(--neg); } .pos { color:var(--pos); }
+.hint { color:var(--muted); font-size:12px; margin:8px 0 0; }
+
+/* top bar */
+.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 14px; background:var(--surface);
+  border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); }
+.brand { font-weight:750; font-size:17px; }
+.seg { display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; }
+.seg button { border:0; border-radius:0; padding:5px 12px; background:transparent; color:var(--text2); }
+.seg button.on.paper { background:var(--paper); color:#fff; } .seg button.on.live { background:var(--live); color:#fff; }
+.pill { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; padding:3px 10px; border-radius:999px; border:1px solid var(--border); background:var(--surface); }
+.dot { width:8px; height:8px; border-radius:50%; display:inline-block; background:var(--muted); }
+.meta { color:var(--text2); font-size:12px; }
+
+.banner { margin-top:12px; padding:12px 14px; border-radius:12px; border:1px solid var(--border); background:var(--surface); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.banner.bad { border-color:var(--crit); } .banner.warn { border-color:var(--warn); } .banner.ok { border-color:var(--good); }
+.banner b { font-size:14px; }
+
+/* tabs */
+.tabs { display:flex; gap:4px; margin:16px 0 12px; border-bottom:1px solid var(--border); }
+.tabs button { border:0; border-radius:8px 8px 0 0; background:transparent; color:var(--text2); padding:8px 14px; border-bottom:2px solid transparent; }
+.tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+.tabs .count { font-size:11px; background:var(--accent); color:#fff; border-radius:999px; padding:0 6px; margin-left:4px; }
+section.tab { display:none; } section.tab.on { display:block; }
+
+.grid { display:grid; gap:12px; }
+.cards { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); }
 .two { grid-template-columns:1fr 1fr; } @media (max-width:760px) { .two { grid-template-columns:1fr; } }
-.panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; min-width:0; }
-.label { color:var(--text2); font-size:12px; } .value { font-size:22px; font-weight:650; font-variant-numeric:tabular-nums; }
-.neg { color:var(--neg); } .pos { color:var(--pos); }
-.meter { margin-bottom:12px; } .meter .row { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
-.meter .row span:last-child { font-variant-numeric:tabular-nums; color:var(--text2); }
-.track { height:8px; background:var(--track); border-radius:4px; overflow:hidden; }
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; min-width:0; box-shadow:var(--shadow); }
+.label { color:var(--text2); font-size:12px; } .value { font-size:22px; font-weight:680; font-variant-numeric:tabular-nums; margin-top:2px; }
+.meter { margin-bottom:12px; } .meter .mrow { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
+.meter .mrow span:last-child { font-variant-numeric:tabular-nums; color:var(--text2); }
+.track { height:7px; background:var(--track); border-radius:4px; overflow:hidden; }
 .fill { height:100%; border-radius:4px; background:var(--accent); transition:width .4s; }
-.status { display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; margin-top:12px; font-weight:600; border:1px solid var(--border); background:var(--surface); }
 dl { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; margin:0; font-size:13px; }
 dt { color:var(--text2); } dd { margin:0; font-variant-numeric:tabular-nums; }
-.buttons { display:flex; gap:8px; flex-wrap:wrap; }
-button { font:inherit; font-weight:600; padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer; }
-button:hover { border-color:var(--text2); } button.danger { background:var(--crit); color:#fff; border-color:var(--crit); }
-button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-button.small { padding:4px 10px; font-size:12.5px; }
-.log { max-height:320px; overflow:auto; font-size:12.5px; }
-.log div { padding:5px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; }
-.log time { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.feed { max-height:340px; overflow:auto; font-size:12.5px; }
+.feed div { padding:5px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; }
+.feed time { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .lvl-warning::before { content:"⚠ "; } .lvl-error::before, .lvl-critical::before { content:"⛔ "; }
 .lvl-error, .lvl-critical { color:var(--neg); }
-.empty { color:var(--muted); }
-.offline { display:none; background:var(--crit); color:#fff; padding:8px 12px; border-radius:10px; margin-top:12px; }
-.hint { color:var(--muted); font-size:12px; margin:8px 0 0; }
+.empty { color:var(--muted); padding:6px 0; }
+
 /* ideas */
 .ideas { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
 .idea { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--surface2); }
-.idea .top { display:flex; justify-content:space-between; gap:8px; font-weight:650; }
+.idea .t { display:flex; justify-content:space-between; gap:8px; font-weight:650; }
 .idea .why { color:var(--text2); font-size:12.5px; margin:4px 0 8px; }
 .idea dl { font-size:12.5px; margin-bottom:8px; }
 .side-LONG { color:var(--pos); } .side-SHORT { color:var(--neg); }
 .tablewrap { overflow-x:auto; }
 table { border-collapse:collapse; width:100%; font-size:12.5px; }
-th, td { text-align:left; padding:5px 7px; border-bottom:1px solid var(--border); white-space:nowrap; }
+th, td { text-align:left; padding:6px 7px; border-bottom:1px solid var(--border); white-space:nowrap; }
 th { color:var(--text2); font-weight:600; } td.num { text-align:right; font-variant-numeric:tabular-nums; }
-td.note { white-space:normal; color:var(--text2); min-width:180px; }
+td.note { white-space:normal; color:var(--text2); min-width:200px; }
 .tag { font-size:11px; padding:1px 6px; border-radius:999px; border:1px solid var(--border); color:var(--text2); }
 .tag.auto { border-color:var(--accent); color:var(--accent); }
+
+/* knowledge */
+.kb { display:inline-block; font-size:12px; padding:2px 7px; border-radius:6px; border:1px solid var(--border); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.kb.ok { color:var(--pos); border-color:var(--pos); } .kb.bad { color:var(--neg); border-color:var(--neg); } .kb.unk { color:var(--muted); }
+.kb-cell { display:flex; flex-direction:column; gap:3px; }
+th.now, td.now { background:var(--surface2); }
+
 /* settings */
-.settings { display:grid; gap:8px; }
-.setting { display:grid; grid-template-columns:1fr 150px auto; gap:8px; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); }
-.setting .name { font-size:13px; } .setting .name small { display:block; color:var(--muted); font-size:11.5px; }
+.setting { display:grid; grid-template-columns:1fr 160px 70px; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); }
+.setting .name { font-size:13px; font-weight:600; } .setting .name small { display:block; color:var(--muted); font-size:11.5px; font-weight:400; }
 .setting input, .setting select { font:inherit; padding:5px 8px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color:var(--text); width:100%; }
-.setting input[type=checkbox] { width:auto; justify-self:start; }
-.changed { color:var(--accent); font-size:11px; font-weight:700; }
-@media (max-width:560px) { .setting { grid-template-columns:1fr; } }
+.setting input[type=checkbox] { width:18px; height:18px; justify-self:start; }
+.changed { color:var(--accent); font-size:11px; font-weight:700; margin-left:4px; }
+@media (max-width:560px) { .setting { grid-template-columns:1fr 1fr; } .setting .name { grid-column:1 / -1; } }
+pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Consolas,monospace; max-height:340px; overflow:auto; margin:0;
+  background:var(--surface2); border-radius:8px; padding:10px; }
 .toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:10px 16px;
   border-radius:10px; font-weight:600; max-width:90vw; display:none; z-index:10; }
 .toast.bad { background:var(--crit); color:#fff; }
-details summary { cursor:pointer; }
+.offline { display:none; margin-top:12px; background:var(--crit); color:#fff; padding:10px 14px; border-radius:10px; font-weight:600; }
 </style>
 </head>
 <body>
 <main>
-  <header>
-    <h1>Topstep Bot</h1>
-    <span id="mode" class="badge">…</span>
-    <span id="conn"><span class="dot"></span><span></span></span>
-    <span id="loghealth" class="pill" title="Warnings and errors in the log since the bot started">log: –</span>
+  <div class="top">
+    <span class="brand">Topstep Bot</span>
+    <span class="seg" title="Paper = simulated orders on real prices. Live = real orders.">
+      <button id="m-paper" class="paper">Paper</button><button id="m-live" class="live">Live</button>
+    </span>
+    <span class="pill" id="botpill"><span class="dot"></span><span>…</span></span>
+    <span class="row">
+      <button class="small primary" id="b-start">Start</button>
+      <button class="small" id="b-restart">Restart</button>
+      <button class="small" id="b-stop">Stop</button>
+    </span>
+    <span class="spacer"></span>
+    <span class="pill" id="logpill" title="Warnings and errors from the bot - open the Logs tab">log</span>
     <span class="meta" id="meta"></span>
-  </header>
-  <div class="offline" id="offline">Lost contact with the bot. Is it still running?</div>
-  <div class="status" id="status"><span class="dot"></span><span></span></div>
-
-  <div class="grid cards">
-    <div class="panel"><div class="label">Balance</div><div class="value" id="balance">–</div></div>
-    <div class="panel"><div class="label">Today's P&amp;L</div><div class="value" id="daypnl">–</div></div>
-    <div class="panel"><div class="label">Open P&amp;L</div><div class="value" id="openpnl">–</div></div>
-    <div class="panel"><div class="label">Position</div><div class="value" id="position">–</div></div>
   </div>
+  <div class="offline" id="offline">The dashboard lost contact with the controller. Is the Topstep Bot window still open on your PC?</div>
+  <div class="banner" id="banner" hidden></div>
 
-  <section class="panel" style="margin-top:14px" id="ideas-panel">
-    <h2>Recommended trades right now</h2>
-    <div id="ideas" class="ideas"></div>
-    <p class="hint">★ trades come from your auto-traded strategy (the bot takes them itself). Other ideas come from the other
-      strategies and are only traded if you press Take — re-priced at the market and sized by your risk rules (never larger).
-      Ideas can be taken for 15 minutes.</p>
-  </section>
+  <nav class="tabs">
+    <button data-tab="overview" class="on">Overview</button>
+    <button data-tab="ideas">Ideas <span class="count" id="ideacount" hidden></span></button>
+    <button data-tab="knowledge">Knowledge</button>
+    <button data-tab="settings">Settings</button>
+    <button data-tab="logs">Logs</button>
+  </nav>
 
-  <div class="grid two">
-    <section class="panel">
-      <h2>Guardrails</h2>
-      <div class="meter"><div class="row"><span>Room above Max Loss Limit</span><span id="mll-txt"></span></div><div class="track"><div class="fill" id="mll-bar"></div></div></div>
-      <div class="meter"><div class="row"><span>Daily loss limit used</span><span id="dll-txt"></span></div><div class="track"><div class="fill" id="dll-bar"></div></div></div>
-      <div class="meter" id="target-meter"><div class="row"><span>Combine profit target</span><span id="tgt-txt"></span></div><div class="track"><div class="fill" id="tgt-bar"></div></div></div>
-      <div class="meter"><div class="row"><span>Trades today</span><span id="trades-txt"></span></div><div class="track"><div class="fill" id="trades-bar"></div></div></div>
-    </section>
-    <section class="panel">
-      <h2>Current trade</h2>
-      <div id="trade"></div>
-      <h2 style="margin-top:14px">Strategy</h2>
-      <dl id="strategy"></dl>
-    </section>
-  </div>
-
-  <section class="panel" style="margin-top:14px">
-    <h2>Recommendation history &amp; results</h2>
-    <div id="scoreboard" class="hint" style="margin:0 0 8px"></div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Time</th><th>Strategy</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Stop</th>
-        <th class="num">Target</th><th class="num">Risk</th><th class="num">R:R</th><th>Status</th><th class="num">Result</th><th>Notes</th></tr></thead>
-      <tbody id="recs"></tbody></table></div>
-    <p class="hint">Results for ideas that weren't traded are hypothetical: followed bar by bar to the stop, target or session end
-      (stop first if a bar touches both).</p>
-  </section>
-
-  <div class="grid two">
-    <section class="panel">
-      <h2>Settings <span class="label">(changes apply immediately and are saved; config.yaml is not rewritten)</span></h2>
-      <div id="settings" class="settings"><div class="empty">Loading…</div></div>
-      <div class="buttons" style="margin-top:10px"><button class="small" id="reset">Undo all changes (back to config.yaml)</button></div>
-      <p class="hint">Bounds keep every value within safe limits for your plan. Topstep's own rules, the mode (paper/live),
-        account and symbol can only be changed on your PC.</p>
-    </section>
-    <section class="panel">
-      <h2>Controls</h2>
-      <div class="buttons">
-        <button id="pause">Pause new trades</button>
-        <button id="resume">Resume</button>
-        <button id="flatten" class="danger">Flatten &amp; halt</button>
-        <button id="stop">Stop bot</button>
+  <!-- OVERVIEW -->
+  <section class="tab on" id="tab-overview">
+    <div class="grid cards">
+      <div class="panel"><div class="label">Balance</div><div class="value" id="balance">–</div></div>
+      <div class="panel"><div class="label">Today's P&amp;L</div><div class="value" id="daypnl">–</div></div>
+      <div class="panel"><div class="label">Open P&amp;L</div><div class="value" id="openpnl">–</div></div>
+      <div class="panel"><div class="label">Position</div><div class="value" id="position">–</div></div>
+    </div>
+    <div class="grid two" style="margin-top:12px">
+      <div class="panel">
+        <h2>Guardrails</h2>
+        <div class="meter"><div class="mrow"><span>Room above Max Loss Limit</span><span id="mll-txt"></span></div><div class="track"><div class="fill" id="mll-bar"></div></div></div>
+        <div class="meter"><div class="mrow"><span>Daily loss limit used</span><span id="dll-txt"></span></div><div class="track"><div class="fill" id="dll-bar"></div></div></div>
+        <div class="meter" id="target-meter"><div class="mrow"><span>Combine profit target</span><span id="tgt-txt"></span></div><div class="track"><div class="fill" id="tgt-bar"></div></div></div>
+        <div class="meter"><div class="mrow"><span>Trades today</span><span id="trades-txt"></span></div><div class="track"><div class="fill" id="trades-bar"></div></div></div>
+        <div class="row" style="margin-top:4px">
+          <button class="small" id="pause">Pause new trades</button>
+          <button class="small" id="resume">Resume</button>
+          <button class="small danger" id="flatten">Flatten &amp; halt</button>
+        </div>
+        <p class="hint">Pause blocks automatic entries (an open trade keeps its stop; you can still take ideas). Flatten &amp; halt
+          closes everything and stops trading until the bot is restarted.</p>
       </div>
-      <p class="hint">Pause keeps any open trade (with its stop) but blocks automatic entries — you can still Take ideas.
-        Flatten &amp; halt closes everything and stops trading until you restart the bot.</p>
-      <h2 style="margin-top:14px">Activity</h2>
-      <div class="log" id="log"></div>
-      <details id="problems" style="margin-top:10px"><summary class="label">Recent warnings &amp; errors</summary><div class="log" id="errors"></div></details>
-    </section>
-  </div>
+      <div class="panel">
+        <h2>Current trade</h2>
+        <div id="trade"></div>
+        <h2 style="margin-top:14px">Strategy</h2>
+        <dl id="strategy"></dl>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:12px"><h2>Activity</h2><div class="feed" id="activity"></div></div>
+  </section>
+
+  <!-- IDEAS -->
+  <section class="tab" id="tab-ideas">
+    <div class="panel">
+      <h2>Recommended right now</h2>
+      <div id="ideas" class="ideas"></div>
+      <p class="hint">★ = your auto-traded strategy (the bot takes these itself). Other ideas are only traded if you press Take:
+        re-priced at the market, protected by a stop and sized by your risk rules — never larger. Ideas can be taken for 15 minutes.</p>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <h2>Today's results</h2>
+      <div id="scoreboard" class="meta" style="margin-bottom:8px"></div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Time</th><th>Strategy</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Stop</th>
+          <th class="num">Target</th><th class="num">Risk</th><th class="num">R:R</th><th>Status</th><th class="num">Result</th><th>Notes</th></tr></thead>
+        <tbody id="recs"></tbody></table></div>
+      <p class="hint">* hypothetical: ideas that weren't traded are followed to their stop, target or the session end (stop first if a bar touches both).</p>
+    </div>
+  </section>
+
+  <!-- KNOWLEDGE -->
+  <section class="tab" id="tab-knowledge">
+    <div class="panel">
+      <div class="row"><h2 style="margin:0">What works when</h2><span class="spacer"></span><button class="small" id="train">Retrain now</button></div>
+      <div id="kb-meta" class="meta" style="margin:6px 0 10px"></div>
+      <div class="tablewrap"><table id="kb-table"><thead></thead><tbody></tbody></table></div>
+      <p class="hint">Average result per signal in R (1R = the risk of that trade) and the number of signals seen, by time of day
+        (Chicago) and volatility regime. <span class="kb ok">✔</span> the Adaptive strategy trades it now,
+        <span class="kb bad">✘</span> switched off because it has been losing, <span class="kb unk">?</span> not enough evidence yet.
+        The bot adds every signal it sees — traded or not — while it runs, and retrains on recent history each day. Older evidence fades out.</p>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="tab" id="tab-settings">
+    <div class="panel">
+      <div class="row"><h2 style="margin:0">Settings</h2><span class="spacer"></span><button class="small" id="reset">Undo all changes</button></div>
+      <div id="settings" style="margin-top:6px"></div>
+      <p class="hint">Changes apply immediately, are saved, and are listed in Activity. Bounds keep every value safe for your plan.
+        config.yaml is never rewritten — “Undo all changes” goes back to it. Topstep's own rules, the account and the symbol
+        can only be changed on your PC.</p>
+    </div>
+  </section>
+
+  <!-- LOGS -->
+  <section class="tab" id="tab-logs">
+    <div class="grid two">
+      <div class="panel"><h2>Bot process events</h2><div class="feed" id="ctlevents"></div></div>
+      <div class="panel"><h2>Recent warnings &amp; errors</h2><pre id="log-errors">…</pre></div>
+    </div>
+    <div class="panel" style="margin-top:12px" id="crashpanel" hidden><h2>Latest crash report</h2><pre id="log-crash"></pre></div>
+    <div class="panel" style="margin-top:12px">
+      <div class="row"><h2 style="margin:0">Bot log (latest)</h2><span class="spacer"></span><button class="small" id="reloadlogs">Refresh</button></div>
+      <pre id="log-bot" style="margin-top:8px">…</pre>
+      <p class="hint" id="logfolder"></p>
+    </div>
+  </section>
 </main>
 <div class="toast" id="toast"></div>
+
 <script>
 const TOKEN = "__TOKEN__";
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const money = v => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
 const money0 = v => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, {maximumFractionDigits:0});
-function setMoney(id, v) { const e = $(id); e.textContent = money(v); e.classList.toggle("neg", v < 0); }
-function meter(id, frac, text, color) { $(id + "-bar").style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
-  $(id + "-bar").style.background = color || css("--accent"); $(id + "-txt").textContent = text; }
-function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-let toastTimer;
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let S = null, settingsBuilt = false, toastTimer;
+
 function toast(msg, bad) { const t = $("toast"); t.textContent = msg; t.className = "toast" + (bad ? " bad" : "");
   t.style.display = "block"; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = "none", 5000); }
-async function post(name, body) {
+async function post(path, body) {
   let r;
   try {
-    r = await fetch("/api/" + name, {method:"POST", headers:{"X-Token": TOKEN, "Content-Type":"application/json"},
+    r = await fetch("/api/" + path, {method:"POST", headers:{"X-Token": TOKEN, "Content-Type":"application/json"},
       body: JSON.stringify(body || {})});
-  } catch (e) { return {ok: false, message: "Could not reach the bot - is it still running?"}; }
+  } catch (e) { return {ok: false, message: "No connection to the controller - is the Topstep Bot window still open?"}; }
   let data = {}; try { data = await r.json(); } catch (e) { data = {ok: r.ok}; }
-  if (!r.ok && !data.message) data = {ok: false, message: `The bot refused that request (${r.status}). Reload this page and try again.`};
+  if (!r.ok && !data.message) data = {ok: false, message: `The controller refused that request (${r.status}). Reload this page and try again.`};
   return data;
 }
-async function act(name, confirmText) {
+async function run(path, body, confirmText) {
   if (confirmText && !confirm(confirmText)) return;
-  const d = await post(name); if (d.message) toast(d.message, d.ok === false); refresh(); }
-$("pause").onclick = () => act("pause");
-$("resume").onclick = () => act("resume");
-$("flatten").onclick = () => act("flatten", "Close the position, cancel orders and halt trading?");
-$("stop").onclick = () => act("stop", "Stop the bot? (It flattens first if configured to.)");
-$("reset").onclick = async () => {
-  if (!confirm("Undo every setting changed from the dashboard or Telegram and go back to config.yaml?")) return;
-  const d = await post("reset_settings"); toast(d.message || "Done", d.ok === false); settingsBuilt = false; refresh(); };
-
-// ---------------------------------------------------------------- ideas
-async function takeIdea(id, size, summary) {
-  if (!confirm(`Take ${summary}?\n\nIt will be re-priced at the current market and protected by its stop. Size never exceeds what your risk rules allow.`)) return;
-  const d = await post("take_idea", {id, size});
-  toast(d.message || (d.ok ? "Order sent" : "Failed"), d.ok === false); refresh();
+  const d = await post(path, body); if (d.message) toast(d.message, d.ok === false); refresh();
 }
-function renderIdeas(recs, s) {
+
+// ---- tabs
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll("section.tab").forEach(x => x.classList.toggle("on", x.id === "tab-" + b.dataset.tab));
+  if (b.dataset.tab === "logs") loadLogs();
+});
+const openTab = name => document.querySelector(`.tabs button[data-tab="${name}"]`).click();
+
+// ---- process + mode controls
+$("b-start").onclick = () => run("bot/start", {}, S && S.controller.mode === "live" ? "Start the bot in LIVE mode (real orders)?" : null);
+$("b-restart").onclick = () => run("bot/restart", {}, "Restart the bot? Any open position is closed first.");
+$("b-stop").onclick = () => run("bot/stop", {}, "Stop the bot? Any open position is closed first. The dashboard stays online.");
+$("m-paper").onclick = () => { if (S && S.controller.mode !== "paper") run("mode", {mode:"paper"}, "Switch to PAPER mode? The bot restarts with simulated orders."); };
+$("m-live").onclick = async () => {
+  if (!S || S.controller.mode === "live") return;
+  const typed = prompt("Switch to LIVE trading with REAL orders on your TopstepX account?\n\nType LIVE to confirm:");
+  if (typed === null) return;
+  run("mode", {mode:"live", confirm:typed});
+};
+$("pause").onclick = () => run("action/pause");
+$("resume").onclick = () => run("action/resume");
+$("flatten").onclick = () => run("action/flatten", {}, "Close the position, cancel orders and halt trading?");
+$("reset").onclick = () => { settingsBuilt = false; run("action/reset_settings", {}, "Undo every setting changed here or in Telegram (back to config.yaml)?"); };
+$("logpill").onclick = () => openTab("logs");
+$("reloadlogs").onclick = loadLogs;
+$("train").onclick = async () => {
+  if (!confirm("Retrain the knowledge base on recent history now? The bot keeps trading meanwhile; it takes a few seconds.")) return;
+  $("train").disabled = true; toast("Training…"); await run("action/train"); $("train").disabled = false;
+};
+
+// ---- rendering helpers
+function setMoney(id, v) { const e = $(id); e.textContent = money(v); e.classList.toggle("neg", v < 0); }
+function meter(id, frac, text, color) { $(id + "-bar").style.width = Math.max(0, Math.min(1, frac || 0)) * 100 + "%";
+  $(id + "-bar").style.background = color || css("--accent"); $(id + "-txt").textContent = text; }
+const STATES = {running:["--good","Running"], starting:["--warn","Starting…"], restarting:["--warn","Restarting…"],
+  stopping:["--warn","Stopping…"], stopped:["--muted","Stopped"], crashed:["--crit","Crashed"], failed:["--crit","Failed to start"]};
+
+function renderTop(s) {
+  const c = s.controller, live = c.mode === "live";
+  $("m-paper").classList.toggle("on", !live); $("m-live").classList.toggle("on", live);
+  const [color, label] = STATES[c.state] || ["--muted", c.state];
+  $("botpill").querySelector(".dot").style.background = css(color);
+  $("botpill").lastChild.textContent = `Bot: ${label}${c.state === "running" && c.uptime !== "-" ? " · " + c.uptime : ""}`;
+  const up = ["running","starting","restarting","stopping"].includes(c.state);
+  $("b-start").disabled = up; $("b-stop").disabled = !up; $("b-restart").disabled = c.state === "stopping";
+  const b = s.bot;
+  $("meta").textContent = b ? `${b.account} · ${b.plan} · ${b.contract} ${b.timeframe}m · ${b.time}` : (c.telegram ? "Telegram control on" : "");
+  const lp = $("logpill");
+  if (s.log) { lp.textContent = `log: ${s.log.errors} error${s.log.errors === 1 ? "" : "s"}, ${s.log.warnings} warning${s.log.warnings === 1 ? "" : "s"}`;
+    lp.style.color = s.log.errors ? css("--crit") : ""; } else { lp.textContent = "logs"; lp.style.color = ""; }
+
+  // banner: anything you should know right now
+  const bn = $("banner"); let html = "", cls = "";
+  if (!up) {
+    const ex = c.last_exit;
+    cls = c.state === "stopped" ? "warn" : "bad";
+    html = `<b>The bot is ${esc(label.toLowerCase())}.</b><span class="meta">${ex ? `Last exit: ${esc(ex.reason)} (code ${ex.code}, ${esc(ex.at)})` : "Press Start to run it."}</span>
+      <span class="spacer"></span><button class="small primary" onclick="document.getElementById('b-start').click()">Start bot</button>
+      <button class="small" onclick="openTab('logs')">See logs</button>`;
+  } else if (c.state !== "running") {
+    cls = "warn"; html = `<b>${esc(label)}</b><span class="meta">Connecting to TopstepX and loading history…</span>`;
+  } else if (b && (b.halted || b.risk.locked || b.risk.paused)) {
+    cls = "warn"; html = `<b>${b.halted ? "Halted" : b.risk.paused ? "Automatic entries paused" : "Done for today"}</b>
+      <span class="meta">${esc(b.halted || b.risk.locked || "You can still take ideas manually.")}</span>`;
+  }
+  bn.hidden = !html; bn.className = "banner " + cls; bn.innerHTML = html;
+}
+
+function renderOverview(b) {
+  ["pause","resume","flatten"].forEach(id => $(id).disabled = !b);
+  if (!b) {
+    ["balance","daypnl","openpnl","position"].forEach(id => $(id).textContent = "–");
+    $("trade").innerHTML = `<div class="empty">Bot not running.</div>`; $("strategy").innerHTML = "";
+    $("activity").innerHTML = `<div class="empty">Start the bot to see its activity.</div>`; return;
+  }
+  const r = b.risk;
+  setMoney("balance", b.balance); setMoney("daypnl", r.day_pnl); setMoney("openpnl", b.open_pnl);
+  $("position").textContent = b.position === 0 ? "Flat" : `${b.position > 0 ? "Long" : "Short"} ${Math.abs(b.position)}`;
+  const room = r.mll_room / (r.mll_size || 2000);
+  meter("mll", room, `${money(r.mll_room)} (floor ${money(r.mll_floor)})`, room < .25 ? css("--crit") : room < .5 ? css("--warn") : css("--good"));
+  const used = Math.max(0, -r.day_pnl) / r.daily_loss_limit;
+  meter("dll", used, `${money(Math.max(0, -r.day_pnl))} of ${money(r.daily_loss_limit)}`, used > .75 ? css("--crit") : used > .5 ? css("--warn") : css("--accent"));
+  if (b.profit_target) { $("target-meter").hidden = false; meter("tgt", b.total_profit / b.profit_target, `${money(b.total_profit)} of ${money(b.profit_target)}`); }
+  else $("target-meter").hidden = true;
+  meter("trades", r.trades_today / r.max_trades, `${r.trades_today} of ${r.max_trades}`);
+  const t = b.trade;
+  $("trade").innerHTML = t ? `<dl><dt>Side</dt><dd>${esc(t.side)} ${t.size}</dd><dt>State</dt><dd>${esc(t.state)}</dd>
+    <dt>Entry</dt><dd>${t.entry_price ?? "pending"}</dd><dt>Stop</dt><dd>${t.stop_price}</dd><dt>Target</dt><dd>${t.target_price ?? "–"}</dd>
+    <dt>Why</dt><dd style="white-space:normal">${esc(t.reason)}</dd></dl>`
+    : `<div class="empty">No open trade.${b.last_trade ? ` Last: ${esc(b.last_trade.side)} ${money(b.last_trade.net_pnl)} (${esc(b.last_trade.exit_reason)})` : ""}</div>`;
+  const rows = [["Auto-traded", b.strategy], ["Time of day", `${b.slot} · ${b.regime}`],
+    ["Risk per trade", money0(r.risk_per_trade) + (r.risk_scale < 1 ? " (ramp-up)" : "")],
+    ["Last bar", b.last_bar ? b.last_bar.replace("T", " ").slice(0, 16) + " UTC" : "–"], ["Last price", b.last_price ?? "–"]];
+  for (const [k, v] of Object.entries(b.strategy_state || {})) rows.push([k.replace(/_/g, " "), v ?? "–"]);
+  $("strategy").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  $("activity").innerHTML = (b.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(11, 19))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">Nothing yet.</div>`;
+}
+
+async function takeIdea(id, size, summary) {
+  if (!confirm(`Take ${summary}?\n\nIt is re-priced at the current market and protected by its stop. The size never exceeds what your risk rules allow.`)) return;
+  run("action/take_idea", {id, size});
+}
+function renderIdeas(b) {
+  const recs = b && b.recommendations;
   const box = $("ideas");
-  const open = (recs && recs.open) || [];
-  const recent = (recs && recs.items || []).filter(r => r.status === "taken" && !r.result).slice(0, 1);
-  const cards = [...recent, ...open];
-  if (!recs) { box.innerHTML = `<div class="empty">Recommendations are turned off.</div>`; return; }
-  if (!cards.length) { box.innerHTML = `<div class="empty">No live ideas right now. They appear when a strategy signals on a closed bar.</div>`; return; }
-  const flat = s.position === 0 && !s.trade;
+  if (!b) { box.innerHTML = `<div class="empty">Start the bot to see recommendations.</div>`; $("recs").innerHTML = ""; $("scoreboard").textContent = ""; $("ideacount").hidden = true; return; }
+  if (!recs) { box.innerHTML = `<div class="empty">Recommendations are turned off (recommendations.enabled).</div>`; return; }
+  const cards = [...(recs.items || []).filter(r => r.status === "taken" && !r.result).slice(0, 1), ...(recs.open || [])];
+  const ic = $("ideacount"); ic.hidden = !recs.open.length; ic.textContent = recs.open.length;
+  const flat = b.position === 0 && !b.trade;
   box.innerHTML = cards.map(r => {
-    const summary = `${r.side} ${r.size} ${s.contract} (${r.title})`;
     const blocked = (r.note || "").startsWith("outside your rules");
     const canTake = !r.active && r.size > 0 && flat && r.status !== "taken" && !blocked;
     const half = Math.max(1, Math.floor(r.size / 2));
+    const sum = n => esc(`${r.side} ${n} ${b.contract} (${r.title})`);
     return `<div class="idea">
-      <div class="top"><span>${r.active ? "★ " : ""}${esc(r.title)}</span><span class="side-${esc(r.side)}">${esc(r.side)} ${r.size || "–"}</span></div>
+      <div class="t"><span>${r.active ? "★ " : ""}${esc(r.title)}</span><span class="side-${esc(r.side)}">${esc(r.side)} ${r.size || "–"}</span></div>
       <div class="why">${esc(r.reason)}</div>
       <dl><dt>Entry ~</dt><dd>${r.entry}</dd><dt>Stop</dt><dd>${r.stop ?? "–"}</dd><dt>Target</dt><dd>${r.target ?? "trail / session end"}</dd>
-        <dt>Risk</dt><dd>${money0(r.risk_usd)}${r.rr ? ` · R:R ${r.rr}` : ""}</dd>
-        ${r.note ? `<dt>Note</dt><dd style="white-space:normal">${esc(r.note)}</dd>` : ""}</dl>
-      ${r.status === "taken" ? `<span class="tag auto">taken by the bot</span>` :
-        canTake ? `<div class="buttons"><button class="small primary" data-take="${esc(r.id)}" data-size="${r.size}" data-sum="${esc(summary)}">Take ${r.size}</button>
-                   ${r.size > 1 ? `<button class="small" data-take="${esc(r.id)}" data-size="${half}" data-sum="${esc(r.side + " " + half + " " + s.contract + " (" + r.title + ")")}">Take ${half}</button>` : ""}</div>`
+        <dt>Risk</dt><dd>${money0(r.risk_usd)}${r.rr ? ` · R:R ${r.rr}` : ""}</dd>${r.note ? `<dt>Note</dt><dd style="white-space:normal">${esc(r.note)}</dd>` : ""}</dl>
+      ${r.status === "taken" ? `<span class="tag auto">taken</span>` : canTake
+        ? `<div class="row"><button class="small primary" data-take="${esc(r.id)}" data-size="${r.size}" data-sum="${sum(r.size)}">Take ${r.size}</button>${r.size > 1
+            ? `<button class="small" data-take="${esc(r.id)}" data-size="${half}" data-sum="${sum(half)}">Take ${half}</button>` : ""}</div>`
         : `<span class="tag">${blocked ? "blocked by your rules" : flat ? "can't be taken" : "already in a trade"}</span>`}
-    </div>`; }).join("");
-  box.querySelectorAll("[data-take]").forEach(b => b.onclick = () => takeIdea(b.dataset.take, +b.dataset.size, b.dataset.sum));
-}
-function renderRecs(recs) {
-  if (!recs) { $("recs").innerHTML = `<tr><td colspan="12" class="empty">Recommendations are turned off.</td></tr>`; $("scoreboard").textContent = ""; return; }
-  $("scoreboard").innerHTML = "Today: " + (recs.summary || []).map(x =>
-    `${x.active ? "★ " : ""}${esc(x.title)}: ${x.ideas} idea${x.ideas === 1 ? "" : "s"}, ${x.wins}/${x.closed} won, <span class="${x.pnl < 0 ? "neg" : x.pnl > 0 ? "pos" : ""}">${money0(x.pnl)}</span>`).join(" · ");
+    </div>`; }).join("") || `<div class="empty">No live ideas right now — they appear when a strategy signals on a closed bar.</div>`;
+  box.querySelectorAll("[data-take]").forEach(x => x.onclick = () => takeIdea(x.dataset.take, +x.dataset.size, x.dataset.sum));
+  $("scoreboard").innerHTML = (recs.summary || []).map(x => `${x.active ? "★ " : ""}${esc(x.title)}: ${x.ideas} idea${x.ideas === 1 ? "" : "s"}, ${x.wins}/${x.closed} won,
+    <span class="${x.pnl < 0 ? "neg" : x.pnl > 0 ? "pos" : ""}">${money0(x.pnl)}</span>`).join(" &nbsp;·&nbsp; ");
   $("recs").innerHTML = (recs.items || []).map(r => {
     const res = r.result ? `<span class="${r.result === "won" ? "pos" : r.result === "lost" ? "neg" : ""}">${r.outcome_usd != null ? money0(r.outcome_usd) : (r.outcome_r ?? 0) + "R"}${r.hypothetical ? "*" : ""}</span>` : "–";
-    return `<tr><td>${esc(r.time)}</td><td>${r.active ? `<span class="tag auto">★ auto</span> ` : ""}${esc(r.title)}</td>
-      <td class="side-${esc(r.side)}">${esc(r.side)}</td><td class="num">${r.size || "–"}</td><td class="num">${r.entry}</td>
-      <td class="num">${r.stop ?? "–"}</td><td class="num">${r.target ?? "–"}</td><td class="num">${money0(r.risk_usd)}</td>
-      <td class="num">${r.rr ?? "–"}</td><td>${esc(r.status)}${r.result ? " · " + esc(r.result) : ""}</td><td class="num">${res}</td>
-      <td class="note">${esc(r.note || r.reason)}</td></tr>`; }).join("") || `<tr><td colspan="12" class="empty">No recommendations yet today.</td></tr>`;
+    return `<tr><td>${esc(r.time)}</td><td>${r.active ? `<span class="tag auto">★</span> ` : ""}${esc(r.title)}</td><td class="side-${esc(r.side)}">${esc(r.side)}</td>
+      <td class="num">${r.size || "–"}</td><td class="num">${r.entry}</td><td class="num">${r.stop ?? "–"}</td><td class="num">${r.target ?? "–"}</td>
+      <td class="num">${money0(r.risk_usd)}</td><td class="num">${r.rr ?? "–"}</td><td>${esc(r.status)}${r.result ? " · " + esc(r.result) : ""}</td>
+      <td class="num">${res}</td><td class="note">${esc(r.note || r.reason)}</td></tr>`; }).join("") || `<tr><td colspan="12" class="empty">No recommendations yet today.</td></tr>`;
 }
 
-// ---------------------------------------------------------------- settings
-let settingsBuilt = false;
+function renderKnowledge(b) {
+  const k = b && b.knowledge, head = $("kb-table").querySelector("thead"), body = $("kb-table").querySelector("tbody");
+  $("train").disabled = !k;
+  if (!b) { $("kb-meta").textContent = "Start the bot to see what it has learned."; head.innerHTML = body.innerHTML = ""; return; }
+  if (!k) { $("kb-meta").textContent = "The knowledge base is turned off (knowledge.enabled)."; head.innerHTML = body.innerHTML = ""; return; }
+  const c = k.counts, t = k.trained;
+  $("kb-meta").innerHTML = `${k.total} observations — training ${c.train}, live ideas ${c.shadow}, real trades ${c.real}. ` +
+    (t ? `Last trained ${esc(t.at.slice(0, 16).replace("T", " "))} on ${t.days} days (${esc(t.from)} → ${esc(t.to)}).` : `<span class="neg">Not trained yet — press Retrain now.</span>`) +
+    ` Now: <b>${esc(k.now.slot)}</b> / <b>${esc(k.now.regime)}</b>. Auto-traded: ${esc(b.strategy)}.`;
+  head.innerHTML = `<tr><th>Strategy</th>${k.slots.map(s => `<th class="${s === k.now.slot ? "now" : ""}">${esc(s)}</th>`).join("")}<th class="num">overall</th></tr>`;
+  body.innerHTML = k.strategies.map(row => `<tr><td>${esc(row.title)}</td>${k.slots.map(s => `<td class="${s === k.now.slot ? "now" : ""}"><div class="kb-cell">${
+    k.regimes.map(rg => { const cell = row.cells[s + "|" + rg]; const cls = cell.allowed ? "ok" : cell.level !== "unproven" ? "bad" : "unk";
+      const mark = cell.allowed ? "✔" : cell.level !== "unproven" ? "✘" : "?";
+      return `<span class="kb ${cls}" title="${esc(cell.why)}">${mark} ${esc(rg)} ${cell.cell_n ? `${cell.mean_r >= 0 ? "+" : ""}${cell.mean_r.toFixed(2)}R (${cell.cell_n})` : "–"}</span>`; }).join("")
+    }</div></td>`).join("")}<td class="num">${row.overall.n ? `${row.overall.mean_r >= 0 ? "+" : ""}${row.overall.mean_r.toFixed(2)}R (${row.overall.n})` : "–"}</td></tr>`).join("");
+}
+
 function inputFor(x) {
   if (x.kind === "bool") return `<input type="checkbox" data-key="${x.key}" ${x.value ? "checked" : ""}>`;
   if (x.kind === "choice") return `<select data-key="${x.key}">${x.choices.map(c => `<option ${c === x.value ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
@@ -243,85 +410,59 @@ function inputFor(x) {
   const step = x.kind.includes("int") ? 1 : x.kind.includes("money") ? 10 : 0.1;
   return `<input type="number" data-key="${x.key}" step="${step}" ${x.min != null ? `min="${x.min}" max="${x.max}"` : ""} value="${x.value ?? ""}" placeholder="off">`;
 }
-function readInput(el) { return el.type === "checkbox" ? (el.checked ? "on" : "off") : el.value; }
+const readInput = el => el.type === "checkbox" ? (el.checked ? "on" : "off") : el.value;
 async function saveSetting(key, el) {
   const value = readInput(el);
-  const p = await post("preview_setting", {key, value});
+  const p = await post("action/preview_setting", {key, value});
   if (p.ok === false) { toast(p.message, true); return; }
   if (!p.changed) { toast(`${p.label} is already ${p.new ?? "off"}`); return; }
-  const warn = p.riskier ? "\n\n⚠ This increases your risk." : "";
-  if (!confirm(`Change ${p.label}: ${p.old ?? "off"} → ${p.new ?? "off"}?${warn}`)) { settingsBuilt = false; refresh(); return; }
-  const d = await post("set_setting", {key, value});
-  toast(d.message, d.ok === false); el.dataset.dirty = ""; refresh();
+  if (!confirm(`Change ${p.label}: ${p.old ?? "off"} → ${p.new ?? "off"}?${p.riskier ? "\n\n⚠ This increases your risk." : ""}`)) {
+    el.dataset.dirty = ""; settingsBuilt = false; refresh(); return; }
+  el.dataset.dirty = ""; run("action/set_setting", {key, value});
 }
-function renderSettings(list) {
-  const box = $("settings");
-  if (!list) { box.innerHTML = `<div class="empty">Not available.</div>`; return; }
+function renderSettings(b) {
+  const box = $("settings"), list = b && b.settings;
+  $("reset").disabled = !list;
+  if (!list) { box.innerHTML = `<div class="empty">Start the bot to change its settings.</div>`; settingsBuilt = false; return; }
   if (!settingsBuilt) {
-    box.innerHTML = list.map(x => `<div class="setting"><div class="name">${esc(x.label)} <span class="changed" data-changed="${x.key}"></span>
-      <small>${esc(x.help)}${x.min != null ? ` (${x.min}–${x.max})` : ""}</small></div>${inputFor(x)}
+    box.innerHTML = list.map(x => `<div class="setting"><div class="name">${esc(x.label)}<span class="changed" data-changed="${x.key}"></span>
+      <small>${esc(x.help)}${x.min != null ? ` · ${x.min}–${x.max}` : ""}</small></div>${inputFor(x)}
       <button class="small" data-save="${x.key}">Save</button></div>`).join("");
     box.querySelectorAll("input,select").forEach(el => el.addEventListener("input", () => el.dataset.dirty = "1"));
-    box.querySelectorAll("[data-save]").forEach(b => b.onclick = () => saveSetting(b.dataset.save, box.querySelector(`[data-key="${b.dataset.save}"]`)));
+    box.querySelectorAll("[data-save]").forEach(btn => btn.onclick = () => saveSetting(btn.dataset.save, box.querySelector(`[data-key="${btn.dataset.save}"]`)));
     settingsBuilt = true;
   }
-  for (const x of list) {  // refresh values without disturbing what you're typing
+  for (const x of list) {
     const el = box.querySelector(`[data-key="${x.key}"]`);
-    if (el && !el.dataset.dirty && document.activeElement !== el) {
-      if (el.type === "checkbox") el.checked = !!x.value; else el.value = x.value ?? "";
-    }
+    if (el && !el.dataset.dirty && document.activeElement !== el) { if (el.type === "checkbox") el.checked = !!x.value; else el.value = x.value ?? ""; }
     const tag = box.querySelector(`[data-changed="${x.key}"]`); if (tag) tag.textContent = x.changed ? "changed" : "";
   }
 }
 
-// ---------------------------------------------------------------- main render
+function renderLogs(s) {
+  $("ctlevents").innerHTML = (s.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(5, 16))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">No events yet.</div>`;
+}
+async function loadLogs() {
+  try {
+    const d = await (await fetch("/api/logs", {cache:"no-store"})).json();
+    $("log-errors").textContent = d.errors || "No warnings or errors logged.";
+    $("log-bot").textContent = d.bot || "(empty)";
+    $("crashpanel").hidden = !d.crash; $("log-crash").textContent = d.crash || "";
+    $("logfolder").textContent = `Log folder: ${d.folder}  ·  On your PC: start.bat logs --bundle zips them for support.`;
+    $("log-bot").scrollTop = $("log-bot").scrollHeight;
+  } catch (e) { /* offline banner covers it */ }
+}
+
 function render(s) {
-  const live = s.mode === "live";
-  const mode = $("mode"); mode.textContent = live ? "LIVE" : "PAPER"; mode.style.background = live ? css("--live") : css("--paper");
-  const c = $("conn"); c.querySelector(".dot").style.background = s.connected ? css("--good") : css("--crit");
-  c.lastChild.textContent = s.connected ? "connected" : "disconnected";
-  $("meta").textContent = `${s.account} · ${s.plan} · ${s.contract} ${s.timeframe}m · ${s.time}`;
-  if (s.log) {
-    const lh = $("loghealth"); lh.textContent = `log: ${s.log.errors} error${s.log.errors === 1 ? "" : "s"}, ${s.log.warnings} warning${s.log.warnings === 1 ? "" : "s"}`;
-    lh.style.color = s.log.errors ? css("--crit") : ""; lh.onclick = () => { $("problems").open = true; $("problems").scrollIntoView({behavior:"smooth"}); };
-    $("errors").innerHTML = s.log.recent.map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts)}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">None 🎉</div>`;
-  }
-  const r = s.risk;
-  let state = ["--good", "Trading normally"];
-  if (s.halted) state = ["--crit", "Halted: " + s.halted];
-  else if (r.paused) state = ["--warn", "Automatic entries paused (you can still take ideas)"];
-  else if (r.locked) state = ["--warn", "Done for today: " + r.locked];
-  const st = $("status"); st.querySelector(".dot").style.background = css(state[0]); st.lastChild.textContent = state[1];
-  setMoney("balance", s.balance); setMoney("daypnl", r.day_pnl); setMoney("openpnl", s.open_pnl);
-  $("position").textContent = s.position === 0 ? "Flat" : `${s.position > 0 ? "Long" : "Short"} ${Math.abs(s.position)}`;
-
-  const roomFrac = r.mll_room / (r.mll_size || 2000);
-  meter("mll", roomFrac, `${money(r.mll_room)} (floor ${money(r.mll_floor)})`, roomFrac < 0.25 ? css("--crit") : roomFrac < 0.5 ? css("--warn") : css("--good"));
-  const used = Math.max(0, -r.day_pnl) / r.daily_loss_limit;
-  meter("dll", used, `${money(Math.max(0, -r.day_pnl))} of ${money(r.daily_loss_limit)}`, used > 0.75 ? css("--crit") : used > 0.5 ? css("--warn") : css("--accent"));
-  if (s.profit_target) { $("target-meter").style.display = ""; meter("tgt", s.total_profit / s.profit_target, `${money(s.total_profit)} of ${money(s.profit_target)}`); }
-  else $("target-meter").style.display = "none";
-  meter("trades", r.trades_today / r.max_trades, `${r.trades_today} of ${r.max_trades}`);
-
-  const t = s.trade;
-  $("trade").innerHTML = t ? `<dl><dt>Side</dt><dd>${esc(t.side)} ${t.size}</dd><dt>State</dt><dd>${esc(t.state)}</dd>
-    <dt>Entry</dt><dd>${t.entry_price ?? "pending"}</dd><dt>Stop</dt><dd>${t.stop_price}</dd>
-    <dt>Target</dt><dd>${t.target_price ?? "–"}</dd><dt>Why</dt><dd style="white-space:normal">${esc(t.reason)}</dd></dl>`
-    : `<div class="empty">No open trade.${s.last_trade ? ` Last: ${esc(s.last_trade.side)} ${money(s.last_trade.net_pnl)} (${esc(s.last_trade.exit_reason)})` : ""}</div>`;
-  const rows = [["Auto-traded", s.strategy], ["Risk per trade", money0(r.risk_per_trade) + (r.risk_scale < 1 ? " (ramp-up)" : "")],
-    ["Last bar", s.last_bar ? s.last_bar.replace("T", " ").slice(0, 16) + " UTC" : "–"], ["Last price", s.last_price ?? "–"]];
-  for (const [k, v] of Object.entries(s.strategy_state || {})) rows.push([k.replace(/_/g, " "), v ?? "–"]);
-  $("strategy").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
-  $("log").innerHTML = (s.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(11, 19))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">Nothing yet.</div>`;
-  renderIdeas(s.recommendations, s);
-  renderRecs(s.recommendations);
-  renderSettings(s.settings);
+  S = s;
+  renderTop(s); renderOverview(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
 }
 async function refresh() {
   try { const r = await fetch("/api/status", {cache:"no-store"}); render(await r.json()); $("offline").style.display = "none"; }
   catch (e) { $("offline").style.display = "block"; }
 }
 refresh(); setInterval(refresh, 2000);
+setInterval(() => { if ($("tab-logs").classList.contains("on")) loadLogs(); }, 10000);
 </script>
 </body>
 </html>

@@ -14,14 +14,15 @@ import logging
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from topstep_bot.broker.base import Broker
 from topstep_bot.config import BotConfig
 from topstep_bot.execution import ManagedTrade, OrderManager, TradeState
 from topstep_bot.indicators import ATR
 from topstep_bot.journal import Journal
+from topstep_bot.knowledge import RegimeTracker, slot_for
 from topstep_bot.models import Account, Bar, Contract, OrderSide, Signal
 from topstep_bot.notify import Notifier
 from topstep_bot.risk.manager import RiskManager
@@ -33,7 +34,9 @@ log = logging.getLogger(__name__)
 event_log = logging.getLogger("topstep_bot.events")
 
 if TYPE_CHECKING:
+    from topstep_bot.knowledge import KnowledgeBase
     from topstep_bot.recommendations import RecommendationBook
+    from topstep_bot.remote import RemoteControl
 
 _LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING,
            "error": logging.ERROR, "critical": logging.CRITICAL}
@@ -112,12 +115,29 @@ class TradingCore:
         self._last_flatten: datetime | None = None
         self._skip_note: tuple[date | None, str] | None = None
         self.atr = ATR(14)
-        self.recommender: RecommendationBook | None = None  # live/paper only: trade ideas for the dashboard
-        self.remote = None  # RemoteControl: settings/trades from the dashboard and Telegram
+        self.regime = RegimeTracker()  # calm / volatile, for the knowledge base
+        self.recommender: RecommendationBook | None = None  # trade ideas for the dashboard (+ what the bot learns from)
+        self.knowledge: KnowledgeBase | None = None  # what has worked when; drives the adaptive strategy
+        self.remote: RemoteControl | None = None  # settings/trades from the dashboard and Telegram
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
         broker.on_account = self._on_account
+        self._bind_strategy()
+
+    def attach_knowledge(self, knowledge: KnowledgeBase | None) -> None:
+        self.knowledge = knowledge
+        self._bind_strategy()
+
+    def _bind_strategy(self) -> None:
+        """Give a strategy that can use them the knowledge base and the live regime."""
+        bind = getattr(self.strategy, "bind_knowledge", None)
+        if bind:
+            bind(self.knowledge, lambda: self.regime.value)
+
+    def slot(self, ts: datetime | None = None) -> str:
+        """Time-of-day slot (open / midday / close / off) of ``ts`` or now."""
+        return slot_for(self.schedule.local(ts or self.clock()).time())
 
     # ------------------------------------------------------------------ events
 
@@ -196,17 +216,23 @@ class TradingCore:
             warmup=warmup,
         )
 
+    def observe_bar(self, bar: Bar) -> None:
+        """Update the bot's own indicators (ATR, regime) with a closed bar."""
+        self.last_bar = bar
+        self.atr.update(bar.high, bar.low, bar.close)
+        rth = self.schedule.is_rth(bar.ts, self.strategy.rth_open, self.strategy.rth_close)
+        self.regime.update(bar.high, bar.low, bar.close, rth=rth)
+
     def warmup_bar(self, bar: Bar) -> None:
         """Feed history to the strategy so indicators are ready; never trades."""
         day = self.schedule.trading_day(bar.ts)
         if day != self.strategy_day:
             self.strategy.on_new_day(day)
             self.strategy_day = day
-        self.atr.update(bar.high, bar.low, bar.close)
+        self.observe_bar(bar)
         self.strategy.on_bar(bar, self.context(bar, warmup=True))
         if self.recommender:
             self.recommender.warmup_bar(bar)
-        self.last_bar = bar
         if self.last_price is None:
             self.last_price = bar.close
 
@@ -245,14 +271,14 @@ class TradingCore:
         self.strategy_day = self.current_day
         self.orders.strategy_name = new.name
         self.cfg.strategy.name, self.cfg.strategy.params = new.name, {}
+        self._bind_strategy()
 
     async def _process_bar(self, bar: Bar) -> None:
         await self.roll_day_if_needed(bar.ts)
         t = self.orders.trade
         if t is not None and t.state == TradeState.PENDING and t.created_at <= bar.ts:
             await self.orders.cancel_unfilled_entry("price moved away from the signal")
-        self.last_bar = bar
-        self.atr.update(bar.high, bar.low, bar.close)
+        self.observe_bar(bar)
         ctx = self.context(bar)
         signal = self.strategy.on_bar(bar, ctx)
         if signal is not None and signal.action == "exit":
@@ -424,6 +450,24 @@ class TradingCore:
             "exit",
         )
 
+    def knowledge_summary(self) -> dict | None:
+        if self.knowledge is None:
+            return None
+        from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
+
+        names = [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES]
+        return self.knowledge.summary(names, today=self.schedule.trading_day(self.clock()), slot=self.slot(),
+                                      regime=self.regime.value)
+
+    def knowledge_text(self) -> str:
+        if self.knowledge is None:
+            return "The knowledge base is turned off (knowledge.enabled: false)."
+        from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
+
+        names = [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES]
+        return self.knowledge.text(names, today=self.schedule.trading_day(self.clock()), slot=self.slot(),
+                                   regime=self.regime.value)
+
     def snapshot(self) -> dict:
         open_pnl = self.orders.open_pnl()
         equity = self.balance + open_pnl
@@ -457,4 +501,7 @@ class TradingCore:
             "events": list(self.events)[:50],
             "recommendations": self.recommender.snapshot() if self.recommender else None,
             "settings": self.remote.describe() if self.remote else None,
+            "slot": self.slot(),
+            "regime": self.regime.value,
+            "knowledge": self.knowledge_summary(),
         }

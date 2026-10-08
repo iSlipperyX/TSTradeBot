@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import sys
 import webbrowser
@@ -16,7 +17,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from topstep_bot import __version__
-from topstep_bot.config import BotConfig, ConfigError, Secrets, load_config, load_secrets
+from topstep_bot.config import BotConfig, ConfigError, load_config, load_secrets
 
 console = Console()
 UTC = timezone.utc
@@ -234,14 +235,80 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_run(args: argparse.Namespace) -> int:
-    from topstep_bot.dashboard import DashboardServer
-    from topstep_bot.live import Controls, LiveRunner, SetupError
+def _load_bars(cfg: BotConfig, args: argparse.Namespace):
+    """Bars for training/backtesting: --data, else a fresh download (with credentials), else the cached CSV."""
+    from topstep_bot.backtest.data import load_csv
+
+    if args.data:
+        bars = load_csv(args.data, naive_tz=args.tz)
+        console.print(f"Loaded {len(bars):,} bars from {args.data}")
+        return bars
+    cached = cfg.data_path / f"{cfg.instrument.symbol}_1m.csv"
+    if load_secrets().has_credentials:
+        return load_csv(asyncio.run(_download(cfg, args.days, 1)))
+    if cached.exists():
+        console.print(f"[yellow]No credentials - using cached history {cached}[/]")
+        return load_csv(cached)
+    raise SystemExit("No history available: run setup (for downloads) or pass --data <csv>.")
+
+
+def cmd_train(args: argparse.Namespace) -> int:
+    """Teach the bot which strategy works at which time of day, from recent real data."""
+    from topstep_bot.instruments import offline_contract
+    from topstep_bot.knowledge import KnowledgeBase, train_from_bars
+    from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
 
     cfg = _load(args)
-    log_dir = setup_logging(cfg, f"run ({cfg.mode})")
+    args.days = args.days or cfg.knowledge.history_days
+    bars = _load_bars(cfg, args)
+    contract = offline_contract(cfg.instrument.symbol)
+    kb = KnowledgeBase.from_config(cfg, cfg.knowledge_path)
+    with console.status("Replaying every strategy through the history...") as status:
+        result = asyncio.run(train_from_bars(cfg, contract, bars, kb, progress=lambda f: status.update(f"Training... {f:.0%}")))
+    console.print(f"[green]Trained on {result['days']} trading days ({result['from']} to {result['to']}, "
+                  f"{result['bars']:,} bars): {result['observations']} observations.[/]")
+    print_knowledge_table(kb.summary([(n, STRATEGIES[n].title) for n in BASE_STRATEGIES]),
+                          f"{contract.name} {cfg.instrument.timeframe_minutes}m")
+    console.print(f"[dim]Saved to {cfg.knowledge_path}. The running bot keeps adding what it sees and retrains daily.[/]")
+    return 0
+
+
+def print_knowledge_table(summary: dict, what: str) -> None:
+    from topstep_bot.knowledge import REGIMES, SLOT_NAMES
+
+    table = Table(title=f"What works when on {what}  (average R per signal, sample size)", show_lines=True)
+    table.add_column("Strategy", no_wrap=True)
+    for sl in SLOT_NAMES:
+        table.add_column(sl, justify="left", no_wrap=True)
+    table.add_column("overall", justify="right", no_wrap=True)
+    for row in summary["strategies"]:
+        cells = []
+        for sl in SLOT_NAMES:
+            lines = []
+            for rg in REGIMES:
+                c = row["cells"][f"{sl}|{rg}"]
+                mark = "[green]✔[/]" if c["allowed"] else ("[red]✘[/]" if c["level"] != "unproven" else "[dim]?[/]")
+                lines.append(f"{mark} {rg[:4]} {c['mean_r']:+.2f} ({c['cell_n']})" if c["cell_n"] else f"[dim]- {rg[:4]}[/]")
+            cells.append("\n".join(lines))
+        o = row["overall"]
+        table.add_row(row["title"], *cells, f"{o['mean_r']:+.2f} ({o['n']})")
+    console.print(table)
+    console.print("[dim]✔ = the adaptive strategy trades this strategy then, ✘ = switched off (losing), ? = not enough evidence. "
+                  "calm/vola = volatility regime. Chicago time: open 08:30-10:00, midday 10:00-13:00, close 13:00-15:10.[/]")
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """The trading bot itself, without a dashboard. Normally launched by the controller ('start')."""
+    import os
+
+    from topstep_bot.live import Controls, LiveRunner, SetupError
+    from topstep_bot.service import RESTART_EXIT_CODE, write_exit_note
+
+    cfg = _load(args)
+    log_dir = setup_logging(cfg, f"bot ({cfg.mode})")
     secrets = load_secrets()
-    if cfg.mode == "live":
+    supervised = os.environ.get("TOPSTEP_BOT_SUPERVISED") == "1"
+    if cfg.mode == "live" and not args.yes and not supervised:
         console.print(
             Panel(
                 "[bold red]LIVE MODE[/] - the bot will place REAL orders on your TopstepX account.\n"
@@ -251,113 +318,62 @@ def cmd_run(args: argparse.Namespace) -> int:
                 border_style="red",
             )
         )
-        if not args.yes and Prompt.ask("Type LIVE to continue") != "LIVE":
+        if Prompt.ask("Type LIVE to continue") != "LIVE":
             console.print("Cancelled.")
             return 1
+    if not secrets.has_credentials:
+        console.print("[red]No TopstepX credentials found.[/] Run [bold]topstep-bot setup[/] first.")
+        write_exit_note(2, "no TopstepX credentials - run setup")
+        return 2
 
     controls = Controls()
-    runner = LiveRunner(cfg, secrets, controls) if secrets.has_credentials else None
-    if runner is None:
-        console.print("[red]No TopstepX credentials found.[/] Run [bold]topstep-bot setup[/] first.")
-        return 2
-    dashboard: list[DashboardServer] = []
-    telegram: list = []
-    background: list[asyncio.Task] = []
+    runner = LiveRunner(cfg, secrets, controls)
+    servers: list = []
 
     async def on_ready(core) -> None:
         from topstep_bot.control import BotActions
+        from topstep_bot.worker_api import start_worker_api
 
-        actions = BotActions(core, controls)
-        await _start_telegram(cfg, secrets, actions, telegram, background, announce=not runner.quiet_start)
-        if args.no_dashboard or not cfg.dashboard.enabled:
-            return
-        server = DashboardServer(
-            cfg.dashboard.host,
-            cfg.dashboard.port,
-            core.snapshot,
-            {
-                **{name: (lambda payload, fn=getattr(actions, name): fn("dashboard"))
-                   for name in ("pause", "resume", "flatten", "stop")},
-                "preview_setting": lambda p: actions.preview_setting(p.get("key", ""), p.get("value")),
-                "set_setting": lambda p: actions.change_setting(p.get("key", ""), p.get("value"), "dashboard"),
-                "reset_settings": lambda p: actions.reset_settings("dashboard"),
-                "take_idea": lambda p: actions.take_idea(str(p.get("id", "")), "dashboard",
-                                                         int(p["size"]) if p.get("size") else None),
-            },
-            log_stats=True,
-        )
-        try:
-            await server.start()
-        except OSError as exc:
-            log.warning("Dashboard could not start on port %s: %s", cfg.dashboard.port, exc)
-            return
-        dashboard.append(server)
-        console.print(f"Dashboard: [bold]{server.url}[/]")
-        if cfg.dashboard.open_browser and not args.no_browser:
-            webbrowser.open(server.url)
+        server = await start_worker_api(BotActions(core, controls, retrain=runner.retrain), core.snapshot)
+        if server:
+            servers.append(server)
 
     async def main() -> None:
         try:
             await runner.run(on_ready)
         finally:
-            for task in background:
-                task.cancel()
-            for controller in telegram:
-                if controls.failure and runner.supervised:
-                    pass  # the 24/7 service restarts the bot and sends its own alert
-                elif controls.failure:
-                    await controller.send(f"⛔ Topstep Bot stopped after an internal error: {controls.failure}. "
-                                          "Check logs/bot.log and restart it on your PC.")
-                elif not controls.restart_requested:
-                    await controller.send("⏹ Topstep Bot has stopped. Restart it on your PC to resume.")
-                await controller.close()
-            for server in dashboard:
+            for server in servers:
                 await server.stop()
 
     from topstep_bot.keepawake import console_stays_responsive, keep_awake
-    from topstep_bot.service import RESTART_EXIT_CODE
 
     try:
         with keep_awake(cfg.service.keep_awake), console_stays_responsive():
             asyncio.run(main())
     except SetupError as exc:
         log.error("Could not start: %s", exc)
+        write_exit_note(2, str(exc))
         return 2
     except KeyboardInterrupt:
         controls.stop_reason = controls.stop_reason or "Ctrl+C"
-        console.print("Stopped.")
-    except Exception:
+    except Exception as exc:
         log.critical("The bot crashed. Details are in %s (errors.log and crash_*.txt)", log_dir, exc_info=True)
+        write_exit_note(1, f"crashed: {type(exc).__name__}: {exc}")
         raise
-    log.info("Bot exited. Reason: %s", controls.stop_reason or "normal stop")
-    console.print(f"Stopped ({controls.stop_reason or 'normal stop'}). Logs: {log_dir}")
+    reason = controls.stop_reason or "normal stop"
+    log.info("Bot exited. Reason: %s", reason)
     if controls.failure:
-        console.print(f"[red]The bot stopped itself after an internal error:[/] {controls.failure}. "
-                      f"Details: {log_dir} (errors.log)")
+        # Exit code 1: the controller restarts the bot (with backoff) and sends the alert.
+        write_exit_note(1, f"stopped after an internal error: {controls.failure}")
+        if not supervised:
+            console.print(f"[red]The bot stopped itself after an internal error:[/] {controls.failure}. "
+                          f"Details: {log_dir} (errors.log)")
         return 1
-    return RESTART_EXIT_CODE if controls.restart_requested else 0
-
-
-async def _start_telegram(
-    cfg: BotConfig, secrets: Secrets, actions, telegram: list, background: list, announce: bool = True
-) -> None:
-    """Start two-way Telegram control if a bot token and chat ID are configured."""
-    if not (cfg.telegram.control_enabled and secrets.telegram_bot_token and secrets.telegram_chat_id):
-        return
-    from topstep_bot.telegram_control import TelegramController
-
-    controller = TelegramController(secrets.telegram_bot_token, secrets.telegram_chat_id, actions, cfg.telegram)
-    try:
-        await controller.start(announce=announce)
-    except Exception as exc:  # noqa: BLE001 - trading continues without remote control
-        log.warning("Telegram control could not start: %s", exc)
-        await controller.close()
-        return
-    telegram.append(controller)
-    from topstep_bot.logging_setup import spawn
-
-    background.append(spawn(controller.run(), name="telegram"))
-    console.print("Telegram control: [bold]on[/] - send /help to your bot")
+    code = RESTART_EXIT_CODE if controls.restart_requested else 0
+    write_exit_note(code, reason)
+    if not supervised:
+        console.print(f"Stopped ({reason}). Logs: {log_dir}")
+    return code
 
 
 def _confirm_live(cfg: BotConfig, args: argparse.Namespace, what: str) -> bool:
@@ -368,15 +384,17 @@ def _confirm_live(cfg: BotConfig, args: argparse.Namespace, what: str) -> bool:
     return Prompt.ask("Type LIVE to continue") == "LIVE"
 
 
-def cmd_service(args: argparse.Namespace) -> int:
-    """Run the bot 24/7 on this computer: auto-restart, keep awake, daily maintenance restart."""
-    from topstep_bot.service import run_service
+def cmd_start(args: argparse.Namespace) -> int:
+    """Start the controller: dashboard + Telegram, which run and supervise the trading bot 24/7."""
+    from topstep_bot.controller import resolve_mode, run_controller
 
     cfg = _load(args)
-    if not _confirm_live(cfg, args, "the 24/7 service"):
+    cfg.mode = resolve_mode(cfg, args.mode)
+    if not _confirm_live(cfg, args, "the bot"):
         console.print("Cancelled.")
         return 1
-    return run_service(cfg, load_secrets(), config_path=args.config, mode=args.mode)
+    return run_controller(cfg, load_secrets(), config_path=args.config, mode=cfg.mode,
+                          start_bot=not args.no_bot, open_browser=not args.no_browser)
 
 
 def cmd_autostart(args: argparse.Namespace) -> int:
@@ -487,13 +505,9 @@ def cmd_go_live(args: argparse.Namespace) -> int:
     if Prompt.ask(f"Start LIVE trading on {report.account_name}? Type LIVE", default="") != "LIVE":
         console.print("Cancelled - nothing was started.")
         return 1
-    how = Prompt.ask("Run 24/7 with auto-restart (recommended), or just this session?", choices=["24/7", "session"], default="24/7")
-    if how == "24/7":
-        from topstep_bot.service import run_service
+    from topstep_bot.controller import run_controller
 
-        return run_service(cfg, load_secrets(), config_path=args.config, mode="live")
-    run_args = build_parser().parse_args((["-c", args.config] if args.config else []) + ["run", "--mode", "live", "--yes"])
-    return cmd_run(run_args)
+    return run_controller(cfg, load_secrets(), config_path=args.config, mode="live")
 
 
 def cmd_logs(args: argparse.Namespace) -> int:
@@ -599,10 +613,10 @@ def _pf(v: float) -> str:
     return "∞" if v == float("inf") else f"{v:.2f}"
 
 
-def _print_training(report, cfg: BotConfig) -> None:
+def _print_tuning(report, cfg: BotConfig) -> None:
     f0, f1 = report.folds[0], report.folds[-1]
     console.print(
-        f"\nTrained on {report.first_day} → {report.last_day}: {report.candidates} candidate settings, "
+        f"\nTested {report.first_day} → {report.last_day}: {report.candidates} candidate settings, "
         f"{len(report.folds)} walk-forward windows. Settings were chosen on each train window "
         f"(e.g. {f0.train[0]} → {f0.train[1]}) and judged only on the unseen test window after it "
         f"({f0.test[0]} → {f0.test[1]}, ... , {f1.test[0]} → {f1.test[1]})."
@@ -647,8 +661,8 @@ def _print_training(report, cfg: BotConfig) -> None:
         title="Recommendation", border_style="green"))
 
 
-def cmd_train(args: argparse.Namespace) -> int:
-    """Walk-forward training: which strategy and settings held up on data they never saw."""
+def cmd_tune(args: argparse.Namespace) -> int:
+    """Walk-forward tuning: which strategy and settings held up on data they never saw."""
     import json
     import os
 
@@ -659,14 +673,14 @@ def cmd_train(args: argparse.Namespace) -> int:
     _apply_overrides(cfg, args)
     bars, synthetic = _history(cfg, args, allow_synthetic=args.synthetic)
     if synthetic:
-        console.print("[yellow]Training on synthetic data only demonstrates the process - never save its result.[/]")
+        console.print("[yellow]Tuning on synthetic data only demonstrates the process - never save its result.[/]")
     contract = offline_contract(cfg.instrument.symbol)
     strategies = args.strategies.split(",") if args.strategies else None
     workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 1))
     with console.status("Preparing...") as status:
         report = train(cfg, bars, contract, strategies=strategies, folds=args.folds, workers=workers,
                        progress=lambda i, n: status.update(f"Backtesting candidate settings {i}/{n}..."))
-    _print_training(report, cfg)
+    _print_tuning(report, cfg)
     out = Path(cfg.backtest.report_dir)
     out.mkdir(parents=True, exist_ok=True)
     from topstep_bot.backtest.train_report import write_training_report
@@ -688,11 +702,11 @@ def cmd_train(args: argparse.Namespace) -> int:
     if args.save:
         cfg_path = Path(args.config or "config.yaml")
         backup = save_strategy(cfg_path, rec.strategy, rec.final.params_dict,
-                               note=f"Trained {datetime.now():%Y-%m-%d} on {report.first_day}..{report.last_day} "
-                                    f"(topstep-bot train); previous config saved as {cfg_path.name}.bak")
+                               note=f"Tuned {datetime.now():%Y-%m-%d} on {report.first_day}..{report.last_day} "
+                                    f"(topstep-bot tune); previous config saved as {cfg_path.name}.bak")
         console.print(f"[green]Saved to {cfg_path}[/] (previous version: {backup}). Backtest it with: topstep-bot backtest")
     else:
-        console.print("Not saved. To use it, run train again with --save, or edit strategy: in config.yaml.")
+        console.print("Not saved. To use it, run tune again with --save, or edit strategy: in config.yaml.")
     return 0
 
 
@@ -743,17 +757,17 @@ MENU = [
     ("go-live", "START TRADING TODAY: run all preflight checks, then go live"),
     ("check", "Test the connection to TopstepX"),
     ("backtest", "Backtest the configured strategy and open the report"),
-    ("train", "TRAIN: test every strategy on unseen real data and pick the settings that held up"),
-    ("paper", "Paper trade (real prices, simulated orders) with the dashboard"),
-    ("live", "Trade LIVE on your TopstepX account"),
+    ("train", "TRAIN the bot on recent real data: which strategy works at which time of day"),
+    ("paper", "START in PAPER mode (real prices, simulated orders) - dashboard + Telegram"),
+    ("live", "START in LIVE mode on your TopstepX account - dashboard + Telegram"),
     ("flatten", "EMERGENCY: close all positions and cancel all orders"),
     ("journal", "Show recent trades and daily results"),
     ("strategies", "Describe the available strategies"),
     ("demo", "Quick demo backtest on synthetic data (no account needed)"),
     ("telegram-test", "Send a test message to your Telegram bot"),
-    ("service", "Run 24/7 (auto-restart, keeps the PC awake, daily maintenance restart)"),
     ("autostart", "Start the 24/7 service automatically when Windows starts"),
     ("logs", "Show recent errors and where the log files are"),
+    ("tune", "TUNE: test every strategy on unseen real data and pick the settings that held up"),
 ]
 
 
@@ -769,7 +783,7 @@ def interactive_menu(parser: argparse.ArgumentParser) -> int:
     if choice == "0":
         return 0
     name = MENU[int(choice) - 1][0]
-    argv = {"paper": ["run", "--mode", "paper"], "live": ["run", "--mode", "live"],
+    argv = {"paper": ["start", "--mode", "paper"], "live": ["start", "--mode", "live"],
             "autostart": ["autostart", "on"]}.get(name, [name])
     args = parser.parse_args(argv)
     return dispatch(args)
@@ -786,17 +800,19 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("strategies", help="list strategies and their parameters").set_defaults(func=cmd_strategies)
     sub.add_parser("telegram-test", help="send a test message to your Telegram bot").set_defaults(func=cmd_telegram_test)
 
-    p = sub.add_parser("run", help="start the bot (paper or live)")
-    p.add_argument("--mode", choices=["paper", "live"], help="override mode from config")
-    p.add_argument("--yes", action="store_true", help="skip the live-mode confirmation prompt")
-    p.add_argument("--no-dashboard", action="store_true", help="don't start the web dashboard")
-    p.add_argument("--no-browser", action="store_true", help="don't open the dashboard in a browser")
-    p.set_defaults(func=cmd_run)
+    for name, helptext in (("start", "start the dashboard + Telegram, which run the bot 24/7 (recommended)"),
+                           ("service", "same as 'start' (kept for older shortcuts)")):
+        p = sub.add_parser(name, help=helptext)
+        p.add_argument("--mode", choices=["paper", "live"], help="paper or live (default: last used, else config)")
+        p.add_argument("--yes", action="store_true", help="skip the live-mode confirmation prompt")
+        p.add_argument("--no-bot", action="store_true", help="open the dashboard without starting the bot")
+        p.add_argument("--no-browser", action="store_true", help="don't open the dashboard in a browser")
+        p.set_defaults(func=cmd_start)
 
-    p = sub.add_parser("service", help="run 24/7: auto-restart, keep awake, daily maintenance restart")
+    p = sub.add_parser("run", help="run only the trading bot, without dashboard (normally started by 'start')")
     p.add_argument("--mode", choices=["paper", "live"], help="override mode from config")
     p.add_argument("--yes", action="store_true", help="skip the live-mode confirmation prompt")
-    p.set_defaults(func=cmd_service)
+    p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("autostart", help="start the 24/7 service when you sign in to Windows")
     p.add_argument("action", choices=["on", "off", "status"])
@@ -826,12 +842,18 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--skip-backtest", action="store_true", help="skip the strategy check")
         p.set_defaults(func=func)
 
-    p = sub.add_parser("train", help="walk-forward training: pick the strategy/settings that held up on unseen data")
+    p = sub.add_parser("train", help="learn which strategy works at which time of day from recent real data")
+    p.add_argument("--data", help="CSV of bars to learn from (default: download fresh history)")
+    p.add_argument("--tz", default="UTC", help="timezone for CSV times without one")
+    p.add_argument("--days", type=int, default=None, help="days of history to download (default: knowledge.history_days)")
+    p.set_defaults(func=cmd_train)
+
+    p = sub.add_parser("tune", help="walk-forward test: pick the strategy/settings that held up on unseen data")
     p.add_argument("--data", help="CSV of 1-minute bars (default: data/<SYMBOL>_1m.csv, else download)")
     p.add_argument("--tz", default="UTC", help="timezone for CSV times without one")
     p.add_argument("--download", action="store_true", help="download fresh history from TopstepX first")
     p.add_argument("--days", type=int, default=365, help="days of history to download (default 365; more is better)")
-    p.add_argument("--strategies", help="comma-separated strategies to train (default: all)")
+    p.add_argument("--strategies", help="comma-separated strategies to test (default: all)")
     p.add_argument("--symbol", help="override the symbol")
     p.add_argument("--timeframe", type=int, help="override the bar timeframe in minutes")
     p.add_argument("--folds", type=int, default=4, help="walk-forward windows (default 4)")
@@ -841,7 +863,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--synthetic", action="store_true", help="demo the process on synthetic data (never saved)")
     p.add_argument("--no-open", action="store_true", help="don't open the report in a browser")
     p.add_argument("--seed", type=int, default=7, help=argparse.SUPPRESS)
-    p.set_defaults(func=cmd_train, strategy=None)
+    p.set_defaults(func=cmd_tune, strategy=None)
 
     p = sub.add_parser("download", help="download historical bars to a CSV")
     p.add_argument("--days", type=int, default=90)
@@ -869,10 +891,10 @@ def build_parser() -> argparse.ArgumentParser:
 def dispatch(args: argparse.Namespace) -> int:
     """Run one command. Every failure is shown in plain words and written to a log file, so a
     problem can always be diagnosed afterwards - even if the window has closed."""
-    # cmd_run and the service set up their own logging (bot.log / service.log). Other commands log to
+    # The bot and the controller set up their own logging (bot.log / controller.log). Other commands log to
     # commands.log, so they never rotate bot.log while the bot is writing it (Windows can't do that).
     log_dir = LOG_DIR
-    if args.command not in ("run", "logs", "service"):
+    if args.command not in ("run", "logs", "service", "start", "go-live"):
         try:
             log_dir = setup_logging(_load(args), args.command, console_level="WARNING", file_prefix="commands")
         except Exception:  # noqa: BLE001 - never block a command because logging failed (e.g. bad config)
@@ -900,10 +922,8 @@ def dispatch(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
-        try:
+        with contextlib.suppress(AttributeError, ValueError):
             sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
-        except (AttributeError, ValueError):
-            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
