@@ -391,6 +391,19 @@ that file.
 - **Log badge:** warnings and errors so far. Click it for the Logs tab.
 - **Theme button** (◐): follow your computer's light/dark setting, or force light or dark. The
   dashboard remembers it, and it remembers which tab you were on.
+- **Market clock** (just under the top bar, works even while the bot is stopped): whether the market
+  is open, the time in Chicago, and live countdowns to the next:
+  - **Market opens / closes:** the CME Globex session, 17:00–16:00 CT, closed Friday 16:00 to Sunday 17:00.
+  - **Regular hours open / close:** 08:30–15:00 CT, the US stock market's hours and the busiest part
+    of the day for index futures.
+  - **Bot starts trading / Last new entry:** your `session.trade_start` and `last_entry`.
+  - **Bot closes all trades:** your `session.flatten_at`.
+  - **Topstep flat-by:** 15:10 CT, Topstep's deadline (it starts closing positions at 15:08).
+
+  Countdowns turn amber in the last 15 minutes before a close. They use the same rules the bot trades
+  by, so weekends and the days in `no_trade_dates` (holidays) and outside `trade_weekdays` are skipped.
+  On such a day a note says so. CME's own holiday hours can differ, so check its calendar for
+  early closes.
 - When the bot isn't running, a **banner** shows why (e.g. "stop requested from Telegram",
   "crashed: …", "could not start: …") with **Start bot** and **See logs** buttons.
 

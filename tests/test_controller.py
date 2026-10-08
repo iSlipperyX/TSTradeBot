@@ -73,6 +73,7 @@ def test_start_status_and_stop_keep_dashboard_up(tmp_path):
         assert r["ok"] and ctl.bot.state == "stopped"
         s = (await http.get("/api/status")).json()  # the dashboard still answers with the bot down
         assert s["bot"] is None and s["controller"]["last_exit"]["reason"] == "stop requested from dashboard"
+        assert {e["key"] for e in s["clock"]["events"]} >= {"market", "flatten", "topstep"}  # timers work bot-down too
         assert (await http.get("/")).status_code == 200
     scenario(tmp_path, body)
 

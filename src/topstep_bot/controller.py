@@ -28,7 +28,7 @@ import sys
 import time
 import webbrowser
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -44,6 +44,7 @@ from topstep_bot.service import (
     notify,
     read_exit_note,
 )
+from topstep_bot.sessions import SessionSchedule
 from topstep_bot.web import HttpServer, Request, html_response
 
 log = logging.getLogger("topstep_bot.controller")
@@ -441,6 +442,8 @@ class Controller:
             "bot": data.get("bot") if data else None,
             "log": data.get("log") if data else None,
             "events": list(self.events)[:30],
+            # market / trading-day countdowns: computed here so they show even while the bot is stopped
+            "clock": SessionSchedule(self.cfg.session).clock(datetime.now(timezone.utc)),
         }
 
     def _logs(self, _: Request) -> dict:

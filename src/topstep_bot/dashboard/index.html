@@ -158,6 +158,14 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
 .toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:10px 16px;
   border-radius:10px; font-weight:600; max-width:90vw; display:none; z-index:10; }
 .toast.bad { background:var(--crit); color:#fff; }
+/* market clock */
+.clock { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); margin-top:12px; }
+.clock .c { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:8px 11px; min-width:0; box-shadow:var(--shadow); }
+.clock .cl { font-size:11.5px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.clock .cv { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:1px; }
+.clock .cs { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.clock .soon .cv { color:var(--warn); }
+.clock .holiday { grid-column:1 / -1; font-size:12px; color:var(--warn); padding:2px 2px 0; }
 .offline { display:none; margin-top:12px; background:var(--crit); color:#fff; padding:10px 14px; border-radius:10px; font-weight:600; }
 </style>
 </head>
@@ -180,6 +188,7 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
     <button class="small" id="theme" title="Light / dark / follow your system">◐</button>
   </div>
   <div class="offline" id="offline">The dashboard lost contact with the controller. Is the Topstep Bot window still open on your PC?</div>
+  <div class="clock" id="clock" aria-label="Market clock"></div>
   <div class="banner" id="banner" hidden></div>
 
   <nav class="tabs">
@@ -476,6 +485,29 @@ function renderTop(s) {
   }
   bn.hidden = !html; bn.className = "banner " + cls; bn.innerHTML = html;
 }
+
+// ---- market clock: countdowns to the market's and the bot's next open / close (ticks every second)
+let CLOCK = null, CLOCK_OFFSET = 0;
+const CT_TIME = new Intl.DateTimeFormat(undefined, {timeZone: "America/Chicago", weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit"});
+function fmtLeft(ms) {
+  if (ms <= 0) return "now";
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(sec).padStart(2, "0")}s`;
+}
+function renderClock(c) { if (!c) return; CLOCK = c; CLOCK_OFFSET = Date.parse(c.now) - Date.now(); tickClock(); }
+function tickClock() {
+  const c = CLOCK; if (!c) return;
+  const now = Date.now() + CLOCK_OFFSET;
+  const state = `<div class="c" title="Chicago time"><div class="cl"><span class="dot" style="background:${css(c.market_open ? "--good" : "--muted")}"></span>
+      ${c.market_open ? "Market open" : "Market closed"}</div><div class="cv">${esc(CT_TIME.format(now))}</div>
+      <div class="cs">${c.in_entry_window ? "Inside the bot's trading window" : "Chicago time (CT)"}</div></div>`;
+  const evs = c.events.map(e => { const left = Date.parse(e.at) - now;
+    const soon = left > 0 && left < 15 * 60000 && ["market", "entries", "flatten", "topstep"].includes(e.key) && !/open|starts/i.test(e.label);
+    return `<div class="c${soon ? " soon" : ""}" title="${esc(e.detail)}"><div class="cl">${esc(e.label)}</div><div class="cv">${fmtLeft(left)}</div>
+      <div class="cs">at ${esc(e.local)}</div></div>`; }).join("");
+  $("clock").innerHTML = state + evs + (c.holiday ? `<div class="holiday">⚠ ${esc(c.holiday)}</div>` : "");
+}
+setInterval(tickClock, 1000);
 
 function renderTrade(b) {
   const t = b.trade;
@@ -826,7 +858,7 @@ async function loadLogs() {
 
 function render(s) {
   S = s;
-  renderTop(s); renderOverview(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
+  renderTop(s); renderClock(s.clock); renderOverview(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
 }
 async function refresh() {
