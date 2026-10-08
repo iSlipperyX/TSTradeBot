@@ -112,15 +112,33 @@ def test_ramp_up_scales_risk(mnq):
     assert core.risk.position_size(100, 100 - 39 * 0.25, 50_000) == full // 2
 
 
-def test_runner_ramp_up_counts_live_days(mnq, tmp_path):
+def _journal_trade(journal, mnq, day, account="ACC", net=10.0):
+    import uuid
+
+    from topstep_bot.execution import ManagedTrade
+
+    closed = ct(day.year, day.month, day.day, 10, 0)
+    t = ManagedTrade(tag=f"tsb{uuid.uuid4().hex[:10]}", side=OrderSide.BUY, size=1, stop_price=95.0, target_price=None,
+                     reason="t", created_at=closed, entry_price=100.0, filled_size=1, closed_at=closed, gross_pnl=net)
+    journal.record_trade(t, day, account, mnq.name)
+
+
+def test_runner_ramp_up_counts_days_with_trades(mnq, tmp_path):
+    from datetime import date
+
     cfg = BotConfig.model_validate({"mode": "live", "data_dir": str(tmp_path), "risk": {"ramp_up_days": 2}})
     runner = LiveRunner(cfg, Secrets(username="u", api_key="k"), Controls())
     runner.core = build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=runner.now, account_label="ACC")
     runner._apply_ramp_up()
-    assert runner.core.risk.risk_scale == 0.5
-    runner.journal.set_state("live_days:ACC", ["2020-01-01", "2020-01-02"])
+    assert runner.core.risk.risk_scale == 0.5  # brand-new account
+    _journal_trade(runner.journal, mnq, date(2020, 1, 2))
+    _journal_trade(runner.journal, mnq, date(2020, 1, 2))  # same day counts once
+    _journal_trade(runner.journal, mnq, date(2020, 1, 3), account="OTHER")  # other accounts don't count
     runner._apply_ramp_up()
-    assert runner.core.risk.risk_scale == 1.0
+    assert runner.core.risk.risk_scale == 0.5
+    _journal_trade(runner.journal, mnq, date(2020, 1, 6))
+    runner._apply_ramp_up()
+    assert runner.core.risk.risk_scale == 1.0  # two trading days done
     runner.journal.close()
     run(runner.client.close())
 

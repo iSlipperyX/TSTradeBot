@@ -51,7 +51,8 @@ def render_config(
     max_trades: int = 4,
 ) -> str:
     account_line = f"  account_id: {account_id}" if account_id else "  # account_id: 123456          # set by 'topstep-bot setup'"
-    return f"""# Topstep Bot configuration. Every setting has a safe default; see README.md for the full list.
+    return f"""# Topstep Bot configuration. Every setting has a safe default; the full list is in
+# docs/HOW_TO_USE.md (section "Full configuration reference"). Edit with Notepad; spaces matter.
 
 # paper = simulated fills on real market data (no orders sent). live = real orders on your TopstepX account.
 mode: {mode}
@@ -66,10 +67,13 @@ instrument:
   symbol: {symbol}                # MNQ, MES, NQ, ES, M2K, RTY, MYM, YM, MGC, GC, MCL, CL
   timeframe_minutes: {timeframe}
 
+# adaptive = every strategy, all day, trading only what the bot has learned is working. Or one
+# strategy alone, most robust in the 10-year test first: noise_breakout, orb_momentum, orb,
+# ema_trend, late_day_momentum, vwap_reversion (vwap_pullback is newer and untested).
+# 'topstep-bot tune' compares them on your data.
 strategy:
-  name: {strategy}                # adaptive (all strategies, all day, guided by what the bot has learned),
-  params: {{}}                 #   or one of: orb, noise_breakout, ema_trend, vwap_reversion, vwap_pullback
-                              # override strategy defaults under params, e.g. {{target_r: 1.5}}
+  name: {strategy}
+  params: {{}}                   # override strategy defaults here, e.g. {{target_r: 1.5}}
 
 knowledge:                      # what the bot learns while it runs (drives the adaptive strategy)
   auto_train: true              # retrain on the last 60 days of history at startup when stale (daily)
@@ -85,6 +89,8 @@ risk:
   # max_contracts: 2            # optional extra cap (Topstep's own cap is always enforced)
   # breakeven_at_r: 1.0         # move stop to breakeven after 1R of profit
   # trail_atr_multiple: 2.0     # ATR trailing stop
+  # min_stop_atr: 0.5           # never place a stop closer than half an ATR
+  # ramp_up_days: 3             # first live trading days on a new account risk half as much
 
 session:                        # times are US Central (exchange) time
   trade_start: "08:30"
@@ -196,6 +202,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         "Your [bold]username[/] is your TopstepX login name (not your email). Create an API key in the same API page."
     )
     account_id = None
+    hint_plan, hint_stage = None, None
     if Confirm.ask("Enter API credentials now? (No = skip; you can still backtest on sample data)", default=True):
         username = Prompt.ask("TopstepX username").strip()
         api_key = Prompt.ask("API key (input hidden)", password=True).strip()
@@ -208,21 +215,28 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
             if accounts:
                 options = [(str(a.id), f"{a.name}  balance ${a.balance:,.2f}  {'can trade' if a.can_trade else 'NOT tradable'}") for a in accounts]
                 account_id = int(_pick("Which account should the bot use?", options, options[0][0]))
+                from topstep_bot.preflight import account_hints
+
+                chosen = next(a for a in accounts if a.id == account_id)
+                hint_plan, hint_stage = account_hints(chosen.name)
         except ProjectXError as exc:
             console.print(f"[red]Login failed:[/] {exc}\nCheck the username/API key; you can fix them in {env_path} later.")
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]Could not reach TopstepX:[/] {exc}")
 
     # ---- account
+    if hint_plan or hint_stage:
+        console.print(f"[dim]From the account name, the defaults below are set to {hint_plan or '?'} {hint_stage or '?'} - "
+                      "just press Enter if that's right.[/]")
     plan = _pick(
         "2. Account size",
         [(p.name, f"profit target ${p.profit_target:,.0f}, max loss limit ${p.max_loss_limit:,.0f}, max {p.max_minis} minis") for p in PLANS.values()],
-        "50K",
+        hint_plan or "50K",
     )
     stage = _pick(
         "3. Account type",
         [("combine", "Trading Combine (evaluation)"), ("express", "Express Funded Account (XFA)"), ("practice", "Practice account")],
-        "combine",
+        hint_stage or "combine",
     )
 
     # ---- instrument & strategy
@@ -266,10 +280,13 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         Panel.fit(
             f"[green bold]Saved {config_path}[/]\n\n"
             "Next steps:\n"
-            "  1. [bold]Train[/] the bot (menu 5): it learns which strategy works when from recent real data.\n"
-            "  2. [bold]Backtest[/] (menu 4) and read the report.\n"
-            "  3. [bold]Start in paper mode[/] (menu 6): real prices, simulated orders, with the dashboard.\n"
-            "  4. When you're ready, flip the dashboard's [bold]Paper | Live[/] switch - start small.",
+            "  1. [bold]Train[/] the bot (menu): it learns which strategy works when from recent real data.\n"
+            "     ([bold]Tune[/] instead tests each strategy on days it never saw and can save the best settings.)\n"
+            "  2. [bold]Backtest[/] (menu) and read the report.\n"
+            "  3. [bold]Start in paper mode[/] (menu): real prices, simulated orders, with the dashboard. Or\n"
+            "     [bold]Start trading today[/] to run every safety check and go live; the first live days trade\n"
+            "     at reduced risk. Later, the dashboard's [bold]Paper | Live[/] switch flips between them.\n"
+            "  Start on a Combine or practice account, never one you can't afford to lose.",
             border_style="green",
         )
     )

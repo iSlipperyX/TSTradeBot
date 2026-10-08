@@ -236,10 +236,14 @@ let S = null, settingsBuilt = false, toastTimer;
 function toast(msg, bad) { const t = $("toast"); t.textContent = msg; t.className = "toast" + (bad ? " bad" : "");
   t.style.display = "block"; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = "none", 5000); }
 async function post(path, body) {
+  let r;
   try {
-    const r = await fetch("/api/" + path, {method:"POST", headers:{"X-Token":TOKEN, "Content-Type":"application/json"}, body:JSON.stringify(body || {})});
-    return await r.json();
-  } catch (e) { return {ok:false, message:"No connection to the controller"}; }
+    r = await fetch("/api/" + path, {method:"POST", headers:{"X-Token": TOKEN, "Content-Type":"application/json"},
+      body: JSON.stringify(body || {})});
+  } catch (e) { return {ok: false, message: "No connection to the controller - is the Topstep Bot window still open?"}; }
+  let data = {}; try { data = await r.json(); } catch (e) { data = {ok: r.ok}; }
+  if (!r.ok && !data.message) data = {ok: false, message: `The controller refused that request (${r.status}). Reload this page and try again.`};
+  return data;
 }
 async function run(path, body, confirmText) {
   if (confirmText && !confirm(confirmText)) return;

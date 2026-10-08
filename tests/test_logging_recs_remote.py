@@ -152,7 +152,10 @@ def drive(core, broker, now, bars):
 
 def test_shadow_strategies_produce_tracked_ideas(tmp_path):
     core, broker, now = make_core(tmp_path, strategy={"name": "orb"})
-    assert {s.name for s in core.recommender.shadows} == {"noise_breakout", "ema_trend", "vwap_reversion", "vwap_pullback"}
+    from topstep_bot.strategies import BASE_STRATEGIES
+
+    # every other strategy runs in shadow mode (the adaptive one runs them itself, so it isn't one)
+    assert {s.name for s in core.recommender.shadows} == set(BASE_STRATEGIES) - {"orb"}
     bars = list(resample(synthetic_bars("MNQ", days=30, seed=4), 5))
     drive(core, broker, now, bars)
     book = core.recommender

@@ -76,14 +76,24 @@ class RiskManager:
 
     # ------------------------------------------------------------- day state
 
-    def start_day(self, day: date, balance: float, realized_so_far: float = 0.0, trades_so_far: int = 0) -> None:
+    def start_day(
+        self,
+        day: date,
+        balance: float,
+        realized_so_far: float = 0.0,
+        closed_today: list[tuple[datetime, float]] | None = None,
+    ) -> None:
+        """Begin a trading day. After a mid-day restart, pass today's closed trades as (time, net P&L)
+        so the trade count, losing streak and post-loss cooldown carry on where they left off."""
         self.day = day
         self.day_start_balance = balance - realized_so_far
-        self.trades_today = trades_so_far
+        self.trades_today = 0
         self.wins_today = 0
         self.consecutive_losses = 0
         self.last_loss_at = None
         self.lock_reason = None
+        for ts, net_pnl in sorted(closed_today or []):
+            self.record_trade(net_pnl, ts)
 
     def record_trade(self, net_pnl: float, ts: datetime) -> None:
         self.trades_today += 1

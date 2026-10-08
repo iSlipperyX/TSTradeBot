@@ -568,7 +568,7 @@ def run_controller(cfg: BotConfig, secrets: Secrets, *, config_path: str | None,
                    start_bot: bool = True, open_browser: bool = True) -> int:
     from rich.console import Console
 
-    from topstep_bot.keepawake import keep_awake
+    from topstep_bot.keepawake import console_stays_responsive, keep_awake
     from topstep_bot.logging_setup import log_startup, setup_logging
 
     console = Console()
@@ -583,7 +583,7 @@ def run_controller(cfg: BotConfig, secrets: Secrets, *, config_path: str | None,
     ctl = Controller(cfg, secrets, mode=mode, config_path=config_path)
     console.print(f"[bold]Dashboard:[/] {ctl.server.url}   (Ctrl+C here stops everything)")
     try:
-        with keep_awake(cfg.service.keep_awake):
+        with keep_awake(cfg.service.keep_awake), console_stays_responsive():
             asyncio.run(ctl.run(start_bot=start_bot, open_browser=open_browser))
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/]")
