@@ -26,15 +26,17 @@ what to do when something goes wrong. If you only read one section, read
 16. [News blackouts](#16-news-blackouts)
 17. [Topstep rules: what the bot enforces and what is still on you](#17-topstep-rules-what-the-bot-enforces-and-what-is-still-on-you)
 18. [Telegram control and alerts on your phone](#18-telegram-control-and-alerts-on-your-phone)
-19. [Daily routine](#19-daily-routine)
-20. [Full configuration reference](#20-full-configuration-reference)
-21. [Command reference](#21-command-reference)
-22. [Files the bot creates](#22-files-the-bot-creates)
-23. [Troubleshooting](#23-troubleshooting)
-24. [Writing your own strategy](#24-writing-your-own-strategy)
+19. [Recommended trades](#19-recommended-trades)
+20. [Changing settings from the dashboard or Telegram](#20-changing-settings-from-the-dashboard-or-telegram)
+21. [Daily routine](#21-daily-routine)
+22. [Full configuration reference](#22-full-configuration-reference)
+23. [Command reference](#23-command-reference)
+24. [Files the bot creates](#24-files-the-bot-creates)
+25. [Logs: finding out what happened](#25-logs-finding-out-what-happened)
+26. [Troubleshooting](#26-troubleshooting)
+27. [Writing your own strategy](#27-writing-your-own-strategy)
 
 ---
-
 ## 1. What the bot does (and doesn't do)
 
 **It does:**
@@ -184,6 +186,7 @@ Double-click `start.bat` (or run `topstep-bot`):
 | 12 | telegram-test | Sends a test message with control buttons to your Telegram |
 | 13 | service | Runs the bot 24/7 (auto-restart, keeps the PC awake, daily maintenance restart) |
 | 14 | autostart | Starts the 24/7 service automatically when you sign in to Windows |
+| 15 | logs | Shows recent errors and where the log files are ([section 25](#25-logs-finding-out-what-happened)) |
 
 ---
 
@@ -381,7 +384,8 @@ that file.
 
 ### The dashboard
 
-- **Header** — PAPER (blue) or LIVE (red) badge, connection status, account, plan, contract.
+- **Header** — PAPER (blue) or LIVE (red) badge, connection status, a **log badge** (warnings and
+  errors since start — click it for details), account, plan, contract and time (CT).
 - **Status bar** — "Trading normally", "Paused", "Done for today: <reason>", or "Halted".
 - **Balance / Today's P&L / Open P&L / Position.**
 - **Guardrails:**
@@ -392,6 +396,12 @@ that file.
   - *Trades today* — against your daily maximum.
 - **Current trade** — side, size, entry, stop, target and the reason it was taken.
 - **Strategy** — the levels the strategy is watching (opening range, bands, VWAP, ...).
+- **Recommended trades right now** — live ideas from every strategy with **Take** buttons — see
+  [section 19](#19-recommended-trades).
+- **Recommendation history & results** — every recommendation today, what happened to it, and a
+  per-strategy scoreboard.
+- **Settings** — change risk, limits, times, the news pause and the auto-traded strategy — see
+  [section 20](#20-changing-settings-from-the-dashboard-or-telegram).
 - **Controls** — see [section 13](#13-stopping-the-bot-and-emergency-controls).
 - **Activity** — everything the bot did, newest first.
 
@@ -466,9 +476,9 @@ Check with `topstep-bot autostart status`; remove with `topstep-bot autostart of
 
 | Want to... | Do this |
 |---|---|
-| Stop new trades but let the open trade finish | Dashboard → **Pause new trades** (then **Resume**), or Telegram `/pause` |
+| Stop new trades but let the open trade finish | Dashboard → **Pause new trades** (then **Resume**), or Telegram `/pause`. You can still take recommended trades yourself while paused. |
 | Close everything and stop trading | Dashboard → **Flatten & halt**, or Telegram `/flatten` |
-| Shut the bot down | Dashboard → **Stop bot**, Telegram `/stop`, or press **Ctrl+C** in the bot window |
+| Shut the bot down | Dashboard → **Stop bot**, type `/stop` in Telegram, or press **Ctrl+C** in the bot window. This closes the program (and the 24/7 service) — it is *not* a pause. |
 | Kill switch without the dashboard | Create an empty file named `KILL` in the bot folder. The bot flattens and halts within a second. Delete the file before the next start. |
 | Panic button when the bot isn't running | Menu **8 (flatten)** — cancels every order and closes every position on the account |
 | Last resort | Close the position in TopstepX yourself |
@@ -479,7 +489,7 @@ still protected — and when the bot starts again it re-adopts the position. Che
 as you can anyway.
 
 If the bot ever stops itself because of an internal error, it flattens first, sends a ⛔ alert,
-writes the details to `logs/bot.log`, and (under the service) is restarted automatically.
+writes the details to `logs/errors.log`, and (under the service) is restarted automatically.
 
 ---
 
@@ -697,13 +707,17 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/pause` | Stop opening new trades. An open trade keeps its stop and target. |
 | `/resume` | Allow new trades again (all risk limits still apply). Not possible after a flatten — restart the bot. |
 | `/flatten` | Close any position, cancel orders and **halt** trading until the bot is restarted. Asks for confirmation. |
-| `/stop` | Shut the bot down (it flattens first). Asks for confirmation. It can only be restarted from your PC. |
+| `/stop` | **Shuts the program down** (it flattens first; the 24/7 service exits too). Asks for confirmation. It can only be restarted from your PC. There is deliberately no quick button for it — type it. Use `/pause` to just stop new trades. |
+| `/ideas` | Recommended trades with **Take** and **½ size** buttons ([section 19](#19-recommended-trades)) |
+| `/settings` | Every setting you can change, with current values and limits |
+| `/set <name> <value>` | Change a setting, e.g. `/set risk 150`, `/set dailyloss 400`, `/set strategy orb_momentum`, `/set news off` ([section 20](#20-changing-settings-from-the-dashboard-or-telegram)) |
+| `/reset` | Undo every remote setting change (back to `config.yaml`) |
 | `/trades` | The last few closed trades |
 | `/log` | Recent bot activity |
 | `/help` | The command list |
 
-> `/stop` (and the **⏹ Stop bot** button) really does shut the bot down, also under the 24/7
-> service. To stop new trades only, use `/pause`.
+> `/stop` really does shut the program down, also under the 24/7 service — which is why it has no
+> quick button and asks you to confirm. To stop new trades only, use `/pause`.
 
 ### Security
 
@@ -747,7 +761,76 @@ notifications:
 
 ---
 
-## 19. Daily routine
+## 19. Recommended trades
+
+While the bot runs (paper or live), **every strategy** watches the market on every bar:
+
+- Your **auto-traded strategy** (`strategy.name`, marked ★) trades by itself. Each of its signals is
+  listed as *taken* or *skipped*, with the reason (outside trading hours, daily limit reached, stop
+  too wide, …).
+- The **other strategies** run in "shadow" mode. Their signals appear as **ideas** — the bot never
+  trades them unless you press **Take**.
+
+Every recommendation shows the entry, stop, target, size (worked out with *your* risk settings),
+dollars at risk and reward-to-risk. It is then followed bar by bar to a result — stop hit, target
+hit, strategy exit or session end — so the dashboard's **scoreboard** shows how each strategy's
+ideas are really doing today. Results for trades that weren't actually placed are marked
+hypothetical (*): if a bar touches both the stop and the target, the stop is assumed to come first.
+
+**Taking an idea** (dashboard **Take** button, or Telegram `/ideas` → **Take** / **½ size**):
+
+1. You confirm the trade.
+2. The bot re-prices it at the current market and re-checks every risk rule. A requested size can
+   be smaller than the recommendation but **never larger** than your risk rules allow.
+3. It's placed and managed exactly like a bot trade: protective stop, target, breakeven/trailing
+   settings, the idea's own strategy exit, and the session flatten.
+
+Ideas can be taken for 15 minutes. Taking one works even while automatic entries are paused, but
+not when a loss limit, the session window, a news blackout or the post-loss cooldown blocks
+trading — then the button shows why instead. One position at a time still applies.
+
+Every recommendation and its result is saved in the journal (`recommendations` table) and in
+`logs/events.jsonl`. Telegram alerts for new ideas are off by default; add `idea` to
+`notifications.events` to get them. Turn the feature off with `recommendations.enabled: false`, or
+limit it to some strategies with `recommendations.strategies: [orb_momentum, noise_breakout]`.
+
+---
+
+## 20. Changing settings from the dashboard or Telegram
+
+These settings can be changed while the bot runs — on the dashboard's **Settings** panel or with
+`/set` in Telegram:
+
+| Setting (`/set` name) | Range |
+|---|---|
+| Risk per trade (`risk`) | $10 to 15% of your Max Loss Limit |
+| Daily loss limit (`dailyloss`) | $50 to half your MLL (and below any Topstep DLL) |
+| Max trades per day (`maxtrades`), max losses in a row (`losses`) | 1–20, 1–10 |
+| Max contracts (`contracts`, blank = Topstep's cap) | 1 to Topstep's cap |
+| Daily profit target (`target`, blank = default) | up to the plan's profit target |
+| Breakeven at R (`breakeven`), ATR trailing stop (`trail`) | blank = off |
+| First / last entry time (`start`, `lastentry`) | must stay before the flatten time |
+| News pause (`news`), close before news (`newsflatten`) | on / off |
+| Max entry slippage (`slippage`) | 0–40 ticks |
+| Auto-traded strategy (`strategy`) | any strategy; switches as soon as you're flat |
+
+How it works:
+
+- Every change shows old → new and asks you to confirm; changes that **increase risk** are flagged.
+- It takes effect immediately and is recorded in the activity log, the log files, and as a
+  Telegram/Discord alert.
+- It is saved in `data/remote_settings.json` and re-applied when the bot restarts. **`config.yaml`
+  is never rewritten.** "Undo all changes" (dashboard) or `/reset` (Telegram) goes back to
+  `config.yaml`.
+- Switching the auto-traded strategy reuses the already-warmed-up shadow copy, so it trades right
+  away. If a trade is open, the switch waits until it closes.
+
+What can **never** be changed remotely: the mode (paper/live), account, symbol and API
+credentials, and Topstep's own rules (Maximum Loss Limit, contract caps, flat by 15:10 CT).
+
+---
+
+## 21. Daily routine
 
 **Running 24/7 (recommended):** nothing to do before the open. Glance at the 08:00 CT check-in on
 your phone; if it doesn't arrive, look at the PC.
@@ -770,14 +853,16 @@ service restarts it daily, so rolls are picked up automatically. If you pinned
 
 ---
 
-## 20. Full configuration reference
+## 22. Full configuration reference
 
 `config.yaml` only needs the settings you want to change; everything else uses these defaults.
 Misspelled settings are rejected with a clear message, so typos can't silently do nothing.
 
 ```yaml
 mode: paper                    # paper | live
-log_level: INFO
+log_level: INFO                # what the console shows; files always get everything
+log_dir: logs                  # relative folders are next to config.yaml
+log_retention_days: 30
 data_dir: data
 
 account:
@@ -840,6 +925,10 @@ data:
   warmup_days: 20
   live_market_data: false      # false = the sim data feed used by Combine/Express accounts
 
+recommendations:              # trade ideas from every strategy on the dashboard / Telegram
+  enabled: true
+  strategies: []               # empty = ideas from every strategy
+
 news:
   enabled: true
   impacts: [High]
@@ -888,7 +977,7 @@ restart.
 
 ---
 
-## 21. Command reference
+## 23. Command reference
 
 Run any command with `--help` for its options. Add `-c other.yaml` before the command to use a
 different config file.
@@ -911,12 +1000,13 @@ different config file.
 | `topstep-bot flatten [--yes]` | Emergency: cancel all orders, close all positions |
 | `topstep-bot journal [--mode paper\|live] [--limit N]` | Recent trades and daily results |
 | `topstep-bot telegram-test` | Check the Telegram token and chat ID with a test message |
+| `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat train --days 730`.
 
 ---
 
-## 22. Files the bot creates
+## 24. Files the bot creates
 
 | Path | Contents |
 |---|---|
@@ -927,20 +1017,62 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat trai
 | `data/news_cache.json` | The economic calendar |
 | `data/heartbeat` | The running bot's heartbeat (used by the 24/7 service) |
 | `reports/*.html` | Backtest and training reports (training also writes a `.json` with every detail) |
-| `logs/bot.log` | The trading bot's detailed log (rotates at 5 MB, keeps 5 files) |
-| `logs/service.log` | The 24/7 service: starts, restarts, crashes |
-| `logs/commands.log` | Problems in other commands (setup, backtest, train, ...) |
+| `logs/` | Log files — see [section 25](#25-logs-finding-out-what-happened) |
+| `data/remote_settings.json` | Settings changed from the dashboard/Telegram (delete it, or `/reset`, to undo) |
 
 ---
 
-## 23. Troubleshooting
+## 25. Logs: finding out what happened
 
-**The bot window closed and I don't know why** — Look in `logs/`: `bot.log` for the trading bot,
-`service.log` for the 24/7 service, `commands.log` for everything else. Any unexpected error is
-written there with full details (no passwords or keys). To keep the window open, start the bot
-from a Command Prompt: open the bot folder, click the address bar, type `cmd`, press Enter, then
-run `start.bat`. Also check you didn't send `/stop` or tap **⏹ Stop bot** in Telegram — that
-really does shut the bot down.
+Everything is recorded in the `logs` folder next to `config.yaml`, wherever you start the bot from:
+
+| File | What's in it |
+|---|---|
+| `bot.log` | Everything, one file per day (kept 30 days, `log_retention_days`) |
+| `errors.log` | Only warnings and errors — **look here first** |
+| `events.jsonl` | Every trade, risk event, setting change and recommendation, one JSON object per line |
+| `service.log` | The 24/7 service: starts, restarts and why |
+| `commands.log` | Other commands (setup, backtest, train, ...) — kept apart so they never collide with a running bot |
+| `crash_*.txt` | Full details of any crash that closes the program |
+| `faults.log` | Low-level hang/crash dumps from Python |
+
+- When the bot stops, the log records **why**: Stop from Telegram/dashboard, Ctrl+C, daily
+  maintenance restart, or a crash with the full error.
+- Background parts (Telegram, price stream, clock) that fail are logged instead of dying silently.
+- API keys, tokens and webhook URLs are automatically masked as `***` in every log file.
+- The dashboard header shows a **log badge** with the number of warnings and errors since start;
+  click it to see the latest ones.
+
+Commands:
+
+```bash
+start.bat logs
+```
+
+Shows recent warnings, errors and any crash report (`--all` adds general activity).
+
+```bash
+start.bat logs --open
+```
+
+Opens the log folder.
+
+```bash
+start.bat logs --bundle
+```
+
+Creates a zip of the logs and `config.yaml` (never your `.env`) to share when asking for help.
+
+---
+
+## 26. Troubleshooting
+
+**The bot closed / stopped unexpectedly** — Run `start.bat logs`. The last lines say why it
+stopped ("Shutting down. Reason: …"): a Stop from Telegram or the dashboard, Ctrl+C, a daily
+maintenance restart, an internal error, or a crash (with a `crash_*.txt` file). `/stop` in
+Telegram really shuts the program down; use `/pause` to only stop new trades. To keep the window
+open after it exits, start the bot from a Command Prompt: open the bot folder, click the address
+bar, type `cmd`, press Enter, then run `start.bat`.
 
 **The bot froze until I pressed a key** — Windows' console QuickEdit mode. The bot turns it off
 while it runs; if it still happens (e.g. an old version), right-click the window's title bar →
@@ -997,11 +1129,11 @@ its ID). Only one program can read a bot's messages: close any other copy of the
 
 **The service keeps restarting the bot** — `logs/service.log` says why (crash, no heartbeat). After
 `max_restarts_per_hour` crashes it gives up and alerts you; the details of each crash are in
-`logs/bot.log`.
+`logs/errors.log` and `crash_*.txt` (`start.bat logs` shows them).
 
 ---
 
-## 24. Writing your own strategy
+## 27. Writing your own strategy
 
 Create a file in `src/topstep_bot/strategies/`, subclass `Strategy`, and register it in
 `strategies/__init__.py`:

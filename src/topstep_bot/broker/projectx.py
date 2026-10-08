@@ -37,7 +37,9 @@ class ProjectXBroker(Broker):
         return self.stream.hub.connected
 
     async def start(self) -> None:
-        self._task = asyncio.create_task(self.stream.hub.run(), name="user-hub")
+        from topstep_bot.logging_setup import spawn
+
+        self._task = spawn(self.stream.hub.run(), name="user-hub")
         if not await self.stream.hub.wait_connected(timeout=20):
             log.warning("User hub not connected yet; relying on REST reconciliation until it is")
 

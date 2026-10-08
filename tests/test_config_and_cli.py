@@ -63,9 +63,11 @@ def test_cli_reports_config_problems_and_unexpected_errors(tmp_path, monkeypatch
     args.func = explode
     assert cli.dispatch(args) == 1
     out = capsys.readouterr().out
-    assert "Unexpected error" in out and "commands.log" in out
-    log = (tmp_path / "logs" / "commands.log").read_text(encoding="utf-8")
-    assert "RuntimeError: something broke" in log and "Traceback" in log
+    assert "Unexpected error" in out and "errors.log" in out
+    for name in ("errors.log", "commands.log"):  # never bot.log: a running bot may be writing that one
+        log = (tmp_path / "logs" / name).read_text(encoding="utf-8")
+        assert "RuntimeError: something broke" in log and "Traceback" in log
+    assert not (tmp_path / "logs" / "bot.log").exists()
 
 
 def test_redact_hides_tokens_and_webhook_secrets():

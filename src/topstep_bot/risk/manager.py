@@ -63,9 +63,13 @@ class RiskManager:
     def topstep_dll(self) -> float | None:
         return self.account_cfg.topstep_daily_loss_limit
 
-    def max_contracts(self) -> int:
+    def max_contracts_topstep(self) -> int:
+        """Topstep's own position limit for today, in contracts of this instrument."""
         minis = max_minis_allowed(self.plan, self.stage, self.day_start_balance)
-        cap = minis * 10 if self.contract.is_micro else minis
+        return minis * 10 if self.contract.is_micro else minis
+
+    def max_contracts(self) -> int:
+        cap = self.max_contracts_topstep()
         if self.cfg.max_contracts is not None:
             cap = min(cap, self.cfg.max_contracts)
         return cap
@@ -134,16 +138,22 @@ class RiskManager:
 
     # ---------------------------------------------------------------- checks
 
-    def entry_block_reason(self, now: datetime, balance: float, open_pnl: float = 0.0) -> str | None:
-        """None if a new trade may be opened now, else the reason it may not."""
-        if self.paused:
+    def entry_block_reason(
+        self, now: datetime, balance: float, open_pnl: float = 0.0, manual: bool = False
+    ) -> str | None:
+        """None if a new trade may be opened now, else the reason it may not.
+
+        ``manual``: a trade you asked for yourself - allowed while auto-trading is paused and
+        after the daily trade count, but every loss limit and session rule still applies.
+        """
+        if self.paused and not manual:
             return "new trades are paused"
         if self.lock_reason:
             return self.lock_reason
         session_reason = self.schedule.entry_block_reason(now)
         if session_reason:
             return session_reason
-        if self.trades_today >= self.cfg.max_trades_per_day:
+        if self.trades_today >= self.cfg.max_trades_per_day and not manual:
             return f"max trades per day ({self.cfg.max_trades_per_day}) reached"
         if self.consecutive_losses >= self.cfg.max_consecutive_losses:
             return f"{self.consecutive_losses} consecutive losses - done for the day"

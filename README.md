@@ -48,11 +48,17 @@ Other systems: `pip install -e .` then run `topstep-bot`.
 - **Paper trading** on live TopstepX prices with simulated fills.
 - **Local dashboard** (http://127.0.0.1:8765) with guardrail meters and Pause / Flatten / Stop
   buttons; KILL-file kill switch; emergency flatten command.
-- **Telegram remote control** — `/status`, `/pause`, `/resume`, `/flatten`, `/stop` with tap buttons,
+- **Recommended trades** — every strategy's signals on the dashboard and in Telegram, sized with your
+  risk rules, tracked to a result; take any of them with one tap (re-priced, never oversized).
+- **Live settings** — change risk, limits, times, news pause and the auto-traded strategy from the
+  dashboard or Telegram, within safe bounds, with confirmation and a full audit trail.
+- **Logging** — daily logs, an errors-only file, a JSON event log, crash reports, secrets masked,
+  and the reason for every shutdown (`topstep-bot logs`).
+- **Telegram remote control** — `/status`, `/pause`, `/resume`, `/flatten`, `/ideas`, `/set`, `/stop` with tap buttons,
   owner-only, confirmations for dangerous actions; the setup wizard finds your chat ID for you.
-- **Journal** (SQLite), rotating logs (secrets redacted), Telegram/Discord alerts.
+- **Journal** (SQLite) and Telegram/Discord alerts.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
-- 150+ automated tests, including end-to-end runs against a simulated TopstepX server.
+- 170+ automated tests, including end-to-end runs against a simulated TopstepX server.
 
 ## Commands
 
@@ -73,6 +79,7 @@ topstep-bot journal         recent trades and daily results
 topstep-bot strategies      describe strategies
 topstep-bot demo            demo backtest on synthetic data
 topstep-bot telegram-test   send a test message to your Telegram bot
+topstep-bot logs            recent errors and crash reports  (--open, --bundle for support)
 ```
 
 ## Project layout
@@ -89,6 +96,8 @@ src/topstep_bot/
   execution.py    order/trade lifecycle (entry, stop, target, OCO, reconciliation)
   live.py         live/paper runner
   training.py     walk-forward training
+  recommendations.py  trade ideas from every strategy;  remote.py  live settings changes
+  logging_setup.py    log files, redaction, crash reports
   service.py      24/7 supervisor;  autostart.py, keepawake.py
   preflight.py    same-day readiness checks;  news.py  economic calendar
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram

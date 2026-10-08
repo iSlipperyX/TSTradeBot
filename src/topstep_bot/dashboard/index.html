@@ -5,28 +5,29 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Topstep Bot</title>
 <style>
-:root { color-scheme: light; --bg:#f6f6f4; --surface:#fcfcfb; --border:#e4e3df; --text:#0b0b0b; --text2:#52514e;
+:root { color-scheme: light; --bg:#f6f6f4; --surface:#fcfcfb; --surface2:#f1f0ed; --border:#e4e3df; --text:#0b0b0b; --text2:#52514e;
   --muted:#8a8984; --track:#ecebe7; --accent:#2a78d6; --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
-  --neg:#b02a2a; --live:#d03b3b; --paper:#2a78d6; }
+  --neg:#b02a2a; --pos:#0a7a0a; --live:#d03b3b; --paper:#2a78d6; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; --bg:#121211;
-  --surface:#1a1a19; --border:#2e2e2b; --text:#ffffff; --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27;
-  --accent:#3987e5; --neg:#ff8a8a; --paper:#3987e5; } }
-:root[data-theme="dark"] { color-scheme: dark; --bg:#121211; --surface:#1a1a19; --border:#2e2e2b; --text:#ffffff;
-  --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27; --accent:#3987e5; --neg:#ff8a8a; --paper:#3987e5; }
+  --surface:#1a1a19; --surface2:#222220; --border:#2e2e2b; --text:#ffffff; --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27;
+  --accent:#3987e5; --neg:#ff8a8a; --pos:#7ddc7d; --paper:#3987e5; } }
+:root[data-theme="dark"] { color-scheme: dark; --bg:#121211; --surface:#1a1a19; --surface2:#222220; --border:#2e2e2b; --text:#ffffff;
+  --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27; --accent:#3987e5; --neg:#ff8a8a; --pos:#7ddc7d; --paper:#3987e5; }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
-main { max-width:1100px; margin:0 auto; padding:20px 16px 40px; }
+main { max-width:1150px; margin:0 auto; padding:20px 16px 40px; }
 header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 h1 { font-size:20px; margin:0; } h2 { font-size:14px; margin:0 0 10px; color:var(--text2); font-weight:600; }
 .badge { font-size:12px; font-weight:700; padding:3px 8px; border-radius:999px; color:#fff; }
+.pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--text2); cursor:pointer; background:var(--surface); }
 .dot { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:middle; }
 .meta { color:var(--text2); font-size:12px; margin-left:auto; }
 .grid { display:grid; gap:12px; margin-top:14px; }
 .cards { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
 .two { grid-template-columns:1fr 1fr; } @media (max-width:760px) { .two { grid-template-columns:1fr; } }
-.panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; min-width:0; }
 .label { color:var(--text2); font-size:12px; } .value { font-size:22px; font-weight:650; font-variant-numeric:tabular-nums; }
-.neg { color:var(--neg); }
+.neg { color:var(--neg); } .pos { color:var(--pos); }
 .meter { margin-bottom:12px; } .meter .row { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
 .meter .row span:last-child { font-variant-numeric:tabular-nums; color:var(--text2); }
 .track { height:8px; background:var(--track); border-radius:4px; overflow:hidden; }
@@ -37,6 +38,8 @@ dt { color:var(--text2); } dd { margin:0; font-variant-numeric:tabular-nums; }
 .buttons { display:flex; gap:8px; flex-wrap:wrap; }
 button { font:inherit; font-weight:600; padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer; }
 button:hover { border-color:var(--text2); } button.danger { background:var(--crit); color:#fff; border-color:var(--crit); }
+button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+button.small { padding:4px 10px; font-size:12.5px; }
 .log { max-height:320px; overflow:auto; font-size:12.5px; }
 .log div { padding:5px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; }
 .log time { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -44,6 +47,33 @@ button:hover { border-color:var(--text2); } button.danger { background:var(--cri
 .lvl-error, .lvl-critical { color:var(--neg); }
 .empty { color:var(--muted); }
 .offline { display:none; background:var(--crit); color:#fff; padding:8px 12px; border-radius:10px; margin-top:12px; }
+.hint { color:var(--muted); font-size:12px; margin:8px 0 0; }
+/* ideas */
+.ideas { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
+.idea { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--surface2); }
+.idea .top { display:flex; justify-content:space-between; gap:8px; font-weight:650; }
+.idea .why { color:var(--text2); font-size:12.5px; margin:4px 0 8px; }
+.idea dl { font-size:12.5px; margin-bottom:8px; }
+.side-LONG { color:var(--pos); } .side-SHORT { color:var(--neg); }
+.tablewrap { overflow-x:auto; }
+table { border-collapse:collapse; width:100%; font-size:12.5px; }
+th, td { text-align:left; padding:5px 7px; border-bottom:1px solid var(--border); white-space:nowrap; }
+th { color:var(--text2); font-weight:600; } td.num { text-align:right; font-variant-numeric:tabular-nums; }
+td.note { white-space:normal; color:var(--text2); min-width:180px; }
+.tag { font-size:11px; padding:1px 6px; border-radius:999px; border:1px solid var(--border); color:var(--text2); }
+.tag.auto { border-color:var(--accent); color:var(--accent); }
+/* settings */
+.settings { display:grid; gap:8px; }
+.setting { display:grid; grid-template-columns:1fr 150px auto; gap:8px; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); }
+.setting .name { font-size:13px; } .setting .name small { display:block; color:var(--muted); font-size:11.5px; }
+.setting input, .setting select { font:inherit; padding:5px 8px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color:var(--text); width:100%; }
+.setting input[type=checkbox] { width:auto; justify-self:start; }
+.changed { color:var(--accent); font-size:11px; font-weight:700; }
+@media (max-width:560px) { .setting { grid-template-columns:1fr; } }
+.toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:10px 16px;
+  border-radius:10px; font-weight:600; max-width:90vw; display:none; z-index:10; }
+.toast.bad { background:var(--crit); color:#fff; }
+details summary { cursor:pointer; }
 </style>
 </head>
 <body>
@@ -52,6 +82,7 @@ button:hover { border-color:var(--text2); } button.danger { background:var(--cri
     <h1>Topstep Bot</h1>
     <span id="mode" class="badge">…</span>
     <span id="conn"><span class="dot"></span><span></span></span>
+    <span id="loghealth" class="pill" title="Warnings and errors in the log since the bot started">log: –</span>
     <span class="meta" id="meta"></span>
   </header>
   <div class="offline" id="offline">Lost contact with the bot. Is it still running?</div>
@@ -63,6 +94,14 @@ button:hover { border-color:var(--text2); } button.danger { background:var(--cri
     <div class="panel"><div class="label">Open P&amp;L</div><div class="value" id="openpnl">–</div></div>
     <div class="panel"><div class="label">Position</div><div class="value" id="position">–</div></div>
   </div>
+
+  <section class="panel" style="margin-top:14px" id="ideas-panel">
+    <h2>Recommended trades right now</h2>
+    <div id="ideas" class="ideas"></div>
+    <p class="hint">★ trades come from your auto-traded strategy (the bot takes them itself). Other ideas come from the other
+      strategies and are only traded if you press Take — re-priced at the market and sized by your risk rules (never larger).
+      Ideas can be taken for 15 minutes.</p>
+  </section>
 
   <div class="grid two">
     <section class="panel">
@@ -80,7 +119,25 @@ button:hover { border-color:var(--text2); } button.danger { background:var(--cri
     </section>
   </div>
 
+  <section class="panel" style="margin-top:14px">
+    <h2>Recommendation history &amp; results</h2>
+    <div id="scoreboard" class="hint" style="margin:0 0 8px"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Time</th><th>Strategy</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Stop</th>
+        <th class="num">Target</th><th class="num">Risk</th><th class="num">R:R</th><th>Status</th><th class="num">Result</th><th>Notes</th></tr></thead>
+      <tbody id="recs"></tbody></table></div>
+    <p class="hint">Results for ideas that weren't traded are hypothetical: followed bar by bar to the stop, target or session end
+      (stop first if a bar touches both).</p>
+  </section>
+
   <div class="grid two">
+    <section class="panel">
+      <h2>Settings <span class="label">(changes apply immediately and are saved; config.yaml is not rewritten)</span></h2>
+      <div id="settings" class="settings"><div class="empty">Loading…</div></div>
+      <div class="buttons" style="margin-top:10px"><button class="small" id="reset">Undo all changes (back to config.yaml)</button></div>
+      <p class="hint">Bounds keep every value within safe limits for your plan. Topstep's own rules, the mode (paper/live),
+        account and symbol can only be changed on your PC.</p>
+    </section>
     <section class="panel">
       <h2>Controls</h2>
       <div class="buttons">
@@ -89,66 +146,176 @@ button:hover { border-color:var(--text2); } button.danger { background:var(--cri
         <button id="flatten" class="danger">Flatten &amp; halt</button>
         <button id="stop">Stop bot</button>
       </div>
-      <p class="label" style="margin-top:10px">Pause keeps any open trade (with its stop) but blocks new entries. Flatten &amp; halt closes everything and stops trading until you restart the bot.</p>
+      <p class="hint">Pause keeps any open trade (with its stop) but blocks automatic entries — you can still Take ideas.
+        Flatten &amp; halt closes everything and stops trading until you restart the bot.</p>
+      <h2 style="margin-top:14px">Activity</h2>
+      <div class="log" id="log"></div>
+      <details id="problems" style="margin-top:10px"><summary class="label">Recent warnings &amp; errors</summary><div class="log" id="errors"></div></details>
     </section>
-    <section class="panel"><h2>Activity</h2><div class="log" id="log"></div></section>
   </div>
 </main>
+<div class="toast" id="toast"></div>
 <script>
 const TOKEN = "__TOKEN__";
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const money = v => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+const money0 = v => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, {maximumFractionDigits:0});
 function setMoney(id, v) { const e = $(id); e.textContent = money(v); e.classList.toggle("neg", v < 0); }
 function meter(id, frac, text, color) { $(id + "-bar").style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
   $(id + "-bar").style.background = color || css("--accent"); $(id + "-txt").textContent = text; }
-function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+let toastTimer;
+function toast(msg, bad) { const t = $("toast"); t.textContent = msg; t.className = "toast" + (bad ? " bad" : "");
+  t.style.display = "block"; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = "none", 5000); }
+async function post(name, body) {
+  let r;
+  try {
+    r = await fetch("/api/" + name, {method:"POST", headers:{"X-Token": TOKEN, "Content-Type":"application/json"},
+      body: JSON.stringify(body || {})});
+  } catch (e) { return {ok: false, message: "Could not reach the bot - is it still running?"}; }
+  let data = {}; try { data = await r.json(); } catch (e) { data = {ok: r.ok}; }
+  if (!r.ok && !data.message) data = {ok: false, message: `The bot refused that request (${r.status}). Reload this page and try again.`};
+  return data;
+}
 async function act(name, confirmText) {
   if (confirmText && !confirm(confirmText)) return;
-  try {
-    const r = await fetch("/api/" + name, {method:"POST", headers:{"X-Token": TOKEN}});
-    if (!r.ok) alert("The bot refused that request (" + r.status + "). Reload this page and try again.");
-  } catch (e) { alert("Could not reach the bot - is it still running?"); }
-  refresh(); }
+  const d = await post(name); if (d.message) toast(d.message, d.ok === false); refresh(); }
 $("pause").onclick = () => act("pause");
 $("resume").onclick = () => act("resume");
 $("flatten").onclick = () => act("flatten", "Close the position, cancel orders and halt trading?");
 $("stop").onclick = () => act("stop", "Stop the bot? (It flattens first if configured to.)");
+$("reset").onclick = async () => {
+  if (!confirm("Undo every setting changed from the dashboard or Telegram and go back to config.yaml?")) return;
+  const d = await post("reset_settings"); toast(d.message || "Done", d.ok === false); settingsBuilt = false; refresh(); };
 
+// ---------------------------------------------------------------- ideas
+async function takeIdea(id, size, summary) {
+  if (!confirm(`Take ${summary}?\n\nIt will be re-priced at the current market and protected by its stop. Size never exceeds what your risk rules allow.`)) return;
+  const d = await post("take_idea", {id, size});
+  toast(d.message || (d.ok ? "Order sent" : "Failed"), d.ok === false); refresh();
+}
+function renderIdeas(recs, s) {
+  const box = $("ideas");
+  const open = (recs && recs.open) || [];
+  const recent = (recs && recs.items || []).filter(r => r.status === "taken" && !r.result).slice(0, 1);
+  const cards = [...recent, ...open];
+  if (!recs) { box.innerHTML = `<div class="empty">Recommendations are turned off.</div>`; return; }
+  if (!cards.length) { box.innerHTML = `<div class="empty">No live ideas right now. They appear when a strategy signals on a closed bar.</div>`; return; }
+  const flat = s.position === 0 && !s.trade;
+  box.innerHTML = cards.map(r => {
+    const summary = `${r.side} ${r.size} ${s.contract} (${r.title})`;
+    const blocked = (r.note || "").startsWith("outside your rules");
+    const canTake = !r.active && r.size > 0 && flat && r.status !== "taken" && !blocked;
+    const half = Math.max(1, Math.floor(r.size / 2));
+    return `<div class="idea">
+      <div class="top"><span>${r.active ? "★ " : ""}${esc(r.title)}</span><span class="side-${esc(r.side)}">${esc(r.side)} ${r.size || "–"}</span></div>
+      <div class="why">${esc(r.reason)}</div>
+      <dl><dt>Entry ~</dt><dd>${r.entry}</dd><dt>Stop</dt><dd>${r.stop ?? "–"}</dd><dt>Target</dt><dd>${r.target ?? "trail / session end"}</dd>
+        <dt>Risk</dt><dd>${money0(r.risk_usd)}${r.rr ? ` · R:R ${r.rr}` : ""}</dd>
+        ${r.note ? `<dt>Note</dt><dd style="white-space:normal">${esc(r.note)}</dd>` : ""}</dl>
+      ${r.status === "taken" ? `<span class="tag auto">taken by the bot</span>` :
+        canTake ? `<div class="buttons"><button class="small primary" data-take="${esc(r.id)}" data-size="${r.size}" data-sum="${esc(summary)}">Take ${r.size}</button>
+                   ${r.size > 1 ? `<button class="small" data-take="${esc(r.id)}" data-size="${half}" data-sum="${esc(r.side + " " + half + " " + s.contract + " (" + r.title + ")")}">Take ${half}</button>` : ""}</div>`
+        : `<span class="tag">${blocked ? "blocked by your rules" : flat ? "can't be taken" : "already in a trade"}</span>`}
+    </div>`; }).join("");
+  box.querySelectorAll("[data-take]").forEach(b => b.onclick = () => takeIdea(b.dataset.take, +b.dataset.size, b.dataset.sum));
+}
+function renderRecs(recs) {
+  if (!recs) { $("recs").innerHTML = `<tr><td colspan="12" class="empty">Recommendations are turned off.</td></tr>`; $("scoreboard").textContent = ""; return; }
+  $("scoreboard").innerHTML = "Today: " + (recs.summary || []).map(x =>
+    `${x.active ? "★ " : ""}${esc(x.title)}: ${x.ideas} idea${x.ideas === 1 ? "" : "s"}, ${x.wins}/${x.closed} won, <span class="${x.pnl < 0 ? "neg" : x.pnl > 0 ? "pos" : ""}">${money0(x.pnl)}</span>`).join(" · ");
+  $("recs").innerHTML = (recs.items || []).map(r => {
+    const res = r.result ? `<span class="${r.result === "won" ? "pos" : r.result === "lost" ? "neg" : ""}">${r.outcome_usd != null ? money0(r.outcome_usd) : (r.outcome_r ?? 0) + "R"}${r.hypothetical ? "*" : ""}</span>` : "–";
+    return `<tr><td>${esc(r.time)}</td><td>${r.active ? `<span class="tag auto">★ auto</span> ` : ""}${esc(r.title)}</td>
+      <td class="side-${esc(r.side)}">${esc(r.side)}</td><td class="num">${r.size || "–"}</td><td class="num">${r.entry}</td>
+      <td class="num">${r.stop ?? "–"}</td><td class="num">${r.target ?? "–"}</td><td class="num">${money0(r.risk_usd)}</td>
+      <td class="num">${r.rr ?? "–"}</td><td>${esc(r.status)}${r.result ? " · " + esc(r.result) : ""}</td><td class="num">${res}</td>
+      <td class="note">${esc(r.note || r.reason)}</td></tr>`; }).join("") || `<tr><td colspan="12" class="empty">No recommendations yet today.</td></tr>`;
+}
+
+// ---------------------------------------------------------------- settings
+let settingsBuilt = false;
+function inputFor(x) {
+  if (x.kind === "bool") return `<input type="checkbox" data-key="${x.key}" ${x.value ? "checked" : ""}>`;
+  if (x.kind === "choice") return `<select data-key="${x.key}">${x.choices.map(c => `<option ${c === x.value ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+  if (x.kind === "time") return `<input type="time" data-key="${x.key}" value="${esc(x.value)}">`;
+  const step = x.kind.includes("int") ? 1 : x.kind.includes("money") ? 10 : 0.1;
+  return `<input type="number" data-key="${x.key}" step="${step}" ${x.min != null ? `min="${x.min}" max="${x.max}"` : ""} value="${x.value ?? ""}" placeholder="off">`;
+}
+function readInput(el) { return el.type === "checkbox" ? (el.checked ? "on" : "off") : el.value; }
+async function saveSetting(key, el) {
+  const value = readInput(el);
+  const p = await post("preview_setting", {key, value});
+  if (p.ok === false) { toast(p.message, true); return; }
+  if (!p.changed) { toast(`${p.label} is already ${p.new ?? "off"}`); return; }
+  const warn = p.riskier ? "\n\n⚠ This increases your risk." : "";
+  if (!confirm(`Change ${p.label}: ${p.old ?? "off"} → ${p.new ?? "off"}?${warn}`)) { settingsBuilt = false; refresh(); return; }
+  const d = await post("set_setting", {key, value});
+  toast(d.message, d.ok === false); el.dataset.dirty = ""; refresh();
+}
+function renderSettings(list) {
+  const box = $("settings");
+  if (!list) { box.innerHTML = `<div class="empty">Not available.</div>`; return; }
+  if (!settingsBuilt) {
+    box.innerHTML = list.map(x => `<div class="setting"><div class="name">${esc(x.label)} <span class="changed" data-changed="${x.key}"></span>
+      <small>${esc(x.help)}${x.min != null ? ` (${x.min}–${x.max})` : ""}</small></div>${inputFor(x)}
+      <button class="small" data-save="${x.key}">Save</button></div>`).join("");
+    box.querySelectorAll("input,select").forEach(el => el.addEventListener("input", () => el.dataset.dirty = "1"));
+    box.querySelectorAll("[data-save]").forEach(b => b.onclick = () => saveSetting(b.dataset.save, box.querySelector(`[data-key="${b.dataset.save}"]`)));
+    settingsBuilt = true;
+  }
+  for (const x of list) {  // refresh values without disturbing what you're typing
+    const el = box.querySelector(`[data-key="${x.key}"]`);
+    if (el && !el.dataset.dirty && document.activeElement !== el) {
+      if (el.type === "checkbox") el.checked = !!x.value; else el.value = x.value ?? "";
+    }
+    const tag = box.querySelector(`[data-changed="${x.key}"]`); if (tag) tag.textContent = x.changed ? "changed" : "";
+  }
+}
+
+// ---------------------------------------------------------------- main render
 function render(s) {
   const live = s.mode === "live";
   const mode = $("mode"); mode.textContent = live ? "LIVE" : "PAPER"; mode.style.background = live ? css("--live") : css("--paper");
   const c = $("conn"); c.querySelector(".dot").style.background = s.connected ? css("--good") : css("--crit");
   c.lastChild.textContent = s.connected ? "connected" : "disconnected";
-  $("meta").textContent = `${s.account} · ${s.plan} · ${s.contract} ${s.timeframe}m · ${s.time.replace("T", " ")}`;
+  $("meta").textContent = `${s.account} · ${s.plan} · ${s.contract} ${s.timeframe}m · ${s.time}`;
+  if (s.log) {
+    const lh = $("loghealth"); lh.textContent = `log: ${s.log.errors} error${s.log.errors === 1 ? "" : "s"}, ${s.log.warnings} warning${s.log.warnings === 1 ? "" : "s"}`;
+    lh.style.color = s.log.errors ? css("--crit") : ""; lh.onclick = () => { $("problems").open = true; $("problems").scrollIntoView({behavior:"smooth"}); };
+    $("errors").innerHTML = s.log.recent.map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts)}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">None 🎉</div>`;
+  }
   const r = s.risk;
   let state = ["--good", "Trading normally"];
   if (s.halted) state = ["--crit", "Halted: " + s.halted];
-  else if (r.paused) state = ["--warn", "Paused: no new trades (press Resume to continue)"];
+  else if (r.paused) state = ["--warn", "Automatic entries paused (you can still take ideas)"];
   else if (r.locked) state = ["--warn", "Done for today: " + r.locked];
   const st = $("status"); st.querySelector(".dot").style.background = css(state[0]); st.lastChild.textContent = state[1];
   setMoney("balance", s.balance); setMoney("daypnl", r.day_pnl); setMoney("openpnl", s.open_pnl);
   $("position").textContent = s.position === 0 ? "Flat" : `${s.position > 0 ? "Long" : "Short"} ${Math.abs(s.position)}`;
 
-  const mllRoom = r.mll_room, mllSize = r.mll_size || 2000;
-  const roomFrac = mllRoom / mllSize;
-  meter("mll", roomFrac, `${money(mllRoom)} (floor ${money(r.mll_floor)})`, roomFrac < 0.25 ? css("--crit") : roomFrac < 0.5 ? css("--warn") : css("--good"));
+  const roomFrac = r.mll_room / (r.mll_size || 2000);
+  meter("mll", roomFrac, `${money(r.mll_room)} (floor ${money(r.mll_floor)})`, roomFrac < 0.25 ? css("--crit") : roomFrac < 0.5 ? css("--warn") : css("--good"));
   const used = Math.max(0, -r.day_pnl) / r.daily_loss_limit;
   meter("dll", used, `${money(Math.max(0, -r.day_pnl))} of ${money(r.daily_loss_limit)}`, used > 0.75 ? css("--crit") : used > 0.5 ? css("--warn") : css("--accent"));
-  if (s.profit_target) { $("target-meter").style.display = "";
-    meter("tgt", s.total_profit / s.profit_target, `${money(s.total_profit)} of ${money(s.profit_target)}`); }
+  if (s.profit_target) { $("target-meter").style.display = ""; meter("tgt", s.total_profit / s.profit_target, `${money(s.total_profit)} of ${money(s.profit_target)}`); }
   else $("target-meter").style.display = "none";
   meter("trades", r.trades_today / r.max_trades, `${r.trades_today} of ${r.max_trades}`);
 
   const t = s.trade;
   $("trade").innerHTML = t ? `<dl><dt>Side</dt><dd>${esc(t.side)} ${t.size}</dd><dt>State</dt><dd>${esc(t.state)}</dd>
     <dt>Entry</dt><dd>${t.entry_price ?? "pending"}</dd><dt>Stop</dt><dd>${t.stop_price}</dd>
-    <dt>Target</dt><dd>${t.target_price ?? "–"}</dd><dt>Why</dt><dd>${esc(t.reason)}</dd></dl>`
+    <dt>Target</dt><dd>${t.target_price ?? "–"}</dd><dt>Why</dt><dd style="white-space:normal">${esc(t.reason)}</dd></dl>`
     : `<div class="empty">No open trade.${s.last_trade ? ` Last: ${esc(s.last_trade.side)} ${money(s.last_trade.net_pnl)} (${esc(s.last_trade.exit_reason)})` : ""}</div>`;
-  const rows = [["Name", s.strategy], ["Last bar", s.last_bar ? s.last_bar.replace("T", " ").slice(0, 16) + " UTC" : "–"], ["Last price", s.last_price ?? "–"]];
+  const rows = [["Auto-traded", s.strategy], ["Risk per trade", money0(r.risk_per_trade) + (r.risk_scale < 1 ? " (ramp-up)" : "")],
+    ["Last bar", s.last_bar ? s.last_bar.replace("T", " ").slice(0, 16) + " UTC" : "–"], ["Last price", s.last_price ?? "–"]];
   for (const [k, v] of Object.entries(s.strategy_state || {})) rows.push([k.replace(/_/g, " "), v ?? "–"]);
   $("strategy").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
   $("log").innerHTML = (s.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(11, 19))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">Nothing yet.</div>`;
+  renderIdeas(s.recommendations, s);
+  renderRecs(s.recommendations);
+  renderSettings(s.settings);
 }
 async function refresh() {
   try { const r = await fetch("/api/status", {cache:"no-store"}); render(await r.json()); $("offline").style.display = "none"; }

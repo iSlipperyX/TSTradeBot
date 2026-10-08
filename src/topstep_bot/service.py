@@ -21,7 +21,6 @@ import subprocess
 import sys
 import time
 from collections import deque
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import httpx
@@ -53,17 +52,6 @@ def notify(secrets: Secrets, text: str) -> None:
         except httpx.HTTPError as exc:
             log.warning("Alert failed: %s", redact(exc))
 
-
-def _setup_logging(log_dir: Path = Path("logs")) -> None:
-    log_dir.mkdir(exist_ok=True)
-    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s")
-    file_handler = RotatingFileHandler(log_dir / "service.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
-    file_handler.setFormatter(fmt)
-    console = logging.StreamHandler()
-    console.setFormatter(fmt)
-    log.handlers[:] = [file_handler, console]
-    log.setLevel(logging.INFO)
-    log.propagate = False
 
 
 class Supervisor:
@@ -177,7 +165,10 @@ class Supervisor:
 
 
 def run_service(cfg: BotConfig, secrets: Secrets, *, config_path: str | None, mode: str | None) -> int:
-    _setup_logging()
+    from topstep_bot.logging_setup import setup_logging
+
+    setup_logging(cfg.log_dir, "INFO", file_prefix="service", retention_days=cfg.log_retention_days,
+                  secrets=[secrets.api_key, secrets.telegram_bot_token, secrets.discord_webhook_url])
     log.info("Topstep Bot 24/7 service started (mode: %s). Stop with Ctrl+C or Telegram /stop.", mode or cfg.mode)
     with keep_awake(cfg.service.keep_awake), console_stays_responsive():
         try:
