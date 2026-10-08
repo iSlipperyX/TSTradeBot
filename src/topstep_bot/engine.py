@@ -22,7 +22,8 @@ from topstep_bot.config import BotConfig
 from topstep_bot.execution import ManagedTrade, OrderManager, TradeState
 from topstep_bot.indicators import ATR
 from topstep_bot.journal import Journal
-from topstep_bot.knowledge import RegimeTracker, slot_for
+from topstep_bot.knowledge import MANUAL, RegimeTracker, slot_for
+from topstep_bot.manual import ManualTrading
 from topstep_bot.models import Account, Bar, Contract, OrderSide, Signal
 from topstep_bot.notify import Notifier
 from topstep_bot.risk.manager import RiskManager
@@ -119,6 +120,7 @@ class TradingCore:
         self.recommender: RecommendationBook | None = None  # trade ideas for the dashboard (+ what the bot learns from)
         self.knowledge: KnowledgeBase | None = None  # what has worked when; drives the adaptive strategy
         self.remote: RemoteControl | None = None  # settings/trades from the dashboard and Telegram
+        self.manual = ManualTrading(self)  # trades you open yourself from the dashboard's trade ticket
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
@@ -447,6 +449,8 @@ class TradingCore:
         self.risk.record_trade(t.net_pnl, t.closed_at or self.clock())
         if self.recommender:
             self.recommender.trade_closed(t)
+        if t.strategy == MANUAL:
+            self.manual.trade_closed(t)
         self.closed_trades.append(t)
         if self.journal and self.current_day:
             self.journal.record_trade(t, self.current_day, self.account_label, self.contract.name)
@@ -476,6 +480,18 @@ class TradingCore:
         return self.knowledge.text(names, today=self.schedule.trading_day(self.clock()), slot=self.slot(),
                                    regime=self.regime.value)
 
+    def _trade_view(self, t: ManagedTrade) -> dict:
+        """The open trade plus where it stands now (open P&L in dollars and R)."""
+        d = t.to_dict()
+        price = self.last_price
+        if t.entry_price is not None and price is not None and t.filled_size:
+            d["open_pnl"] = round(self.orders.open_pnl(price), 2)
+            d["r_now"] = round((price - t.entry_price) * t.side.sign / t.risk_points, 2) if t.risk_points else None
+        d["breakeven_ok"] = (t.entry_price is not None and t.stop_order_id is not None and price is not None
+                             and (t.stop_price - t.entry_price) * t.side.sign < 0
+                             and (price - t.entry_price) * t.side.sign >= self.contract.price_offset(2))
+        return d
+
     def snapshot(self) -> dict:
         open_pnl = self.orders.open_pnl()
         equity = self.balance + open_pnl
@@ -499,7 +515,14 @@ class TradingCore:
             # Combine: the target after any Consistency Target increase.
             "profit_target": progress.profit_target if progress else None,
             "total_profit": round(self.balance - start, 2),
-            "trade": trade.to_dict() if trade else None,
+            "trade": self._trade_view(trade) if trade else None,
+            "trades_today": [{**t.to_dict(), "time": self.schedule.local(t.closed_at).strftime("%H:%M")}
+                             for t in reversed(self.closed_trades)
+                             if t.closed_at and self.schedule.trading_day(t.closed_at) == self.current_day][:20],
+            "contract_info": {"tick_size": self.contract.tick_size, "tick_value": self.contract.tick_value,
+                              "point_value": self.contract.point_value, "decimals": self.contract.price_decimals,
+                              "atr": round(self.atr.value, 4) if self.atr.value else None},
+            "manual_block": self.manual.block_reason(),  # why the trade ticket can't place a trade now
             "last_trade": self.orders.last_trade.to_dict() if self.orders.last_trade else None,
             "risk": self.risk.snapshot(self.balance, open_pnl),
             "strategy_state": {

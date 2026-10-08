@@ -135,6 +135,22 @@ class BotActions:
     async def take_idea(self, rec_id: str, source: str, size: int | None = None) -> str:
         return await self._remote().take_idea(rec_id, source, size)
 
+    # ------------------------------------------------------------------ manual trades (dashboard trade ticket)
+
+    def trade_ticket(self, payload: dict) -> dict:
+        """Preview a manual trade: size, risk, rule checks and what the bot knows. Places nothing."""
+        return self.core.manual.ticket(payload.get("side"), payload.get("stop"), payload.get("target"), payload.get("size"))
+
+    async def manual_trade(self, payload: dict, source: str) -> str:
+        return await self.core.manual.open(payload.get("side"), payload.get("stop"), payload.get("target"),
+                                           payload.get("size"), source, str(payload.get("note") or ""))
+
+    async def close_trade(self, source: str) -> str:
+        return await self.core.manual.close(source)
+
+    async def stop_breakeven(self, source: str) -> str:
+        return await self.core.manual.stop_to_breakeven(source)
+
     def open_ideas(self, limit: int = 4) -> list[dict]:
         """Recommendations that can still be taken (newest first)."""
         from topstep_bot.remote import IDEA_MAX_AGE
@@ -189,6 +205,14 @@ class BotActions:
             return self.change_setting(payload.get("key", ""), payload.get("value"), source)
         if name == "reset_settings":
             return self.reset_settings(source)
+        if name == "trade_ticket":
+            return {"ticket": self.trade_ticket(payload)}
+        if name == "manual_trade":
+            return await self.manual_trade(payload, source)
+        if name == "close_trade":
+            return await self.close_trade(source)
+        if name == "stop_breakeven":
+            return await self.stop_breakeven(source)
         if name == "take_idea":
             size = payload.get("size")
             return await self.take_idea(str(payload.get("id", "")), source, int(size) if size else None)

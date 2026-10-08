@@ -62,6 +62,9 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   bot, so they stay online if it stops or crashes: see why, then start/restart it remotely; Paper/Live switch.
 - **Local dashboard** with guardrail meters and Pause / Flatten / Stop
   buttons; KILL-file kill switch; emergency flatten command.
+- **Manual trades from the dashboard** — a trade ticket that suggests a stop, target and size, checks
+  every Topstep and risk rule first, shows what the knowledge base says, and records your results so the
+  bot learns from them too.
 - **Recommended trades** — every strategy's signals on the dashboard and in Telegram, sized with your
   risk rules, tracked to a result; take any of them with one tap (re-priced, never oversized).
 - **Knowledge tab** — what works when, per strategy, time of day and regime, with a Retrain button;
@@ -123,6 +126,7 @@ src/topstep_bot/
   service.py      bot <-> controller contract;  autostart.py, keepawake.py
   preflight.py    same-day readiness checks;  news.py  economic calendar
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram
+  manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
   telegram_control.py  Telegram bot remote control
   cli.py, wizard.py
 tests/            pytest suite (run: pytest)

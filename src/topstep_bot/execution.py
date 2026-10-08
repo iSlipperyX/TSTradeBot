@@ -104,6 +104,8 @@ class ManagedTrade:
             "target_price": self.target_price,
             "exit_price": self.exit_price,
             "reason": self.reason,
+            "strategy": self.strategy,
+            "planned_risk": None if self.planned_risk is None else round(self.planned_risk, 2),
             "exit_reason": self.exit_reason,
             "opened_at": self.opened_at.isoformat() if self.opened_at else None,
             "closed_at": self.closed_at.isoformat() if self.closed_at else None,

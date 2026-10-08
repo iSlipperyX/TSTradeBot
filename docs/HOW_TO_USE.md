@@ -389,26 +389,42 @@ that file.
 - **Bot status:** Running, Starting…, Stopped, Crashed or Failed to start, plus uptime.
 - **Start, Restart and Stop** for the bot process. Stop closes any position first; the dashboard stays up.
 - **Log badge:** warnings and errors so far. Click it for the Logs tab.
+- **Theme button** (◐): follow your computer's light/dark setting, or force light or dark. The
+  dashboard remembers it, and it remembers which tab you were on.
 - When the bot isn't running, a **banner** shows why (e.g. "stop requested from Telegram",
   "crashed: …", "could not start: …") with **Start bot** and **See logs** buttons.
 
 **Overview tab**
 
-- Balance, today's P&L, open P&L and position.
+- Balance (and profit since the start), today's P&L (and trades won), open P&L (also in R) and
+  position (with today's contract limit and the last price).
 - **Guardrails:**
   - *Room above Max Loss Limit:* turns yellow below 50% and red below 25% of the MLL size.
-  - *Daily loss limit used* and *Combine profit target* progress.
+  - *Daily loss limit used*, and *Topstep daily loss limit used* if your account has one.
+  - *Combine profit target* progress, with the Consistency Target status underneath.
   - *Trades today*.
   - **Pause / Resume / Flatten & halt** buttons.
-- Current trade and strategy levels, the time-of-day slot and volatility regime, and — with the
-  adaptive strategy — which sub-strategy is managing the trade and the last signal it took or skipped.
+- **Current trade:** side and size, who opened it (*bot*, *idea* you took, or *you*), entry, stop,
+  target, dollars at risk, live P&L in dollars and R, and why it was opened. Two buttons:
+  - **Close trade** closes it at the market and **the bot keeps running** (Flatten & halt, by
+    contrast, stops all trading until a restart).
+  - **Stop to breakeven** moves the stop to the entry price. It's available once price is at least
+    2 ticks beyond the entry, and the stop only ever moves in your favour.
+  - **New manual trade** opens the Trade tab.
+- Strategy levels, the time-of-day slot and volatility regime, and — with the adaptive strategy —
+  which sub-strategy is managing the trade and the last signal it took or skipped.
+- **Today's trades:** every closed trade today, who opened it, entry, exit, P&L, R and how it ended.
 - **Activity:** everything the bot did, newest first.
+
+**Trade tab:** open your own trade with suggestions from the bot — see
+[Trading manually from the dashboard](#trading-manually-from-the-dashboard) below.
 
 **Ideas tab:** recommended trades with **Take** buttons and today's results per strategy — see
 [section 16](#16-recommended-trades). A badge on the tab shows how many ideas are live.
 
 **Knowledge tab:** what the bot has learned — for every strategy, time of day and regime, the average
-result per signal and whether the adaptive strategy trades it right now — with a **Retrain now** button.
+result per signal and whether the adaptive strategy trades it right now — with a **Retrain now** button,
+plus a **Your manual trades** panel: your record by time of day and regime and your latest trades.
 See [section 17](#17-training-and-the-knowledge-base-how-the-bot-learns).
 
 **Settings tab:** change risk, limits, times, the news pause and the auto-traded strategy — see
@@ -422,6 +438,63 @@ See [section 17](#17-training-and-the-knowledge-base-how-the-bot-learns).
 - The end of the bot's log.
 
 The dashboard only accepts connections from your own computer.
+
+### Trading manually from the dashboard
+
+The **Trade** tab is a trade ticket. It lets you place your own trade, and it shows you everything
+the bot knows before you press the button. Manual trades go through **exactly the same risk rules
+and Topstep guards as the bot's own trades**, and the bot learns from their results.
+
+**1. Pick Buy or Sell.** The ticket fills itself in straight away:
+
+- **Stop** — suggested from the best live idea on that side (the one from the strategy with the
+  best record at this time of day), or else 1 × ATR(14) from the price, kept between `min_stop_ticks`
+  and `max_stop_ticks`. Type a price to use your own. Every manual trade has a stop; it decides the size.
+- **Target** — the idea's target, or 1.5R by default. The **1R / 1.5R / 2R / 3R** buttons set it
+  from your stop, and **None** trades without a target (it then ends at the stop, when you close it,
+  by the breakeven/trailing settings, or at 15:10 CT).
+- **Size** — the most your risk rules allow with this stop (shown as *max*). **½** and **1** pick
+  smaller sizes. You can type any size; anything above the maximum is cut back, never placed.
+- **Note** (optional) — why you're taking it. It's saved with the trade in the journal and activity log.
+
+**2. Read the summary.** The exact order: side, size, market price and the worst fill allowed
+(`execution.max_entry_slippage_ticks`), stop and dollars at risk, target, reward and R:R. If the
+bot adjusted something (stop widened to the minimum distance, size cut back), it says so.
+
+**3. Check the rules.** The *Rule checks* panel lists ✔ / ⚠ / ⛔ for: the trading window, one
+position at a time, your daily loss room, the room above the Maximum Loss Limit (after
+`mll_buffer`), any Topstep daily loss limit, the Combine consistency guard, today's position limit
+(halved near scheduled news), losing streak, news coming up, and the order guard. Anything that
+blocks the trade turns the button off and says why. Manual trades may go past
+`max_trades_per_day` and work while automatic entries are paused — **nothing else is relaxed**.
+
+**4. See what the bot knows.** The *What the bot knows* panel gives a plain reading —
+**Supported**, **Some support**, **Mixed evidence**, **No clear evidence** or **Evidence against** —
+and the reasons behind it:
+
+- which strategies have worked at this time of day in this regime (✔ / ✘ / ?, average R, signals);
+- how **longs and shorts** have done here across all strategies;
+- **live ideas** from the last 15 minutes that agree or disagree with your side (**Use its levels**
+  copies an idea's stop and target into the ticket);
+- **your own manual trades**, overall and at this time of day and regime (after 5 trades in the same
+  slot and regime, your record counts toward the reading).
+
+This is evidence from past signals and trades, not a forecast. A "Supported" trade can still lose.
+
+**5. Place it.** The button shows the order (e.g. *Place SELL 1 MNQ · paper*, or *· LIVE* in live
+mode). You confirm once more, then it's sent as a market order capped at the worst fill allowed,
+protected by its stop at once. After that it's managed like any bot trade: the stop, target,
+breakeven/trailing settings, risk flattening (loss limits, MLL, Combine guards), closing before
+news if `news.flatten_before` is on, and the 15:10 CT flatten. The auto-traded strategy never
+exits your trade. Manage it from the Overview's **Close trade** and **Stop to breakeven**.
+
+**How the bot learns from your trades.** When a manual trade closes, its result (in R), time of day,
+regime and how it ended are added to the knowledge base, tagged **manual**. Manual trades are kept
+apart from the strategies' evidence: they never switch a strategy on or off, but the trade ticket and
+the Knowledge tab show your record next to the strategies', so over a Combine you can see where your
+own trades work and where they don't. Like the bot's real trades, they count double and are never
+dropped by retraining. Trades closed by a shutdown, halt or daily restart aren't counted (the
+ending says nothing about the trade).
 
 ---
 
@@ -460,7 +533,8 @@ cooldown. If it finds a position protected by one of its own stops (for example 
 
 | Want to... | Do this |
 |---|---|
-| Stop new trades but let the open trade finish | **Pause new trades** (Overview tab) or Telegram `/pause`; then **Resume**. You can still take ideas yourself while paused. |
+| Stop new trades but let the open trade finish | **Pause new trades** (Overview tab) or Telegram `/pause`; then **Resume**. You can still take ideas and trade manually while paused. |
+| Close the open trade but keep the bot running | **Close trade** under Current trade (Overview tab). |
 | Close everything and stop trading | **Flatten & halt** or Telegram `/flatten`. Trading stays halted until the bot is restarted. |
 | Stop the bot (dashboard and Telegram stay online) | **Stop** in the top bar or Telegram `/stop`. Start it again with **Start** or `/startbot`. |
 | Restart the bot | **Restart** or Telegram `/restart` — it flattens first. |
@@ -864,18 +938,19 @@ The bot keeps a **knowledge base**: for every strategy, what its signals have be
 20% above its multi-day average). Each entry is one *observation*: a signal followed to its outcome,
 measured in **R** (1R = the amount that trade risked).
 
-Observations come from three places and are kept apart:
+Observations come from four places and are kept apart:
 
 | Source | What it is | When |
 |---|---|---|
 | **training** | Every strategy replayed over the last `knowledge.history_days` (60) days of real data — exactly the way the running bot follows ideas, so it measures the same thing | Menu **5 (train)**, `topstep-bot train`, the dashboard's **Retrain now**, Telegram `/train`, and automatically at startup when the last training is older than `retrain_hours` (20) — so normally once a day after the 16:05 CT restart |
 | **live ideas** | Hypothetical outcomes of signals the bot saw while running but did not trade (shadow strategies, skipped signals) | Continuously while the bot runs |
 | **real trades** | The bot's own closed trades (count double) | Continuously while the bot runs |
+| **manual trades** | Trades you opened from the dashboard's Trade tab (count double, shown as *Your manual trades*; they never switch a strategy on or off) | When each one closes |
 
 Because every signal is followed whether it was traded or not, **the bot never has to try a bad idea
 to learn it is bad.** Older observations fade out (half their weight after `half_life_days`, 20), so
 the base follows the market as it changes. Retraining replaces the training layer and drops live ideas
-the new training already covers, so nothing is counted twice; real trades are never dropped.
+the new training already covers, so nothing is counted twice; real and manual trades are never dropped.
 
 ### How the adaptive strategy uses it
 
@@ -935,6 +1010,9 @@ Good to know:
   every account on the same symbol and timeframe. What it learns on the learning Combine carries
   over when you later point the bot at an account you want to pass.
 - Watch what it's learning on the dashboard's **Knowledge** tab or with `/knowledge` on Telegram.
+- You can teach it with your own trades too: trades you place from the dashboard's **Trade** tab are
+  recorded as *manual* observations, so the ticket can show you where your own trades work
+  ([Trading manually from the dashboard](#trading-manually-from-the-dashboard)).
 - When you move to an account you want to pass, run setup again and choose **"Pass the Combine"**.
 
 Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
