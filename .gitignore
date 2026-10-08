@@ -1,0 +1,22 @@
+# Secrets - never commit
+.env
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+
+# Bot runtime output
+data/
+logs/
+reports/
+*.db
+*.db-journal
+KILL
+config.yaml

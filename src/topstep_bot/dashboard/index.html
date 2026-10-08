@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Topstep Bot</title>
+<style>
+:root { color-scheme: light; --bg:#f6f6f4; --surface:#fcfcfb; --border:#e4e3df; --text:#0b0b0b; --text2:#52514e;
+  --muted:#8a8984; --track:#ecebe7; --accent:#2a78d6; --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
+  --neg:#b02a2a; --live:#d03b3b; --paper:#2a78d6; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; --bg:#121211;
+  --surface:#1a1a19; --border:#2e2e2b; --text:#ffffff; --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27;
+  --accent:#3987e5; --neg:#ff8a8a; --paper:#3987e5; } }
+:root[data-theme="dark"] { color-scheme: dark; --bg:#121211; --surface:#1a1a19; --border:#2e2e2b; --text:#ffffff;
+  --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27; --accent:#3987e5; --neg:#ff8a8a; --paper:#3987e5; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
+main { max-width:1100px; margin:0 auto; padding:20px 16px 40px; }
+header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+h1 { font-size:20px; margin:0; } h2 { font-size:14px; margin:0 0 10px; color:var(--text2); font-weight:600; }
+.badge { font-size:12px; font-weight:700; padding:3px 8px; border-radius:999px; color:#fff; }
+.dot { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:middle; }
+.meta { color:var(--text2); font-size:12px; margin-left:auto; }
+.grid { display:grid; gap:12px; margin-top:14px; }
+.cards { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
+.two { grid-template-columns:1fr 1fr; } @media (max-width:760px) { .two { grid-template-columns:1fr; } }
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
+.label { color:var(--text2); font-size:12px; } .value { font-size:22px; font-weight:650; font-variant-numeric:tabular-nums; }
+.neg { color:var(--neg); }
+.meter { margin-bottom:12px; } .meter .row { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
+.meter .row span:last-child { font-variant-numeric:tabular-nums; color:var(--text2); }
+.track { height:8px; background:var(--track); border-radius:4px; overflow:hidden; }
+.fill { height:100%; border-radius:4px; background:var(--accent); transition:width .4s; }
+.status { display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; margin-top:12px; font-weight:600; border:1px solid var(--border); background:var(--surface); }
+dl { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; margin:0; font-size:13px; }
+dt { color:var(--text2); } dd { margin:0; font-variant-numeric:tabular-nums; }
+.buttons { display:flex; gap:8px; flex-wrap:wrap; }
+button { font:inherit; font-weight:600; padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer; }
+button:hover { border-color:var(--text2); } button.danger { background:var(--crit); color:#fff; border-color:var(--crit); }
+.log { max-height:320px; overflow:auto; font-size:12.5px; }
+.log div { padding:5px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; }
+.log time { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.lvl-warning::before { content:"⚠ "; } .lvl-error::before, .lvl-critical::before { content:"⛔ "; }
+.lvl-error, .lvl-critical { color:var(--neg); }
+.empty { color:var(--muted); }
+.offline { display:none; background:var(--crit); color:#fff; padding:8px 12px; border-radius:10px; margin-top:12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Topstep Bot</h1>
+    <span id="mode" class="badge">…</span>
+    <span id="conn"><span class="dot"></span><span></span></span>
+    <span class="meta" id="meta"></span>
+  </header>
+  <div class="offline" id="offline">Lost contact with the bot. Is it still running?</div>
+  <div class="status" id="status"><span class="dot"></span><span></span></div>
+
+  <div class="grid cards">
+    <div class="panel"><div class="label">Balance</div><div class="value" id="balance">–</div></div>
+    <div class="panel"><div class="label">Today's P&amp;L</div><div class="value" id="daypnl">–</div></div>
+    <div class="panel"><div class="label">Open P&amp;L</div><div class="value" id="openpnl">–</div></div>
+    <div class="panel"><div class="label">Position</div><div class="value" id="position">–</div></div>
+  </div>
+
+  <div class="grid two">
+    <section class="panel">
+      <h2>Guardrails</h2>
+      <div class="meter"><div class="row"><span>Room above Max Loss Limit</span><span id="mll-txt"></span></div><div class="track"><div class="fill" id="mll-bar"></div></div></div>
+      <div class="meter"><div class="row"><span>Daily loss limit used</span><span id="dll-txt"></span></div><div class="track"><div class="fill" id="dll-bar"></div></div></div>
+      <div class="meter" id="target-meter"><div class="row"><span>Combine profit target</span><span id="tgt-txt"></span></div><div class="track"><div class="fill" id="tgt-bar"></div></div></div>
+      <div class="meter"><div class="row"><span>Trades today</span><span id="trades-txt"></span></div><div class="track"><div class="fill" id="trades-bar"></div></div></div>
+    </section>
+    <section class="panel">
+      <h2>Current trade</h2>
+      <div id="trade"></div>
+      <h2 style="margin-top:14px">Strategy</h2>
+      <dl id="strategy"></dl>
+    </section>
+  </div>
+
+  <div class="grid two">
+    <section class="panel">
+      <h2>Controls</h2>
+      <div class="buttons">
+        <button id="pause">Pause new trades</button>
+        <button id="resume">Resume</button>
+        <button id="flatten" class="danger">Flatten &amp; halt</button>
+        <button id="stop">Stop bot</button>
+      </div>
+      <p class="label" style="margin-top:10px">Pause keeps any open trade (with its stop) but blocks new entries. Flatten &amp; halt closes everything and stops trading until you restart the bot.</p>
+    </section>
+    <section class="panel"><h2>Activity</h2><div class="log" id="log"></div></section>
+  </div>
+</main>
+<script>
+const TOKEN = "__TOKEN__";
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const money = v => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+function setMoney(id, v) { const e = $(id); e.textContent = money(v); e.classList.toggle("neg", v < 0); }
+function meter(id, frac, text, color) { $(id + "-bar").style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
+  $(id + "-bar").style.background = color || css("--accent"); $(id + "-txt").textContent = text; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+async function act(name, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  await fetch("/api/" + name, {method:"POST", headers:{"X-Token": TOKEN}}); refresh(); }
+$("pause").onclick = () => act("pause");
+$("resume").onclick = () => act("resume");
+$("flatten").onclick = () => act("flatten", "Close the position, cancel orders and halt trading?");
+$("stop").onclick = () => act("stop", "Stop the bot? (It flattens first if configured to.)");
+
+function render(s) {
+  const live = s.mode === "live";
+  const mode = $("mode"); mode.textContent = live ? "LIVE" : "PAPER"; mode.style.background = live ? css("--live") : css("--paper");
+  const c = $("conn"); c.querySelector(".dot").style.background = s.connected ? css("--good") : css("--crit");
+  c.lastChild.textContent = s.connected ? "connected" : "disconnected";
+  $("meta").textContent = `${s.account} · ${s.plan} · ${s.contract} ${s.timeframe}m · ${s.time.replace("T", " ")}`;
+  const r = s.risk;
+  let state = ["--good", "Trading normally"];
+  if (s.halted) state = ["--crit", "Halted: " + s.halted];
+  else if (r.paused) state = ["--warn", "Paused from dashboard"];
+  else if (r.locked) state = ["--warn", "Done for today: " + r.locked];
+  const st = $("status"); st.querySelector(".dot").style.background = css(state[0]); st.lastChild.textContent = state[1];
+  setMoney("balance", s.balance); setMoney("daypnl", r.day_pnl); setMoney("openpnl", s.open_pnl);
+  $("position").textContent = s.position === 0 ? "Flat" : `${s.position > 0 ? "Long" : "Short"} ${Math.abs(s.position)}`;
+
+  const mllRoom = r.mll_room, mllSize = r.mll_size || 2000;
+  const roomFrac = mllRoom / mllSize;
+  meter("mll", roomFrac, `${money(mllRoom)} (floor ${money(r.mll_floor)})`, roomFrac < 0.25 ? css("--crit") : roomFrac < 0.5 ? css("--warn") : css("--good"));
+  const used = Math.max(0, -r.day_pnl) / r.daily_loss_limit;
+  meter("dll", used, `${money(Math.max(0, -r.day_pnl))} of ${money(r.daily_loss_limit)}`, used > 0.75 ? css("--crit") : used > 0.5 ? css("--warn") : css("--accent"));
+  if (s.profit_target) { $("target-meter").style.display = "";
+    meter("tgt", s.total_profit / s.profit_target, `${money(s.total_profit)} of ${money(s.profit_target)}`); }
+  else $("target-meter").style.display = "none";
+  meter("trades", r.trades_today / r.max_trades, `${r.trades_today} of ${r.max_trades}`);
+
+  const t = s.trade;
+  $("trade").innerHTML = t ? `<dl><dt>Side</dt><dd>${esc(t.side)} ${t.size}</dd><dt>State</dt><dd>${esc(t.state)}</dd>
+    <dt>Entry</dt><dd>${t.entry_price ?? "pending"}</dd><dt>Stop</dt><dd>${t.stop_price}</dd>
+    <dt>Target</dt><dd>${t.target_price ?? "–"}</dd><dt>Why</dt><dd>${esc(t.reason)}</dd></dl>`
+    : `<div class="empty">No open trade.${s.last_trade ? ` Last: ${esc(s.last_trade.side)} ${money(s.last_trade.net_pnl)} (${esc(s.last_trade.exit_reason)})` : ""}</div>`;
+  const rows = [["Name", s.strategy], ["Last bar", s.last_bar ? s.last_bar.replace("T", " ").slice(0, 16) + " UTC" : "–"], ["Last price", s.last_price ?? "–"]];
+  for (const [k, v] of Object.entries(s.strategy_state || {})) rows.push([k.replace(/_/g, " "), v ?? "–"]);
+  $("strategy").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  $("log").innerHTML = (s.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(11, 19))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">Nothing yet.</div>`;
+}
+async function refresh() {
+  try { const r = await fetch("/api/status", {cache:"no-store"}); render(await r.json()); $("offline").style.display = "none"; }
+  catch (e) { $("offline").style.display = "block"; }
+}
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+# Topstep Bot configuration. Every setting has a safe default; see README.md for the full list.
+
+# paper = simulated fills on real market data (no orders sent). live = real orders on your TopstepX account.
+mode: paper
+
+account:
+  plan: "50K"                # 50K, 100K or 150K
+  stage: combine            # combine, express or practice
+  # account_id: 123456          # set by 'topstep-bot setup'
+  # mll_floor_override: 48500    # copy your current Max Loss Limit from the Topstep dashboard to sync the bot
+
+instrument:
+  symbol: MNQ                # MNQ, MES, NQ, ES, M2K, RTY, MYM, YM, MGC, GC, MCL, CL
+  timeframe_minutes: 5
+
+strategy:
+  name: orb                # orb, noise_breakout, ema_trend, vwap_reversion  (see: topstep-bot strategies)
+  params: {}                 # override strategy defaults here, e.g. {target_r: 1.5}
+
+risk:
+  risk_per_trade: 150          # $ lost if a trade hits its stop (position size is calculated from this)
+  personal_daily_loss_limit: 500 # stop trading for the day after losing this much (incl. open P&L)
+  max_trades_per_day: 4
+  max_consecutive_losses: 2
+  mll_buffer: 200               # keep this much cushion above Topstep's Maximum Loss Limit
+  # daily_profit_target: 1200   # combine default: 40% of the profit target (protects the consistency rule)
+  # max_contracts: 2            # optional extra cap (Topstep's own cap is always enforced)
+  # breakeven_at_r: 1.0         # move stop to breakeven after 1R of profit
+  # trail_atr_multiple: 2.0     # ATR trailing stop
+
+session:                        # times are US Central (exchange) time
+  trade_start: "08:30"
+  last_entry: "14:30"
+  flatten_at: "15:00"           # Topstep requires flat by 15:10 CT
+  blackout_windows: []          # e.g. [{start: "07:25", end: "07:40", label: "CPI"}]
+
+telegram:                       # control the bot from Telegram (token + chat ID are stored in .env)
+  control_enabled: true
+  confirm_dangerous: true       # /flatten and /stop need a confirmation tap
+  allowed_user_ids: []          # optionally restrict to specific Telegram user IDs
+
+dashboard:
+  enabled: true
+  port: 8765
+  open_browser: true

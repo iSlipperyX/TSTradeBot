@@ -1,0 +1,33 @@
+"""Bundled strategies. Add your own by subclassing Strategy and registering it in STRATEGIES."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from topstep_bot.instruments import get_spec
+from topstep_bot.models import Contract
+from topstep_bot.strategies.base import Strategy, StrategyContext, parse_hhmm
+from topstep_bot.strategies.ema_trend import EmaTrend
+from topstep_bot.strategies.noise_breakout import NoiseAreaMomentum
+from topstep_bot.strategies.orb import OpeningRangeBreakout
+from topstep_bot.strategies.vwap_reversion import VwapReversion
+
+STRATEGIES: dict[str, type[Strategy]] = {
+    cls.name: cls for cls in (OpeningRangeBreakout, NoiseAreaMomentum, EmaTrend, VwapReversion)
+}
+
+
+def create_strategy(name: str, params: dict[str, Any], contract: Contract, timeframe_minutes: int) -> Strategy:
+    try:
+        cls = STRATEGIES[name]
+    except KeyError:
+        raise ValueError(f"Unknown strategy '{name}'. Available: {', '.join(STRATEGIES)}") from None
+    try:
+        spec = get_spec(contract.root)
+        rth_open, rth_close = parse_hhmm(spec.rth_open), parse_hhmm(spec.rth_close)
+    except KeyError:
+        rth_open, rth_close = parse_hhmm("08:30"), parse_hhmm("15:00")
+    return cls(contract, timeframe_minutes, rth_open, rth_close, params)
+
+
+__all__ = ["STRATEGIES", "Strategy", "StrategyContext", "create_strategy"]
