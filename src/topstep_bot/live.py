@@ -8,12 +8,12 @@ Data flow:
   * Orders (live mode): the realtime user hub reports order/position/fill changes, and a
     periodic REST reconcile repairs anything missed.
 
-Stop the bot with Ctrl+C, the dashboard's Stop button, or by creating a file named KILL
+Stop the bot with Ctrl+C, the dashboard's or Telegram's Stop, or by creating a file named KILL
 in the working directory (which also flattens and halts trading).
 
-When started by the 24/7 service (topstep-bot service) the runner also writes a heartbeat
-file, restarts itself once a day during the CME maintenance halt, and announces restarts
-quietly. See service.py.
+When started by the controller (topstep-bot start) the runner also writes a heartbeat file,
+asks for a restart once a day during the CME maintenance halt, and announces restarts quietly.
+See service.py for the contract between the two processes.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ from topstep_bot.config import BotConfig, Secrets
 from topstep_bot.engine import TradingCore
 from topstep_bot.factory import build_core, fees_for, starting_balance
 from topstep_bot.journal import Journal
-from topstep_bot.models import Account, BarUnit, Contract, Quote
 from topstep_bot.logging_setup import asyncio_exception_handler, spawn
+from topstep_bot.models import Account, BarUnit, Contract, Quote
 from topstep_bot.news import NewsCalendar
 from topstep_bot.notify import Notifier
 from topstep_bot.sessions import session_open_for
@@ -53,11 +53,11 @@ class SetupError(Exception):
 
 @dataclass
 class Controls:
-    """Requests coming from the dashboard or signal handlers."""
+    """Requests coming from the controller (dashboard / Telegram) or signal handlers."""
 
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     flatten_requested: bool = False
-    flatten_reason: str = "flatten requested from dashboard"
+    flatten_reason: str = "flatten requested"
     restart_requested: bool = False
     stop_reason: str = ""
 
@@ -117,6 +117,7 @@ class LiveRunner:
         self.heartbeat_path = Path(heartbeat) if heartbeat else None
         self.started_at = datetime.now(UTC)
         self._checked_in: date | None = None
+        self._training = False
 
     @staticmethod
     def now() -> datetime:
@@ -180,9 +181,56 @@ class LiveRunner:
         core.remote = RemoteControl(core, cfg.data_path / "remote_settings.json")
         for change in core.remote.load_saved():
             log.info("Re-applied remote setting: %s", change)
+        await self._setup_knowledge()
         await self._setup_news()
         self._apply_ramp_up()
         return core
+
+    async def _setup_knowledge(self) -> None:
+        """Attach the knowledge base the bot learns into; retrain it from history when stale."""
+        cfg, core = self.cfg, self.core
+        if not cfg.knowledge.enabled or core is None:
+            return
+        from topstep_bot.knowledge import KnowledgeBase
+
+        kb = KnowledgeBase.from_config(cfg, cfg.knowledge_path)
+        core.attach_knowledge(kb)
+        c = kb.counts()
+        log.info("Knowledge base %s: %d observations (train %d, live ideas %d, real trades %d)%s", cfg.knowledge_path.name,
+                 len(kb.obs), c["train"], c["shadow"], c["real"], f", trained {kb.trained['at'][:16]}" if kb.trained else ", untrained")
+        if cfg.knowledge.auto_train and kb.training_due(self.now(), cfg.knowledge.retrain_hours):
+            try:
+                await self.retrain("startup")
+            except Exception as exc:  # noqa: BLE001 - trading can go on with the knowledge we have
+                log.warning("Training failed: %s", exc)
+                core.event("warning", f"Could not retrain the knowledge base: {exc}")
+
+    async def retrain(self, source: str) -> str:
+        """Download recent history and rebuild the knowledge base's training layer."""
+        core = self.core
+        if core is None or core.knowledge is None:
+            raise RuntimeError("The knowledge base is turned off (knowledge.enabled: false)")
+        if self._training:
+            raise RuntimeError("Training is already running")
+        from topstep_bot.knowledge import train_from_bars
+
+        self._training = True
+        try:
+            days = self.cfg.knowledge.history_days
+            tf = self.cfg.instrument.timeframe_minutes
+            end = self.now()
+            core.event("info", f"Training the knowledge base on the last {days} days ({source})...")
+            bars = await self.client.retrieve_bars_range(self.contract.id, end - timedelta(days=days), end, BarUnit.MINUTE, tf,
+                                                         live=self.cfg.data.live_market_data)
+            bars = [b for b in bars if b.ts + timedelta(minutes=tf) <= end]
+            result = await train_from_bars(self.cfg, self.contract, bars, core.knowledge, at=end)
+            per = ", ".join(f"{k} {v}" for k, v in result["per_strategy"].items())
+            message = (f"Knowledge base trained on {result['days']} days ({result['from']} to {result['to']}): "
+                       f"{result['observations']} observations ({per})")
+            core.event("info", message)
+            return message
+        finally:
+            self._training = False
 
     async def _warmup(self) -> None:
         assert self.core and self.contract
@@ -423,7 +471,7 @@ class LiveRunner:
             "info",
             f"Good morning: bot running in {self.cfg.mode.upper()} mode on {core.contract.name}. "
             f"Balance ${core.balance:,.2f}, MLL room ${core.tracker.room(core.balance):,.2f}"
-            + (f". Today is a no-trade day." if not core.schedule.is_trade_day(core.schedule.trading_day(now)) else "")
+            + (". Today is a no-trade day." if not core.schedule.is_trade_day(core.schedule.trading_day(now)) else "")
             + (" PAUSED." if r.paused else ""),
             "daily_summary",
         )

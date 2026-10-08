@@ -27,7 +27,6 @@ from topstep_bot.telegram_control import TelegramController
 from .conftest import ct, run
 from .test_telegram_control import CHAT, FakeTelegram, button, msg
 
-
 # ------------------------------------------------------------------ logging
 
 @pytest.fixture
@@ -152,14 +151,15 @@ def drive(core, broker, now, bars):
 
 
 def test_shadow_strategies_produce_tracked_ideas(tmp_path):
-    core, broker, now = make_core(tmp_path)
-    assert {s.name for s in core.recommender.shadows} == {"noise_breakout", "ema_trend", "vwap_reversion"}
+    core, broker, now = make_core(tmp_path, strategy={"name": "orb"})
+    assert {s.name for s in core.recommender.shadows} == {"noise_breakout", "ema_trend", "vwap_reversion", "vwap_pullback"}
     bars = list(resample(synthetic_bars("MNQ", days=30, seed=4), 5))
     drive(core, broker, now, bars)
     book = core.recommender
     assert book.items, "expected some recommendations"
     strategies = {r.strategy for r in book.items}
     assert strategies - {"orb"}, "expected ideas from the shadow strategies"
+    assert all(r.slot in ("open", "midday", "close", "off") and r.regime in ("calm", "volatile") for r in book.items)
     closed = [r for r in book.items if r.result]
     assert closed and all(r.result in ("won", "lost", "flat") for r in closed)
     for r in closed:
@@ -225,7 +225,7 @@ def test_settings_bounds_validation_and_persistence(tmp_path):
 
 
 def test_strategy_switch_reuses_warm_shadow_and_waits_when_in_trade(tmp_path):
-    core, broker, now = make_core(tmp_path)
+    core, broker, now = make_core(tmp_path, strategy={"name": "orb"})
     run(core.begin_day(core.schedule.trading_day(ct(2026, 3, 3, 9, 0)), 50_000))
     rc = RemoteControl(core, tmp_path / "remote.json")
     shadow = next(s for s in core.recommender.shadows if s.name == "ema_trend")
@@ -347,8 +347,8 @@ def test_telegram_take_idea_flow(tmp_path):
     assert core.orders.position == 2 and fake.edits[-1]["text"].startswith("✅ Took")
 
 
-def test_dashboard_post_json_actions(tmp_path):
-    from topstep_bot.dashboard import DashboardServer
+def test_bot_api_settings_actions(tmp_path):
+    from topstep_bot.worker_api import build_worker_api
 
     core, _, _ = make_core(tmp_path)
     run(core.begin_day(core.schedule.trading_day(ct(2026, 3, 3, 9, 0)), 50_000))
@@ -356,19 +356,18 @@ def test_dashboard_post_json_actions(tmp_path):
     actions = BotActions(core, Controls())
 
     async def go():
-        server = DashboardServer("127.0.0.1", 0, core.snapshot, {
-            "set_setting": lambda p: actions.change_setting(p["key"], p["value"], "dashboard"),
-        })
-        server._server = await asyncio.start_server(server._handle, "127.0.0.1", 0)
-        port = server._server.sockets[0].getsockname()[1]
-        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
-            ok = await client.post("/api/set_setting", json={"key": "risk", "value": 120}, headers={"X-Token": server.token})
-            bad = await client.post("/api/set_setting", json={"key": "risk", "value": 99999}, headers={"X-Token": server.token})
-            status = await client.get("/api/status")
+        server = build_worker_api(actions, core.snapshot, 0, "tok")
+        await server.start()
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{server.port}", headers={"X-Token": "tok"}) as client:
+            ok = await client.post("/action/set_setting", json={"key": "risk", "value": 120, "source": "dashboard"})
+            bad = await client.post("/action/set_setting", json={"key": "risk", "value": 99999})
+            text = await client.post("/action/settings_text")
+            status = await client.get("/status")
         await server.stop()
-        return ok.json(), bad.json(), status.json()
+        return ok.json(), bad.json(), text.json(), status.json()
 
-    ok, bad, status = run(go())
+    ok, bad, text, status = run(go())
     assert ok["ok"] and core.cfg.risk.risk_per_trade == 120
     assert bad["ok"] is False and "between" in bad["message"]
-    assert any(s["key"] == "risk_per_trade" and s["changed"] for s in status["settings"])
+    assert "risk_per_trade: 120" in text["text"]
+    assert any(s["key"] == "risk_per_trade" and s["changed"] for s in status["bot"]["settings"])

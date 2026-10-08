@@ -24,16 +24,17 @@ what to do when something goes wrong. If you only read one section, read
 14. [Topstep rules: what the bot enforces and what is still on you](#14-topstep-rules-what-the-bot-enforces-and-what-is-still-on-you)
 15. [Telegram control and alerts on your phone](#15-telegram-control-and-alerts-on-your-phone)
 16. [Recommended trades](#16-recommended-trades)
-17. [Changing settings from the dashboard or Telegram](#17-changing-settings-from-the-dashboard-or-telegram)
-18. [Running 24/7](#18-running-247)
-19. [Starting today: preflight, ramp-up and news](#19-starting-today-preflight-ramp-up-and-news)
-20. [Logs: finding out what happened](#20-logs-finding-out-what-happened)
-21. [Daily routine](#21-daily-routine)
-22. [Full configuration reference](#22-full-configuration-reference)
-23. [Command reference](#23-command-reference)
-24. [Files the bot creates](#24-files-the-bot-creates)
-25. [Troubleshooting](#25-troubleshooting)
-26. [Writing your own strategy](#26-writing-your-own-strategy)
+17. [Training and the knowledge base: how the bot learns](#17-training-and-the-knowledge-base-how-the-bot-learns)
+18. [Changing settings from the dashboard or Telegram](#18-changing-settings-from-the-dashboard-or-telegram)
+19. [Running 24/7](#19-running-247)
+20. [Starting today: preflight, ramp-up and news](#20-starting-today-preflight-ramp-up-and-news)
+21. [Logs: finding out what happened](#21-logs-finding-out-what-happened)
+22. [Daily routine](#22-daily-routine)
+23. [Full configuration reference](#23-full-configuration-reference)
+24. [Command reference](#24-command-reference)
+25. [Files the bot creates](#25-files-the-bot-creates)
+26. [Troubleshooting](#26-troubleshooting)
+27. [Writing your own strategy](#27-writing-your-own-strategy)
 
 ---
 
@@ -100,7 +101,7 @@ Now `topstep-bot` is available as a command. Running it with no arguments opens 
 
 ### Try it before setting anything up
 
-From the menu choose **9 (demo)**, or run:
+From the menu choose **11 (demo)**, or run:
 
 ```bash
 topstep-bot demo
@@ -147,7 +148,7 @@ Choose **1 (setup)** in the menu, or run `topstep-bot setup`. It walks you throu
 It writes **`config.yaml`**. You can edit that file in Notepad any time; it is commented. Re-run
 the wizard to start over.
 
-Then choose **2 (check)** in the menu. It logs in, lists your accounts (the selected one is marked
+Then choose **3 (check)** in the menu. It logs in, lists your accounts (the selected one is marked
 ◀), and shows the exact contract the bot will trade, its tick value and estimated fees.
 
 ---
@@ -159,19 +160,21 @@ Double-click `start.bat` (or run `topstep-bot`):
 | # | Option | What it does |
 |---|---|---|
 | 1 | setup | The setup wizard |
-| 2 | go-live | **Start trading today:** runs every preflight check, then starts live trading ([section 19](#19-starting-today-preflight-ramp-up-and-news)) |
+| 2 | go-live | **Start trading today:** runs every preflight check, then starts live ([section 20](#20-starting-today-preflight-ramp-up-and-news)) |
 | 3 | check | Tests the connection, shows accounts and the contract |
 | 4 | backtest | Tests the strategy on history and opens a report |
-| 5 | paper | Runs the bot on live prices with **simulated** orders |
-| 6 | live | Runs the bot with **real** orders on your TopstepX account |
-| 7 | flatten | **Emergency:** cancels all orders and closes all positions on the account |
-| 8 | journal | Recent trades and daily results |
-| 9 | strategies | Describes each strategy and its parameters |
-| 10 | demo | Backtest on synthetic data, no account needed |
-| 11 | telegram-test | Sends a test message with control buttons to your Telegram |
-| 12 | service | Runs the bot 24/7 with auto-restart ([section 18](#18-running-247)) |
-| 13 | autostart | Starts the 24/7 service whenever you sign in to Windows |
-| 14 | logs | Shows recent errors and where the log files are ([section 20](#20-logs-finding-out-what-happened)) |
+| 5 | train | **Teaches the bot** which strategy works at which time of day, from recent real data ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
+| 6 | paper | **Starts the bot in PAPER mode** (simulated orders on real prices) with the dashboard and Telegram |
+| 7 | live | **Starts the bot in LIVE mode** (real orders) with the dashboard and Telegram |
+| 8 | flatten | **Emergency:** cancels all orders and closes all positions on the account |
+| 9 | journal | Recent trades and daily results |
+| 10 | strategies | Describes each strategy and its parameters |
+| 11 | demo | Backtest on synthetic data, no account needed |
+| 12 | telegram-test | Sends a test message with control buttons to your Telegram |
+| 13 | autostart | Starts everything automatically when you sign in to Windows ([section 19](#19-running-247)) |
+| 14 | logs | Shows recent errors and where the log files are ([section 21](#21-logs-finding-out-what-happened)) |
+
+You can switch between paper and live later from the dashboard, without coming back to this menu.
 
 ---
 
@@ -179,17 +182,21 @@ Double-click `start.bat` (or run `topstep-bot`):
 
 Follow these steps in order. Don't skip ahead.
 
-1. **Backtest on real data** (menu 3). Look at the report: is the result positive *after fees*,
+1. **Train the bot** (menu 5). It replays the last 60 days of real data through every strategy and
+   learns which ones work at which time of day ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)).
+   Read the table it prints: if everything is ✘, the market has not been kind to these strategies
+   lately and the adaptive strategy will (rightly) sit out.
+2. **Backtest on real data** (menu 4). Look at the report: is the result positive *after fees*,
    is the drawdown survivable, does the Combine pass rate look reasonable? Try a few settings, but
    be wary of tuning until the past looks perfect — that rarely carries into the future.
-2. **Paper trade for at least 2–4 weeks** (menu 4). Paper mode uses real live prices but never
+3. **Paper trade for at least 2–4 weeks** (menu 6, or the Paper switch on the dashboard). Paper mode uses real live prices but never
    sends an order. Leave it running during market hours with the dashboard open. Compare what it
    did with what the backtest says it should have done.
-3. **Go live on a Combine or Practice account** — never on an account you can't afford to lose.
+4. **Go live on a Combine or Practice account** — never on an account you can't afford to lose.
    Start with **1 micro contract**: set `max_contracts: 1` in `config.yaml`.
-4. **Watch the first live days closely.** Keep TopstepX open alongside the dashboard and confirm
+5. **Watch the first live days closely.** Keep TopstepX open alongside the dashboard and confirm
    every order the bot places shows up there with its stop.
-5. Only then consider raising size, one step at a time.
+6. Only then consider raising size, one step at a time.
 
 ---
 
@@ -197,7 +204,7 @@ Follow these steps in order. Don't skip ahead.
 
 ### Run one
 
-Menu **3**, or:
+Menu **4**, or:
 
 ```bash
 topstep-bot backtest
@@ -277,46 +284,73 @@ costs (about $1.22 for micros and $3.78 for minis); change them with
 
 ## 9. Paper trading and the dashboard
 
-Menu **4**, or:
+Menu **5**, or:
 
 ```bash
-topstep-bot run --mode paper
+topstep-bot start --mode paper
 ```
 
-What happens:
+This starts two separate programs:
+
+- the **controller** — the dashboard at **http://127.0.0.1:8765** and Telegram control;
+- the **trading bot**, which the controller starts, watches and restarts.
+
+Because they're separate, the dashboard and Telegram **stay online when the bot stops or crashes**:
+you can see why it stopped (and its logs) and start or restart it from either one. Closing the
+program window (or Ctrl+C in it) stops both.
+
+What the bot does:
 
 1. Logs in, finds your account and the current front-month contract.
 2. Downloads recent history so the strategy's indicators are warmed up.
 3. Connects to TopstepX's live price stream.
 4. After each bar closes it fetches that bar, runs the strategy, and simulates any orders using
    live bid/ask prices. **No orders are sent to TopstepX in paper mode.**
-5. Opens the dashboard at **http://127.0.0.1:8765**.
+5. Reports to the dashboard, which opens in your browser.
 
 The paper account's balance carries over between runs (stored in `data/journal_paper.db`).
 To start the paper account fresh, stop the bot and delete that file.
 
 ### The dashboard
 
-- **Header** — PAPER (blue) or LIVE (red) badge, connection status, a **log badge** (warnings and
-  errors since start — click it for details), account, plan, contract and time (CT).
-- **Status bar** — "Trading normally", "Paused", "Done for today: <reason>", or "Halted".
-- **Balance / Today's P&L / Open P&L / Position.**
-- **Recommended trades right now** — live ideas from every strategy with **Take** buttons — see
-  [section 16](#16-recommended-trades).
-- **Recommendation history & results** — every recommendation today, what happened to it, and a
-  per-strategy scoreboard.
-- **Settings** — change risk, limits, times, the news pause and the auto-traded strategy — see
-  [section 17](#17-changing-settings-from-the-dashboard-or-telegram).
+**Top bar** (always visible):
+
+- **Paper | Live** switch. Switching to Live asks you to type `LIVE`. It's refused while a trade is
+  open, so flatten first. The bot restarts in the new mode, and the choice is remembered for next time.
+- **Bot status:** Running, Starting…, Stopped, Crashed or Failed to start, plus uptime.
+- **Start, Restart and Stop** for the bot process. Stop closes any position first; the dashboard stays up.
+- **Log badge:** warnings and errors so far. Click it for the Logs tab.
+- When the bot isn't running, a **banner** shows why (e.g. "stop requested from Telegram",
+  "crashed: …", "could not start: …") with **Start bot** and **See logs** buttons.
+
+**Overview tab**
+
+- Balance, today's P&L, open P&L and position.
 - **Guardrails:**
-  - *Room above Max Loss Limit* — dollars between your equity and Topstep's MLL floor. Turns
-    yellow below 50% and red below 25% of the MLL size.
-  - *Daily loss limit used* — how much of your personal daily loss limit today has used.
-  - *Combine profit target* — progress toward the target (Combine accounts).
-  - *Trades today* — against your daily maximum.
-- **Current trade** — side, size, entry, stop, target and the reason it was taken.
-- **Strategy** — the levels the strategy is watching (opening range, bands, VWAP, ...).
-- **Controls** — see [section 11](#11-stopping-the-bot-and-emergency-controls).
-- **Activity** — everything the bot did, newest first.
+  - *Room above Max Loss Limit:* turns yellow below 50% and red below 25% of the MLL size.
+  - *Daily loss limit used* and *Combine profit target* progress.
+  - *Trades today*.
+  - **Pause / Resume / Flatten & halt** buttons.
+- Current trade and strategy levels, the time-of-day slot and volatility regime, and — with the
+  adaptive strategy — which sub-strategy is managing the trade and the last signal it took or skipped.
+- **Activity:** everything the bot did, newest first.
+
+**Ideas tab:** recommended trades with **Take** buttons and today's results per strategy — see
+[section 16](#16-recommended-trades). A badge on the tab shows how many ideas are live.
+
+**Knowledge tab:** what the bot has learned — for every strategy, time of day and regime, the average
+result per signal and whether the adaptive strategy trades it right now — with a **Retrain now** button.
+See [section 17](#17-training-and-the-knowledge-base-how-the-bot-learns).
+
+**Settings tab:** change risk, limits, times, the news pause and the auto-traded strategy — see
+[section 18](#18-changing-settings-from-the-dashboard-or-telegram).
+
+**Logs tab:** works even when the bot is down.
+
+- Bot process events: starts, stops, crashes, restarts, mode switches.
+- Recent warnings and errors.
+- The latest crash report, if any.
+- The end of the bot's log.
 
 The dashboard only accepts connections from your own computer.
 
@@ -330,8 +364,8 @@ Before going live, in TopstepX:
 - Keep TopstepX open so you can see orders appear.
 - You do **not** need to enable "Auto OCO Brackets"; the bot manages its own stop and target.
 
-Then set `mode: live` in `config.yaml` (or use menu **5**, which overrides the mode for that run).
-The bot shows a red warning and asks you to type `LIVE` to continue.
+Then switch the dashboard's **Paper | Live** toggle to Live (type `LIVE` to confirm), or start with
+menu **7** — which shows a red warning and asks you to type `LIVE` too.
 
 Live mode works like paper mode, except orders really go to your account, and the bot also:
 
@@ -350,14 +384,16 @@ it left off (trade count, daily P&L, loss limits).
 
 | Want to... | Do this |
 |---|---|
-| Stop new trades but let the open trade finish | Dashboard → **Pause new trades** (then **Resume**), or Telegram `/pause`. You can still take recommended trades yourself while paused. |
-| Close everything and stop trading | Dashboard → **Flatten & halt**, or Telegram `/flatten` |
-| Shut the bot down | Dashboard → **Stop bot**, type `/stop` in Telegram, or press **Ctrl+C** in the bot window. This closes the program (and the 24/7 service) — it is *not* a pause. |
+| Stop new trades but let the open trade finish | **Pause new trades** (Overview tab) or Telegram `/pause`; then **Resume**. You can still take ideas yourself while paused. |
+| Close everything and stop trading | **Flatten & halt** or Telegram `/flatten`. Trading stays halted until the bot is restarted. |
+| Stop the bot (dashboard and Telegram stay online) | **Stop** in the top bar or Telegram `/stop`. Start it again with **Start** or `/startbot`. |
+| Restart the bot | **Restart** or Telegram `/restart` — it flattens first. |
+| Close everything, including the dashboard | Close the Topstep Bot window, or press **Ctrl+C** in it. |
 | Kill switch without the dashboard | Create an empty file named `KILL` in the bot folder. The bot flattens and halts within a second. Delete the file before the next start. |
-| Panic button when the bot isn't running | Menu **6 (flatten)** — cancels every order and closes every position on the account |
-| Last resort | Close the position in TopstepX yourself |
+| Panic button when nothing is running | Menu **7 (flatten)** — cancels every order and closes every position on the account. |
+| Last resort | Close the position in TopstepX yourself. |
 
-When the bot shuts down it flattens any open position first (`execution.flatten_on_shutdown`).
+Whenever the bot stops, it flattens any open position first (`execution.flatten_on_shutdown`).
 If your PC crashes or loses power, the **protective stop stays at TopstepX**, so the position is
 still protected — but check TopstepX as soon as you can.
 
@@ -365,7 +401,7 @@ still protected — but check TopstepX as soon as you can.
 
 ## 12. The strategies
 
-List them any time with menu **8**. Change the strategy with `strategy.name` in `config.yaml` and
+List them any time with menu **10**. Change the strategy with `strategy.name` in `config.yaml` and
 override any parameter under `strategy.params`, e.g.
 
 ```yaml
@@ -374,7 +410,20 @@ strategy:
   params: {range_minutes: 30, target_r: 1.5}
 ```
 
-### `orb` — Opening Range Breakout (default)
+### `adaptive` — Adaptive All-Day (default)
+
+Runs **all the other strategies at once, through the whole session**, and takes a signal only when
+the bot's knowledge base shows that strategy has been working **at this time of day** (open 08:30–10:00,
+midday 10:00–13:00, close 13:00–15:10 CT) **in the current volatility regime** (calm or volatile).
+When several strategies signal on the same bar, the one with the best evidence wins; the strategy that
+opened the trade manages it (its exits and trailing stop). Everything the sub-strategies signal —
+traded or not — is followed to its outcome and fed back into the knowledge base, so the bot keeps
+improving while it runs, and it retrains on recent history every day.
+It trades **nothing** until it has evidence: run **train** (menu 5) first. See [section 17](#17-training-and-the-knowledge-base-how-the-bot-learns).
+Parameters: `strategies` (list; empty = all), `trade_unproven` (`true` = also trade strategies the base
+knows nothing about yet — not recommended).
+
+### `orb` — Opening Range Breakout
 
 Marks the high and low of the first `range_minutes` after the 8:30 CT open. The first bar that
 closes above the range high (plus `buffer_ticks`) goes long; below the low goes short. Stop at the
@@ -402,6 +451,14 @@ image). Stop at `atr_stop_mult` × ATR, target at `target_r` × risk, exit on th
 Buys when price closes more than `band_k` standard deviations below the session VWAP, RSI is below
 `rsi_low`, and the bar closes up (a reversal bar); targets a return to VWAP with a stop just beyond
 the bar's low. Shorts are the mirror image. Works in choppy markets, loses in strong trends.
+
+### `vwap_pullback` — VWAP Trend Pullback
+
+Built for the middle and the end of the day. When price is trending (above VWAP with a rising
+`trend_ema`, measured over `slope_bars`), it waits for a pullback into the VWAP band (`band_k`) and buys
+the first bar that closes back above the previous bar's high. Stop `stop_atr_mult` × ATR under the
+pullback low, target `target_r` × risk, exit on a close through VWAP. Shorts are the mirror image.
+No entries before `min_minutes_after_open` or after `entry_cutoff`; at most `max_trades_per_day`.
 
 Every strategy shares the same position sizing, risk limits and session rules — a strategy only
 decides *when* to trade and *where* the stop and target go.
@@ -513,10 +570,12 @@ the bot from your phone?"*. It walks you through:
 3. Open your new bot in Telegram and press **Start** (or send it anything), then press Enter in the
    wizard. It finds your chat ID automatically.
 
-Then choose menu **10 (telegram-test)** — you should receive a test message with the control
+Then choose menu **12 (telegram-test)** — you should receive a test message with the control
 buttons. (If you prefer, put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` by hand.)
 
-Telegram control starts automatically every time you run the bot (paper or live). The bot window
+Telegram control starts automatically with the controller, and **keeps working while the bot is
+stopped or has crashed**: `/status` then tells you why it stopped, and `/startbot` or `/restart`
+brings it back. The bot window
 shows `Telegram control: on`, and your phone gets *"Topstep Bot is online"*.
 
 ### Commands
@@ -529,10 +588,14 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/pause` | Stop opening new trades. An open trade keeps its stop and target. |
 | `/resume` | Allow new trades again (all risk limits still apply). Not possible after a flatten — restart the bot. |
 | `/flatten` | Close any position, cancel orders and **halt** trading until the bot is restarted. Asks for confirmation. |
-| `/stop` | **Shuts the program down** (it flattens first; the 24/7 service exits too). Asks for confirmation. It can only be restarted from your PC. There is deliberately no quick button for it — type it. Use `/pause` to just stop new trades. |
+| `/stop` | Stops the bot (it flattens first). Telegram and the dashboard stay online, so `/startbot` brings it back. Asks for confirmation. Use `/pause` to just stop new trades. |
+| `/restart` | Restarts the bot (flattens first) — e.g. after an error. Asks for confirmation. |
+| `/startbot` | Starts the bot if it's stopped or crashed. Asks for confirmation. |
 | `/ideas` | Recommended trades with **Take** and **½ size** buttons ([section 16](#16-recommended-trades)) |
+| `/knowledge` | What the bot has learned: per strategy and time of day, ✅ trades now / ❌ switched off / ❔ unproven ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
+| `/train` | Retrain the knowledge base on recent history now (the bot keeps trading meanwhile) |
 | `/settings` | Every setting you can change, with current values and limits |
-| `/set <name> <value>` | Change a setting, e.g. `/set risk 150`, `/set dailyloss 400`, `/set strategy orb`, `/set news off` ([section 17](#17-changing-settings-from-the-dashboard-or-telegram)) |
+| `/set <name> <value>` | Change a setting, e.g. `/set risk 150`, `/set dailyloss 400`, `/set strategy orb`, `/set news off` ([section 18](#18-changing-settings-from-the-dashboard-or-telegram)) |
 | `/reset` | Undo every remote setting change (back to `config.yaml`) |
 | `/trades` | The last few closed trades |
 | `/log` | Recent bot activity |
@@ -579,7 +642,7 @@ notifications:
 
 ## 16. Recommended trades
 
-While the bot runs (paper or live), **all four strategies** watch the market on every bar:
+While the bot runs (paper or live), **every strategy** watches the market on every bar:
 
 - Your **auto-traded strategy** (`strategy.name`, marked ★) trades by itself. Each of its signals is
   listed as *taken* or *skipped*, with the reason (outside trading hours, daily limit reached, stop
@@ -606,13 +669,70 @@ not when a loss limit, the session window, a news blackout or the post-loss cool
 trading — then the button shows why instead. One position at a time still applies.
 
 Every recommendation and its result is saved in the journal (`recommendations` table) and in
-`logs/events.jsonl`. Telegram alerts for new ideas are off by default; add `idea` to
+`logs/events.jsonl`, and every result is also handed to the **knowledge base** — this is how the bot
+learns ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)). Telegram alerts for new ideas are off by default; add `idea` to
 `notifications.events` to get them. Turn the feature off with `recommendations.enabled: false`, or
 limit it to some strategies with `recommendations.strategies: [orb, ema_trend]`.
 
 ---
 
-## 17. Changing settings from the dashboard or Telegram
+## 17. Training and the knowledge base: how the bot learns
+
+The bot keeps a **knowledge base**: for every strategy, what its signals have been worth, split by
+**time of day** (open 08:30–10:00, midday 10:00–13:00, close 13:00–15:10 Chicago time) and by
+**volatility regime** (*calm* or *volatile*: whether the 14-bar range during regular hours is at least
+20% above its multi-day average). Each entry is one *observation*: a signal followed to its outcome,
+measured in **R** (1R = the amount that trade risked).
+
+Observations come from three places and are kept apart:
+
+| Source | What it is | When |
+|---|---|---|
+| **training** | Every strategy replayed over the last `knowledge.history_days` (60) days of real data — exactly the way the running bot follows ideas, so it measures the same thing | Menu **5 (train)**, `topstep-bot train`, the dashboard's **Retrain now**, Telegram `/train`, and automatically at startup when the last training is older than `retrain_hours` (20) — so normally once a day after the 16:05 CT restart |
+| **live ideas** | Hypothetical outcomes of signals the bot saw while running but did not trade (shadow strategies, skipped signals) | Continuously while the bot runs |
+| **real trades** | The bot's own closed trades (count double) | Continuously while the bot runs |
+
+Because every signal is followed whether it was traded or not, **the bot never has to try a bad idea
+to learn it is bad.** Older observations fade out (half their weight after `half_life_days`, 20), so
+the base follows the market as it changes. Retraining replaces the training layer and drops live ideas
+the new training already covers, so nothing is counted twice; real trades are never dropped.
+
+### How the adaptive strategy uses it
+
+Before taking a signal from strategy *S* at slot *T* in regime *V*, the adaptive strategy looks for the
+most specific evidence with enough samples (`min_samples`, 8 weighted observations): *S* at *T* in *V*;
+otherwise *S* at *T* in any regime; otherwise *S* at any time. The strategy may trade if that evidence's
+expectancy — shrunk toward zero while the sample is small — is at least `min_edge_r` (0.05R). A
+strategy that has been losing at that time of day is **switched off there** even if it does well
+elsewhere; an **unproven** one is not traded at all (unless you set `trade_unproven: true`).
+
+Everything is visible:
+
+- **Dashboard → Knowledge tab:** the full table (✔ trades now, ✘ switched off, ? unproven), counts
+  by source, when it was last trained, the current slot and regime, and **Retrain now**.
+- **Telegram:** `/knowledge` for the same table in text, `/train` to retrain.
+- **`topstep-bot train`** prints the table after training; `bot.log` records every signal the adaptive
+  strategy took or skipped and why.
+- The Overview's Strategy panel shows the slot, the regime, the sub-strategy managing an open trade,
+  and the last signal decision.
+
+### Honest expectations
+
+Training on the last two months of M2K showed most strategies **losing** in most slots, with a thin
+positive edge only for the EMA trend strategy at midday. That is a feature, not a bug: the adaptive
+strategy then trades little, and only where there is evidence. Evidence from 60 days is still
+statistical noise to a large degree; the knowledge base reduces the damage from a strategy that has
+stopped working, it does not guarantee profits. Backtests of the adaptive strategy are **walk-forward**:
+it starts knowing nothing and learns as the data plays (no peeking), so the first weeks of a backtest
+show few or no trades.
+
+Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
+`half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`. The file is
+`data/knowledge_<SYMBOL>_<TF>m.json`, shared by paper and live; delete it to start from scratch.
+
+---
+
+## 18. Changing settings from the dashboard or Telegram
 
 These settings can be changed while the bot runs — on the dashboard's **Settings** panel or with
 `/set` in Telegram:
@@ -646,39 +766,35 @@ credentials, and Topstep's own rules (Maximum Loss Limit, contract caps, flat by
 
 ---
 
-## 18. Running 24/7
+## 19. Running 24/7
 
-Topstep requires automated trading to run **on your own computer** — not a VPS. To keep it running:
-
-```bash
-start.bat service
-```
-
-The 24/7 service:
+Topstep requires automated trading to run **on your own computer** — not a VPS. Starting the bot
+(menu 6/7, or `start.bat start`) already runs it around the clock. The controller:
 
 - restarts the bot if it crashes (waiting longer after repeated crashes, and giving up — with an
-  alert — after too many in an hour) or if it stops responding;
+  alert — after `service.max_restarts_per_hour`) or if it stops responding;
 - restarts it every day at 16:05 CT, during the CME maintenance break, which picks up contract rolls
   and fresh connections;
 - keeps Windows from sleeping while it runs;
-- recovers an open trade after a crash: the protective stop stays at TopstepX, and the restarted bot
-  re-adopts the position instead of treating it as foreign;
-- sends a "good morning" check-in on weekdays at 08:00 CT.
+- leaves an open trade protected through a crash: the protective stop stays at TopstepX, and the
+  restarted bot re-adopts the position;
+- sends a "good morning" check-in on weekdays at 08:00 CT;
+- leaves a bot you stopped on purpose stopped until you start it again — from the dashboard or
+  Telegram, even remotely.
 
-A deliberate **Stop** (dashboard, `/stop`, Ctrl+C) ends the service too — it does not restart.
-
-To start the service automatically whenever you sign in to Windows:
+To start everything automatically whenever you sign in to Windows:
 
 ```bash
 start.bat autostart on
 ```
 
-Turn it off with `start.bat autostart off`. Also set your PC to **never sleep** while plugged in,
-and set Windows Update *active hours* to cover the trading day.
+It starts in the mode you used last (Paper or Live). Turn it off with `start.bat autostart off`.
+Also set your PC to **never sleep** while plugged in, and set Windows Update *active hours* to cover
+the trading day.
 
 ---
 
-## 19. Starting today: preflight, ramp-up and news
+## 20. Starting today: preflight, ramp-up and news
 
 Menu **2 (go-live)** is the same-day start. It runs the **preflight check**, which you can also run
 alone with `start.bat preflight`. The check verifies:
@@ -707,7 +823,7 @@ Built-in protection for a new account:
 
 ---
 
-## 20. Logs: finding out what happened
+## 21. Logs: finding out what happened
 
 Everything is recorded in the `logs` folder next to `config.yaml`, wherever you start the bot from:
 
@@ -716,7 +832,7 @@ Everything is recorded in the `logs` folder next to `config.yaml`, wherever you 
 | `bot.log` | Everything, one file per day (kept 30 days, `log_retention_days`) |
 | `errors.log` | Only warnings and errors — **look here first** |
 | `events.jsonl` | Every trade, risk event, setting change and recommendation, one JSON object per line |
-| `service.log` | The 24/7 service: starts, restarts and why |
+| `controller.log` | The controller: bot starts, stops, crashes, restarts, mode switches, Telegram |
 | `crash_*.txt` | Full details of any crash that closes the program |
 | `faults.log` | Low-level hang/crash dumps from Python |
 
@@ -749,30 +865,30 @@ Creates a zip of the logs and `config.yaml` (never your `.env`) to share when as
 
 ---
 
-## 21. Daily routine
+## 22. Daily routine
 
 **Before the open (by ~8:15 CT):**
 
 1. Check the economic calendar; add `blackout_windows` for big releases if you want.
 2. Confirm your PC won't sleep or install updates during the session.
-3. Start the bot (menu 4 or 5). Check the dashboard shows "connected", the right account and
+3. Start the bot (menu 6 or 7, or let autostart do it). Check the dashboard shows "connected", the right account and
    contract, and "Trading normally".
 
 **During the session:** glance at the dashboard (or send `/status` on Telegram) and TopstepX now and
 then. Act on any alert.
 
 **After 15:10 CT:** confirm the position is flat. You can leave the bot running overnight (it
-won't trade outside the session) or stop it. Review the day with menu **7 (journal)**.
+won't trade outside the session) or stop it. Review the day with menu **9 (journal)** and the Knowledge tab.
 
-**Weekly:** compare the bot's MLL floor with your Topstep dashboard; re-run a backtest on recent
-data to see whether the strategy's behavior is changing.
+**Weekly:** compare the bot's MLL floor with your Topstep dashboard; look at the Knowledge tab to see
+which strategies have stopped (or started) working, and re-run a backtest on recent data.
 
 **Contract roll:** the bot picks the active front-month contract each time it starts, so restart
 it after the quarterly roll. If you pinned `instrument.contract_id`, update it.
 
 ---
 
-## 22. Full configuration reference
+## 23. Full configuration reference
 
 `config.yaml` only needs the settings you want to change; everything else uses these defaults.
 Misspelled settings are rejected with an error, so typos can't silently do nothing.
@@ -799,8 +915,18 @@ instrument:
   timeframe_minutes: 5         # 1-60
 
 strategy:
-  name: orb                    # orb | noise_breakout | ema_trend | vwap_reversion
+  name: adaptive               # adaptive | orb | noise_breakout | ema_trend | vwap_reversion | vwap_pullback
   params: {}
+
+knowledge:                     # what the bot learns while it runs (drives the adaptive strategy)
+  enabled: true
+  auto_train: true             # retrain from history at startup when the last training is older than retrain_hours
+  history_days: 60             # 10-120
+  retrain_hours: 20
+  half_life_days: 20           # observations lose half their weight after this many days
+  min_samples: 8               # weighted observations needed before a strategy may trade in a slot
+  min_edge_r: 0.05             # minimum (shrunk) expectancy in R to keep trading a strategy
+  real_trade_weight: 2.0       # a real trade counts this many times an idea
 
 risk:
   risk_per_trade: 150
@@ -893,7 +1019,7 @@ trade): `flatten` closes it, `adopt` manages it with a protective stop, `ignore`
 
 ---
 
-## 23. Command reference
+## 24. Command reference
 
 Run any command with `--help` for its options. Add `-c other.yaml` before the command to use a
 different config file.
@@ -906,22 +1032,23 @@ different config file.
 | `topstep-bot strategies` | Describe strategies and parameters |
 | `topstep-bot backtest [--data F] [--download] [--days N] [--strategy S] [--symbol X] [--timeframe M] [--tz TZ] [--no-open]` | Backtest and open a report |
 | `topstep-bot demo` | Backtest on synthetic data |
+| `topstep-bot train [--data F] [--days N] [--tz TZ]` | Teach the bot which strategy works at which time of day from recent real data |
 | `topstep-bot download [--days N] [--tf M]` | Save history to `data/` |
-| `topstep-bot run [--mode paper\|live] [--yes] [--no-dashboard]` | Start the bot |
+| `topstep-bot start [--mode paper\|live] [--yes] [--no-bot] [--no-browser]` | Start the dashboard + Telegram, which run the bot 24/7 (`service` does the same) |
+| `topstep-bot run [--mode paper\|live] [--yes]` | Run only the trading bot, without dashboard (normally started for you by `start`) |
 | `topstep-bot flatten [--yes]` | Emergency: cancel all orders, close all positions |
 | `topstep-bot journal [--mode paper\|live] [--limit N]` | Recent trades and daily results |
 | `topstep-bot telegram-test` | Check the Telegram token and chat ID with a test message |
 | `topstep-bot preflight [--days N] [--skip-backtest]` | Check everything before trading live |
-| `topstep-bot go-live` | Preflight, then start live trading (24/7 or one session) |
-| `topstep-bot service [--mode paper\|live] [--yes]` | Run 24/7 with auto-restart |
-| `topstep-bot autostart on\|off\|status` | Start the 24/7 service when you sign in to Windows |
+| `topstep-bot go-live` | Preflight, then start live trading |
+| `topstep-bot autostart on\|off\|status` | Start everything when you sign in to Windows |
 | `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat backtest --days 180`.
 
 ---
 
-## 24. Files the bot creates
+## 25. Files the bot creates
 
 | Path | Contents |
 |---|---|
@@ -930,14 +1057,17 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat back
 | `data/journal_paper.db`, `data/journal_live.db` | Trade journal, daily results, MLL floor, paper balance |
 | `data/<SYMBOL>_1m.csv` | Downloaded history |
 | `reports/*.html` | Backtest reports |
-| `logs/` | Log files — see [section 20](#20-logs-finding-out-what-happened) |
+| `logs/` | Log files — see [section 21](#21-logs-finding-out-what-happened) |
 | `data/remote_settings.json` | Settings changed from the dashboard/Telegram (delete it, or `/reset`, to undo) |
+| `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when (delete it to start learning from scratch) |
 | `data/news_cache.json` | This week's economic calendar |
-| `data/heartbeat` | "Still alive" signal used by the 24/7 service |
+| `data/controller.json` | The mode you chose last (Paper/Live) |
+| `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
+| `data/heartbeat` | "Still alive" signal the controller watches |
 
 ---
 
-## 25. Troubleshooting
+## 26. Troubleshooting
 
 **"Login failed"** — Use your TopstepX *username*, not your email. Copy the API key again in full.
 Check your API subscription is active. Re-run setup or edit `.env`.
@@ -947,10 +1077,12 @@ Check your API subscription is active. Re-run setup or edit `.env`.
 
 **"No contract found for symbol"** — Check the symbol spelling, or pin `instrument.contract_id`.
 
-**The bot never trades.** Look at the dashboard's Activity list — skipped signals are logged with a
-reason (outside the entry window, daily limit, stop too wide, 1 contract too risky, ...). Some
-strategies trade rarely (ORB at most twice a day; noise_breakout needs ~15 days of history).
-Check today isn't in `no_trade_dates`.
+**The bot never trades.** With the `adaptive` strategy, first open the Knowledge tab: if it is not
+trained yet, press **Retrain now** (or run menu 5); if every cell is ✘ or ?, no strategy has proven
+itself lately and the bot is right to wait. Otherwise look at the dashboard's Activity list and
+`bot.log` — skipped signals are logged with a reason (outside the entry window, daily limit, stop too
+wide, 1 contract too risky, "skipped: unproven", ...). Some strategies trade rarely (ORB at most twice
+a day; noise_breakout needs ~15 days of history). Check today isn't in `no_trade_dates`.
 
 **"Skipped: 1 contract would risk more than the allowed budget"** — The stop is too far for your
 `risk_per_trade`. Raise the risk, trade a micro, or use a tighter stop setting.
@@ -973,10 +1105,14 @@ to `false` or enable the TopstepX setting.
 **Python not found when double-clicking start.bat** — Install Python 3.11+ and tick "Add python.exe
 to PATH", then run `start.bat` again.
 
-**The bot closed / stopped unexpectedly** — Run `start.bat logs`. The last lines say why it
+**The bot closed / stopped unexpectedly** — The dashboard's banner and Logs tab (or Telegram
+`/status`) show why, and **Start** / `/startbot` brings it back. On the PC, run `start.bat logs`. The last lines say why it
 stopped ("Shutting down. Reason: …"): a Stop from Telegram or the dashboard, Ctrl+C, a daily
-maintenance restart, or a crash (with a `crash_*.txt` file). `/stop` in Telegram really shuts the
-program down; use `/pause` to only stop new trades.
+maintenance restart, or a crash (with a `crash_*.txt` file).
+
+**The dashboard doesn't load** — The controller window was closed (or the PC restarted). Start it
+again from the menu, or turn on `autostart`. If it says the port is busy, it's already running:
+open http://127.0.0.1:8765.
 
 **Telegram: no reply to commands** — Check the bot window says `Telegram control: on`. Run
 `topstep-bot telegram-test`. Make sure you're messaging from the chat that was set up (a different
@@ -989,7 +1125,7 @@ For anything else, `logs/bot.log` has the details.
 
 ---
 
-## 26. Writing your own strategy
+## 27. Writing your own strategy
 
 Create a file in `src/topstep_bot/strategies/`, subclass `Strategy`, and register it in
 `strategies/__init__.py`:

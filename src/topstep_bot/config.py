@@ -88,7 +88,7 @@ class InstrumentConfig(_Section):
 
 
 class StrategyConfig(_Section):
-    name: str = "orb"
+    name: str = "adaptive"
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -200,8 +200,21 @@ class RecommendationsConfig(_Section):
     strategies: list[str] = Field(default_factory=list, description="Which strategies to show ideas from (empty = all).")
 
 
+class KnowledgeConfig(_Section):
+    """What the bot learns about its strategies while it runs (drives the 'adaptive' strategy)."""
+
+    enabled: bool = True
+    auto_train: bool = Field(default=True, description="Retrain from recent history at startup when the base is stale.")
+    history_days: int = Field(default=60, ge=10, le=120, description="Days of history to train on.")
+    retrain_hours: float = Field(default=20, ge=1, description="Training older than this is refreshed at startup.")
+    half_life_days: int = Field(default=20, ge=1, description="Observations lose half their weight after this many days.")
+    min_samples: int = Field(default=8, ge=1, description="Evidence needed before a strategy may trade in a slot.")
+    min_edge_r: float = Field(default=0.05, description="Minimum shrunk expectancy (in R) to keep trading a strategy.")
+    real_trade_weight: float = Field(default=2.0, ge=1.0, description="How much more a real trade counts than an idea.")
+
+
 class ServiceConfig(_Section):
-    """Unattended 24/7 operation (used by 'topstep-bot service')."""
+    """Unattended 24/7 operation (the controller started by 'topstep-bot start')."""
 
     keep_awake: bool = Field(default=True, description="Stop Windows from sleeping while the bot runs.")
     daily_restart_time: time | None = Field(
@@ -253,6 +266,7 @@ class BotConfig(_Section):
     service: ServiceConfig = Field(default_factory=ServiceConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
     recommendations: RecommendationsConfig = Field(default_factory=RecommendationsConfig)
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
 
@@ -263,6 +277,11 @@ class BotConfig(_Section):
     @property
     def journal_path(self) -> Path:
         return self.data_path / f"journal_{self.mode}.db"
+
+    @property
+    def knowledge_path(self) -> Path:
+        """One knowledge base per symbol and timeframe (shared by paper and live)."""
+        return self.data_path / f"knowledge_{self.instrument.symbol}_{self.instrument.timeframe_minutes}m.json"
 
 
 class Secrets(BaseModel):

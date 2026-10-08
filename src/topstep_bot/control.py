@@ -1,4 +1,5 @@
-"""Remote-control actions shared by the web dashboard and the Telegram bot.
+"""Remote-control actions for the running bot (reached through its local API by the dashboard
+and Telegram, which live in the separate controller process).
 
 Every action is logged in the activity feed with where it came from, and none of them can
 loosen a risk limit: the strongest thing a remote command can do is let the bot continue
@@ -6,6 +7,8 @@ trading within the limits already in config.yaml.
 """
 
 from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
 
 from topstep_bot.engine import TradingCore
 from topstep_bot.live import Controls
@@ -18,9 +21,10 @@ def _money(v: float | None) -> str:
 
 
 class BotActions:
-    def __init__(self, core: TradingCore, controls: Controls):
+    def __init__(self, core: TradingCore, controls: Controls, retrain: Callable[[str], Awaitable[str]] | None = None):
         self.core = core
         self.controls = controls
+        self._retrain = retrain  # LiveRunner.retrain: downloads history and rebuilds the knowledge base
 
     def pause(self, source: str) -> str:
         if self.core.risk.paused:
@@ -31,7 +35,7 @@ class BotActions:
 
     def resume(self, source: str) -> str:
         if self.core.halted:
-            return "The bot is halted (after a flatten). Restart it on your PC to trade again."
+            return "The bot is halted (after a flatten). Restart the bot (dashboard or /restart) to trade again."
         if not self.core.risk.paused:
             return "Trading is already active."
         self.core.risk.paused = False
@@ -46,7 +50,7 @@ class BotActions:
     def stop(self, source: str) -> str:
         self.core.event("warning", f"Stop requested from {source}")
         self.controls.request_stop(f"stop requested from {source}")
-        return "Stopping the bot (it flattens first). It can only be restarted from your PC."
+        return "Stopping the bot (it flattens first). The dashboard and Telegram stay online - start it again any time."
 
     # ------------------------------------------------------------------ text
 
@@ -157,3 +161,43 @@ class BotActions:
         if not events:
             return "No activity yet."
         return "Recent activity:\n" + "\n".join(f"{e['ts'][11:19]}  {e['message']}" for e in events)
+
+    # ------------------------------------------------------------------ knowledge base
+
+    def knowledge_text(self) -> str:
+        return self.core.knowledge_text()
+
+    async def train(self, source: str) -> str:
+        """Rebuild the knowledge base from recent history (the bot keeps trading meanwhile)."""
+        if self._retrain is None:
+            raise RuntimeError("Training is only available while the bot is connected to TopstepX")
+        return await self._retrain(source)
+
+    # ------------------------------------------------------------------ single entry point
+
+    async def handle(self, name: str, payload: dict) -> dict | str:
+        """Run action ``name`` (the bot's local API calls this). Raises ValueError for bad input."""
+        source = str(payload.get("source") or "dashboard")
+        simple = {"pause": self.pause, "resume": self.resume, "flatten": self.flatten, "stop": self.stop}
+        if name in simple:
+            return simple[name](source)
+        if name == "train":
+            return await self.train(source)
+        if name == "preview_setting":
+            return self.preview_setting(payload.get("key", ""), payload.get("value"))
+        if name == "set_setting":
+            return self.change_setting(payload.get("key", ""), payload.get("value"), source)
+        if name == "reset_settings":
+            return self.reset_settings(source)
+        if name == "take_idea":
+            size = payload.get("size")
+            return await self.take_idea(str(payload.get("id", "")), source, int(size) if size else None)
+        texts = {"status_text": self.status_text, "ideas_text": self.ideas_text, "trades_text": self.trades_text,
+                 "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text}
+        if name in texts:
+            return {"text": texts[name]()}
+        if name == "open_ideas":
+            return {"items": self.open_ideas()}
+        if name == "find_idea":
+            return {"item": self.find_idea(str(payload.get("id", "")))}
+        raise ValueError(f"unknown action '{name}'")

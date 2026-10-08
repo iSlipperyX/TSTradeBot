@@ -295,9 +295,7 @@ class PaperBroker(Broker):
         for order in self._working(OrderType.STOP):
             if not order.status.is_working:
                 continue
-            if order.side == OrderSide.BUY and bar.high >= order.stop_price:
-                self._fill(order, self._adverse(order.stop_price, order.side))
-            elif order.side == OrderSide.SELL and bar.low <= order.stop_price:
+            if order.side == OrderSide.BUY and bar.high >= order.stop_price or order.side == OrderSide.SELL and bar.low <= order.stop_price:
                 self._fill(order, self._adverse(order.stop_price, order.side))
             await self.drain()
 
@@ -315,9 +313,7 @@ class PaperBroker(Broker):
                 self._fill(order, min(lim, self._adverse(bar.open, order.side)))
             elif order.side == OrderSide.SELL and bar.open >= lim:
                 self._fill(order, max(lim, self._adverse(bar.open, order.side)))
-            elif order.side == OrderSide.BUY and bar.low < lim:  # resting limit traded through
-                self._fill(order, lim)
-            elif order.side == OrderSide.SELL and bar.high > lim:
+            elif order.side == OrderSide.BUY and bar.low < lim or order.side == OrderSide.SELL and bar.high > lim:  # resting limit traded through
                 self._fill(order, lim)
             await self.drain()
 
@@ -341,9 +337,7 @@ class PaperBroker(Broker):
         for order in self._working(OrderType.LIMIT):
             if not order.status.is_working:
                 continue
-            if order.side == OrderSide.BUY and price < order.limit_price:
-                self._fill(order, order.limit_price)
-            elif order.side == OrderSide.SELL and price > order.limit_price:
+            if order.side == OrderSide.BUY and price < order.limit_price or order.side == OrderSide.SELL and price > order.limit_price:
                 self._fill(order, order.limit_price)
             await self.drain()
         await self.drain()

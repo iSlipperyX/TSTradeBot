@@ -45,7 +45,7 @@ def render_config(
     account_id: int | None = None,
     symbol: str = "MNQ",
     timeframe: int = 5,
-    strategy: str = "orb",
+    strategy: str = "adaptive",
     risk_per_trade: float = 150,
     daily_loss: float = 500,
     max_trades: int = 4,
@@ -67,8 +67,13 @@ instrument:
   timeframe_minutes: {timeframe}
 
 strategy:
-  name: {strategy}                # orb, noise_breakout, ema_trend, vwap_reversion  (see: topstep-bot strategies)
-  params: {{}}                 # override strategy defaults here, e.g. {{target_r: 1.5}}
+  name: {strategy}                # adaptive (all strategies, all day, guided by what the bot has learned),
+  params: {{}}                 #   or one of: orb, noise_breakout, ema_trend, vwap_reversion, vwap_pullback
+                              # override strategy defaults under params, e.g. {{target_r: 1.5}}
+
+knowledge:                      # what the bot learns while it runs (drives the adaptive strategy)
+  auto_train: true              # retrain on the last 60 days of history at startup when stale (daily)
+  history_days: 60
 
 risk:
   risk_per_trade: {risk_per_trade:g}          # $ lost if a trade hits its stop (position size is calculated from this)
@@ -226,7 +231,8 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         [(s, f"{SPECS[s].description} - ${SPECS[s].tick_value:g}/tick") for s in SYMBOL_CHOICES],
         "MNQ",
     )
-    strategy = _pick("5. Strategy", [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "orb")
+    strategy = _pick("5. Strategy (adaptive is recommended: it trades all day and learns what works)",
+                     [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "adaptive")
 
     # ---- risk
     mll = PLANS[plan].max_loss_limit
@@ -260,9 +266,10 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         Panel.fit(
             f"[green bold]Saved {config_path}[/]\n\n"
             "Next steps:\n"
-            "  1. [bold]Backtest[/] the strategy and read the report.\n"
-            "  2. [bold]Paper trade[/] for a few weeks (real prices, simulated orders).\n"
-            "  3. Only then switch [bold]mode: live[/] in config.yaml - start on a Combine or practice account.",
+            "  1. [bold]Train[/] the bot (menu 5): it learns which strategy works when from recent real data.\n"
+            "  2. [bold]Backtest[/] (menu 4) and read the report.\n"
+            "  3. [bold]Start in paper mode[/] (menu 6): real prices, simulated orders, with the dashboard.\n"
+            "  4. When you're ready, flip the dashboard's [bold]Paper | Live[/] switch - start small.",
             border_style="green",
         )
     )

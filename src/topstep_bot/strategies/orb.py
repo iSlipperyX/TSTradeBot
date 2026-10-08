@@ -24,7 +24,7 @@ class OpeningRangeBreakout(Strategy):
         "target_r": 2.0,
         "buffer_ticks": 2,
         "min_range_ticks": 8,
-        "max_range_ticks": 400,
+        "max_range_ticks": 800,  # skip the day if the opening range is wider than this (a news-driven gap, say)
         "max_trades_per_day": 1,
         "direction": "both",
     }

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
-from typing import Iterable, Iterator
 
 from topstep_bot.models import Bar
 

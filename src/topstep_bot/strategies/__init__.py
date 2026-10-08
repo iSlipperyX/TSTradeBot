@@ -6,15 +6,21 @@ from typing import Any
 
 from topstep_bot.instruments import get_spec
 from topstep_bot.models import Contract
+from topstep_bot.strategies.adaptive import AdaptiveAllDay
 from topstep_bot.strategies.base import Strategy, StrategyContext, parse_hhmm
 from topstep_bot.strategies.ema_trend import EmaTrend
 from topstep_bot.strategies.noise_breakout import NoiseAreaMomentum
 from topstep_bot.strategies.orb import OpeningRangeBreakout
+from topstep_bot.strategies.vwap_pullback import VwapPullback
 from topstep_bot.strategies.vwap_reversion import VwapReversion
 
+# The adaptive strategy runs all the others, so it is listed first and they are listed in the
+# order of the trading day they are built for: open, all day, midday, afternoon.
 STRATEGIES: dict[str, type[Strategy]] = {
-    cls.name: cls for cls in (OpeningRangeBreakout, NoiseAreaMomentum, EmaTrend, VwapReversion)
+    cls.name: cls
+    for cls in (AdaptiveAllDay, OpeningRangeBreakout, NoiseAreaMomentum, EmaTrend, VwapReversion, VwapPullback)
 }
+BASE_STRATEGIES = tuple(n for n in STRATEGIES if n != AdaptiveAllDay.name)
 
 
 def create_strategy(name: str, params: dict[str, Any], contract: Contract, timeframe_minutes: int) -> Strategy:
@@ -30,4 +36,4 @@ def create_strategy(name: str, params: dict[str, Any], contract: Contract, timef
     return cls(contract, timeframe_minutes, rth_open, rth_close, params)
 
 
-__all__ = ["STRATEGIES", "Strategy", "StrategyContext", "create_strategy"]
+__all__ = ["BASE_STRATEGIES", "STRATEGIES", "Strategy", "StrategyContext", "create_strategy"]

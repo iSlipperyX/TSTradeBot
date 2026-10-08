@@ -10,6 +10,7 @@ Alerts are sent from a background queue so a slow webhook never delays trading.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 import httpx
@@ -44,10 +45,8 @@ class Notifier:
     async def stop(self) -> None:
         if self._task is None:
             return
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._queue.join(), timeout=5)
-        except asyncio.TimeoutError:
-            pass
         self._task.cancel()
         if self._client:
             await self._client.aclose()

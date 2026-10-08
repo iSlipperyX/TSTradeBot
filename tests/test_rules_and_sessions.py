@@ -8,7 +8,6 @@ from topstep_bot.sessions import SessionSchedule
 
 from .conftest import ct
 
-
 # ---- Maximum Loss Limit (examples from Topstep's help center)
 
 def test_combine_mll_trails_end_of_day_high_and_never_drops():

@@ -1,10 +1,8 @@
-"""24/7 operation (supervisor, autostart, daily restart, crash recovery) and same-day readiness
+"""24/7 operation (autostart, daily restart, crash recovery) and same-day readiness
 (news blackouts, ramp-up, preflight)."""
 
-import json
 import sys
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
 import httpx
 import pytest
@@ -19,7 +17,6 @@ from topstep_bot.live import Controls, LiveRunner
 from topstep_bot.models import OrderSide, OrderType
 from topstep_bot.news import NewsCalendar
 from topstep_bot.preflight import FAIL, OK, account_hints, run_preflight
-from topstep_bot.service import RESTART_EXIT_CODE, Supervisor
 from topstep_bot.sessions import SessionSchedule
 
 from .conftest import ct, run
@@ -177,63 +174,6 @@ def test_foreign_position_still_flattened(mnq):
 
 # ---------------------------------------------------------------- supervisor
 
-class ScriptedSupervisor(Supervisor):
-    def __init__(self, codes, **kw):
-        super().__init__(BotConfig(), Secrets(), config_path=None, mode=None, **kw)
-        self.codes = list(codes)
-        self.launches = []
-
-    def run_child(self, first, quiet):
-        self.launches.append((first, quiet))
-        return self.codes.pop(0)
-
-
-def test_supervisor_restart_policy(monkeypatch):
-    monkeypatch.setattr("topstep_bot.service.notify", lambda *a: None)
-    sup = ScriptedSupervisor([(RESTART_EXIT_CODE, 80000), (1, 5), (0, 100)])
-    waits = []
-    assert sup.loop(sleep=waits.append) == 0
-    assert sup.launches == [(True, False), (False, True), (False, False)]  # maintenance restart is quiet
-    assert waits == [10]  # crash -> back off before restarting
-
-
-def test_supervisor_gives_up_after_too_many_crashes(monkeypatch):
-    monkeypatch.setattr("topstep_bot.service.notify", lambda *a: None)
-    sup = ScriptedSupervisor([(1, 1)] * 20)
-    assert sup.loop(sleep=lambda s: None) == 1
-    assert len(sup.launches) == BotConfig().service.max_restarts_per_hour
-
-
-def test_supervisor_stops_on_startup_config_error(monkeypatch):
-    monkeypatch.setattr("topstep_bot.service.notify", lambda *a: None)
-    assert ScriptedSupervisor([(2, 3)]).loop(sleep=lambda s: None) == 2
-
-
-def test_supervisor_kills_hung_child(tmp_path, monkeypatch):
-    monkeypatch.setattr("topstep_bot.service.notify", lambda *a: None)
-    cfg = BotConfig.model_validate({"data_dir": str(tmp_path)})
-    cfg.service.heartbeat_timeout_seconds = 1
-    sup = Supervisor(cfg, Secrets(), config_path=None, mode=None, poll_seconds=0.2,
-                     child_command=[sys.executable, "-c", "import time; time.sleep(30)"])
-    started = time.time()
-    code, _ = sup.run_child(first=True, quiet=False)
-    assert code == -1 and time.time() - started < 25
-
-
-def test_supervisor_passes_exit_code_and_env(tmp_path):
-    cfg = BotConfig.model_validate({"data_dir": str(tmp_path)})
-    script = "import os, sys; sys.exit(7 if os.environ['TOPSTEP_BOT_SUPERVISED'] == '1' and os.environ['TOPSTEP_BOT_QUIET_START'] == '1' else 9)"
-    sup = Supervisor(cfg, Secrets(), config_path=None, mode=None, poll_seconds=0.1, child_command=[sys.executable, "-c", script])
-    assert sup.run_child(first=False, quiet=True)[0] == 7
-
-
-def test_child_command_line():
-    sup = Supervisor(BotConfig(), Secrets(), config_path="my.yaml", mode="live")
-    first, later = sup.command(True), sup.command(False)
-    assert first[-5:] == ["my.yaml", "run", "--yes", "--mode", "live"]
-    assert later[-1] == "--no-browser"
-
-
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_autostart_enable_disable(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
@@ -243,7 +183,7 @@ def test_autostart_enable_disable(tmp_path, monkeypatch):
     assert not autostart.is_enabled()
     path = autostart.enable(cfg)
     text = path.read_text(encoding="utf-8")
-    assert autostart.is_enabled() and "service --yes" in text and str(cfg.resolve()) in text
+    assert autostart.is_enabled() and "start --yes" in text and str(cfg.resolve()) in text
     assert autostart.disable() and not autostart.is_enabled()
 
 
