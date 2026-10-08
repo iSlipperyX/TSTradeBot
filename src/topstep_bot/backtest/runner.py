@@ -60,7 +60,14 @@ async def run_backtest(
     start: date | None = None,
     end: date | None = None,
     progress: Callable[[float], None] | None = None,
+    enforce_mll: bool = True,
 ) -> BacktestResult:
+    """Replay ``bars`` through the real trading core.
+
+    ``enforce_mll=False`` (used by training) switches off the trailing Maximum Loss Limit so one bad
+    stretch doesn't end the simulated account and hide how the strategy did afterwards. Daily limits
+    stay on; Combine pass rates are computed from the daily results with the real MLL.
+    """
     bars = prepare_bars(bars, cfg.instrument.timeframe_minutes)
     schedule = SessionSchedule(cfg.session)
     trading_days = sorted({schedule.trading_day(b.ts) for b in bars})
@@ -81,6 +88,9 @@ async def run_backtest(
     )
     core = build_core(cfg, contract, broker, clock=lambda: now[0], account_label="backtest")
     core.balance = balance0
+    if not enforce_mll:
+        core.tracker.max_loss_limit = 1e12
+        core.tracker.floor = -1e12
     tf = timedelta(minutes=cfg.instrument.timeframe_minutes)
     breaches: list[tuple[datetime, float, float]] = []
     in_breach = False

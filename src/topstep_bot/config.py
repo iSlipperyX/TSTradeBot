@@ -102,6 +102,10 @@ class RiskConfig(_Section):
     cooldown_minutes_after_loss: int = Field(default=10, ge=0)
     mll_buffer: float = Field(default=200.0, ge=0, description="Extra cushion kept above the MLL floor.")
     min_stop_ticks: int = Field(default=8, ge=1)
+    min_stop_atr: float | None = Field(
+        default=None, gt=0,
+        description="Also widen stops to at least this many ATRs (14 bars) - stops inside normal noise get hit for no reason.",
+    )
     max_stop_ticks: int = Field(default=400, ge=1)
     breakeven_at_r: float | None = Field(default=None, gt=0)
     breakeven_offset_ticks: int = 1

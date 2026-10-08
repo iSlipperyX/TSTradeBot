@@ -154,22 +154,10 @@ def cmd_download(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_backtest(args: argparse.Namespace) -> int:
+def _history(cfg: BotConfig, args: argparse.Namespace, *, allow_synthetic: bool = True):
+    """Price history for a backtest or training run: --data file, cached download, fresh download from
+    TopstepX, or (only if allowed) synthetic data. Returns (bars, synthetic?)."""
     from topstep_bot.backtest.data import load_csv, synthetic_bars
-    from topstep_bot.backtest.metrics import combine_statistics, compute_metrics
-    from topstep_bot.backtest.report import write_report
-    from topstep_bot.backtest.runner import run_backtest
-    from topstep_bot.instruments import offline_contract
-    from topstep_bot.risk.topstep import PLANS
-
-    cfg = _load(args)
-    if args.strategy:
-        cfg.strategy.name = args.strategy
-        cfg.strategy.params = {}
-    if args.symbol:
-        cfg.instrument.symbol = args.symbol.upper()
-    if args.timeframe:
-        cfg.instrument.timeframe_minutes = args.timeframe
 
     data_file = args.data or cfg.backtest.data_file
     synthetic = args.synthetic
@@ -179,17 +167,42 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             data_file = str(asyncio.run(_download(cfg, args.days, 1)))
         elif cached.exists():
             data_file = str(cached)
-        else:
+        elif allow_synthetic:
             synthetic = True
+        else:
+            raise ValueError("No price history yet. Run setup (API key) and then: topstep-bot download --days 365")
     if synthetic:
         console.print(
             "[yellow]Using SYNTHETIC random data - good for seeing how the bot works, meaningless for judging a "
-            "strategy. Run setup and 'topstep-bot download' to backtest on real data.[/]"
+            "strategy. Run setup and 'topstep-bot download' to use real data.[/]"
         )
-        bars = synthetic_bars(cfg.instrument.symbol, days=args.days, seed=args.seed)
-    else:
-        bars = load_csv(data_file, naive_tz=args.tz)
-        console.print(f"Loaded {len(bars):,} bars from {data_file}")
+        return synthetic_bars(cfg.instrument.symbol, days=args.days, seed=args.seed), True
+    bars = load_csv(data_file, naive_tz=args.tz)
+    if bars:
+        console.print(f"Loaded {len(bars):,} bars from {data_file} ({bars[0].ts:%Y-%m-%d} to {bars[-1].ts:%Y-%m-%d})")
+    return bars, False
+
+
+def _apply_overrides(cfg: BotConfig, args: argparse.Namespace) -> None:
+    if getattr(args, "strategy", None):
+        cfg.strategy.name = args.strategy
+        cfg.strategy.params = {}
+    if getattr(args, "symbol", None):
+        cfg.instrument.symbol = args.symbol.upper()
+    if getattr(args, "timeframe", None):
+        cfg.instrument.timeframe_minutes = args.timeframe
+
+
+def cmd_backtest(args: argparse.Namespace) -> int:
+    from topstep_bot.backtest.metrics import combine_statistics, compute_metrics
+    from topstep_bot.backtest.report import write_report
+    from topstep_bot.backtest.runner import run_backtest
+    from topstep_bot.instruments import offline_contract
+    from topstep_bot.risk.topstep import PLANS
+
+    cfg = _load(args)
+    _apply_overrides(cfg, args)
+    bars, _ = _history(cfg, args)
 
     contract = offline_contract(cfg.instrument.symbol)
     with console.status("Running backtest..."):
@@ -528,6 +541,105 @@ def cmd_journal(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pct(v: float | None) -> str:
+    return "-" if v is None else f"{v * 100:.0f}%"
+
+
+def _pf(v: float) -> str:
+    return "∞" if v == float("inf") else f"{v:.2f}"
+
+
+def _print_training(report, cfg: BotConfig) -> None:
+    f0, f1 = report.folds[0], report.folds[-1]
+    console.print(
+        f"\nTrained on {report.first_day} → {report.last_day}: {report.candidates} candidate settings, "
+        f"{len(report.folds)} walk-forward windows. Settings were chosen on each train window "
+        f"(e.g. {f0.train[0]} → {f0.train[1]}) and judged only on the unseen test window after it "
+        f"({f0.test[0]} → {f0.test[1]}, ... , {f1.test[0]} → {f1.test[1]})."
+    )
+    table = Table(title="Out-of-sample results (test windows only)")
+    for col in ("Strategy", "Net $", "Trades", "PF", "Win", "Avg R", "Max DD", "Pass", "Verdict"):
+        table.add_column(col, justify="left" if col in ("Strategy", "Verdict") else "right", no_wrap=True)
+    rows = sorted(report.results, key=lambda r: (r.eligible, r.oos.sharpe), reverse=True)
+    for r in rows:
+        o = r.oos
+        name = r.strategy + (" (current)" if r.strategy == cfg.strategy.name else "")
+        name += " ◀" if report.recommended is r else ""
+        table.add_row(name, f"{o.net:+,.0f}", str(o.trades), _pf(o.profit_factor), _pct(o.win_rate),
+                      f"{o.avg_r:+.2f}", f"{o.max_drawdown:,.0f}", _pct(o.combine_pass_rate),
+                      f"[green]✔ {r.reason}[/]" if r.eligible else f"[yellow]✘ {r.reason}[/]")
+    console.print(table)
+    console.print("[dim]PF = profit factor (above 1 = profitable). Pass = Combine pass rate. ◀ = recommended.[/]")
+    if report.current is not None:
+        c = report.current
+        console.print(f"Your current setting ({report.current_label}) on the same test windows: {c.net:+,.0f} over "
+                      f"{c.trades} trades, PF {_pf(c.profit_factor)}, max drawdown {c.max_drawdown:,.0f}.")
+    rec = report.recommended
+    if rec is None or rec.final is None:
+        console.print(Panel(
+            "[bold yellow]No strategy held up on data it hadn't seen.[/] Don't go live on these results.\n"
+            "Try more history (--days 730), another symbol, or keep paper trading.", border_style="yellow"))
+        return
+    choices = ", ".join(f"{f.test[0]:%b %Y}: {c.label.removeprefix(rec.strategy).strip() or 'defaults'}"
+                        for f, c, _ in rec.choices)
+    settings = ", ".join(f"{k}={v}" for k, v in rec.final.params) or "its default settings"
+    console.print(Panel(
+        f"[bold green]Best out-of-sample: {rec.strategy}[/] - {settings}\n"
+        f"Out-of-sample: {rec.oos.net:+,.0f} over {rec.oos.trades} trades, profit factor {_pf(rec.oos.profit_factor)}, "
+        f"Sharpe {rec.oos.sharpe:.2f}, max drawdown {rec.oos.max_drawdown:,.0f}"
+        + (f", Combine pass rate {_pct(rec.oos.combine_pass_rate)}" if rec.oos.combine_pass_rate is not None else "")
+        + f".\nChosen per window: {choices}.\n"
+        f"The same settings were picked in {rec.stability:.0%} of windows"
+        + (" - stable." if rec.stability >= 0.5 else " - they shift over time, so expect results to vary.")
+        + "\n[dim]Past results, even out-of-sample, don't guarantee future ones. Start with reduced size (ramp-up).[/]",
+        title="Recommendation", border_style="green"))
+
+
+def cmd_train(args: argparse.Namespace) -> int:
+    """Walk-forward training: which strategy and settings held up on data they never saw."""
+    import json
+    import os
+
+    from topstep_bot.instruments import offline_contract
+    from topstep_bot.training import save_strategy, train
+
+    cfg = _load(args)
+    _apply_overrides(cfg, args)
+    bars, synthetic = _history(cfg, args, allow_synthetic=args.synthetic)
+    if synthetic:
+        console.print("[yellow]Training on synthetic data only demonstrates the process - never save its result.[/]")
+    contract = offline_contract(cfg.instrument.symbol)
+    strategies = args.strategies.split(",") if args.strategies else None
+    workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 1))
+    with console.status("Preparing...") as status:
+        report = train(cfg, bars, contract, strategies=strategies, folds=args.folds, workers=workers,
+                       progress=lambda i, n: status.update(f"Backtesting candidate settings {i}/{n}..."))
+    _print_training(report, cfg)
+    out = Path(cfg.backtest.report_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"training_{cfg.instrument.symbol}_{datetime.now():%Y%m%d_%H%M%S}.json"
+    path.write_text(json.dumps(report.to_dict(), indent=1), encoding="utf-8")
+    console.print(f"Full results: {path.resolve()}")
+    for err in report.errors[:3]:
+        console.print(f"[dim]Skipped: {err}[/]")
+
+    rec = report.recommended
+    if rec is None or rec.final is None or synthetic:
+        return 0
+    if args.save is None and sys.stdin.isatty():
+        args.save = Prompt.ask("Save the recommended strategy and settings to config.yaml?", choices=["y", "n"],
+                               default="n") == "y"
+    if args.save:
+        cfg_path = Path(args.config or "config.yaml")
+        backup = save_strategy(cfg_path, rec.strategy, rec.final.params_dict,
+                               note=f"Trained {datetime.now():%Y-%m-%d} on {report.first_day}..{report.last_day} "
+                                    f"(topstep-bot train); previous config saved as {cfg_path.name}.bak")
+        console.print(f"[green]Saved to {cfg_path}[/] (previous version: {backup}). Backtest it with: topstep-bot backtest")
+    else:
+        console.print("Not saved. To use it, run train again with --save, or edit strategy: in config.yaml.")
+    return 0
+
+
 def cmd_demo(args: argparse.Namespace) -> int:
     args.synthetic, args.data, args.download = True, None, False
     return cmd_backtest(args)
@@ -575,6 +687,7 @@ MENU = [
     ("go-live", "START TRADING TODAY: run all preflight checks, then go live"),
     ("check", "Test the connection to TopstepX"),
     ("backtest", "Backtest the configured strategy and open the report"),
+    ("train", "TRAIN: test every strategy on unseen real data and pick the settings that held up"),
     ("paper", "Paper trade (real prices, simulated orders) with the dashboard"),
     ("live", "Trade LIVE on your TopstepX account"),
     ("flatten", "EMERGENCY: close all positions and cancel all orders"),
@@ -590,7 +703,8 @@ MENU = [
 def interactive_menu(parser: argparse.ArgumentParser) -> int:
     console.print(Panel.fit(f"[bold]Topstep Bot[/] v{__version__}", border_style="cyan"))
     if not Path("config.yaml").exists():
-        console.print("[yellow]No config.yaml yet - start with option 1 (setup), or 10 for a demo.[/]")
+        demo = next(i for i, (name, _) in enumerate(MENU, start=1) if name == "demo")
+        console.print(f"[yellow]No config.yaml yet - start with option 1 (setup), or {demo} for a demo.[/]")
     for i, (_, desc) in enumerate(MENU, start=1):
         console.print(f"  [bold]{i}[/]  {desc}")
     console.print("  [bold]0[/]  Quit")
@@ -654,6 +768,22 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--days", type=int, default=90, help="days of real data for the strategy check")
         p.add_argument("--skip-backtest", action="store_true", help="skip the strategy check")
         p.set_defaults(func=func)
+
+    p = sub.add_parser("train", help="walk-forward training: pick the strategy/settings that held up on unseen data")
+    p.add_argument("--data", help="CSV of 1-minute bars (default: data/<SYMBOL>_1m.csv, else download)")
+    p.add_argument("--tz", default="UTC", help="timezone for CSV times without one")
+    p.add_argument("--download", action="store_true", help="download fresh history from TopstepX first")
+    p.add_argument("--days", type=int, default=365, help="days of history to download (default 365; more is better)")
+    p.add_argument("--strategies", help="comma-separated strategies to train (default: all)")
+    p.add_argument("--symbol", help="override the symbol")
+    p.add_argument("--timeframe", type=int, help="override the bar timeframe in minutes")
+    p.add_argument("--folds", type=int, default=4, help="walk-forward windows (default 4)")
+    p.add_argument("--workers", type=int, default=0, help="parallel processes (default: CPUs - 1, max 4)")
+    p.add_argument("--save", action="store_true", default=None, help="save the recommendation to config.yaml")
+    p.add_argument("--no-save", dest="save", action="store_false", help="never ask to save")
+    p.add_argument("--synthetic", action="store_true", help="demo the process on synthetic data (never saved)")
+    p.add_argument("--seed", type=int, default=7, help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_train, strategy=None)
 
     p = sub.add_parser("download", help="download historical bars to a CSV")
     p.add_argument("--days", type=int, default=90)

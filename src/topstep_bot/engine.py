@@ -225,6 +225,8 @@ class TradingCore:
             self._note_skip(f"Skipped {side.label}: stop {stop} is on the wrong side of price {entry_ref}")
             return
         min_dist = c.price_offset(self.cfg.risk.min_stop_ticks)
+        if self.cfg.risk.min_stop_atr and self.atr.value:
+            min_dist = max(min_dist, c.round_price(self.cfg.risk.min_stop_atr * self.atr.value, "up"))
         if distance < min_dist:
             stop = c.round_price(entry_ref - side.sign * min_dist)
         elif c.ticks(distance) > self.cfg.risk.max_stop_ticks:

@@ -276,11 +276,28 @@ class PaperBroker(Broker):
         self._queue("account", Account(self.account_id, self.account_name, self.balance, simulated=True))
 
     async def on_bar(self, bar: Bar) -> None:
-        """Backtest step: fill orders against one bar's open/high/low/close."""
+        """Backtest step: fill orders against one bar's open/high/low/close.
+
+        Order of events inside the bar: everything that trades at the OPEN first (market orders and
+        marketable limits, including immediate-or-cancel entries), then the protective orders those
+        fills create see the REST of the bar - stops before targets.
+        """
         self.now = bar.ts
         for order in self._working(OrderType.MARKET):
             self._fill_market(order, bar.open)
         await self.drain()
+
+        for order in self._working(OrderType.LIMIT):
+            if not order.status.is_working:
+                continue
+            lim = order.limit_price
+            if (order.side == OrderSide.BUY and bar.open <= lim) or (order.side == OrderSide.SELL and bar.open >= lim):
+                # Marketable at the open: fills at the open (with slippage) but never worse than the limit.
+                adverse = self._adverse(bar.open, order.side)
+                self._fill(order, min(lim, adverse) if order.side == OrderSide.BUY else max(lim, adverse))
+            elif order.id in self._ioc:
+                await self.cancel_order(order.id)  # immediate-or-cancel: never rests
+            await self.drain()  # an entry fill places its stop now, so the stop sees the rest of this bar
 
         # Gaps: resting orders already beyond the open fill at the open.
         for order in self._working(OrderType.STOP):
@@ -301,24 +318,14 @@ class PaperBroker(Broker):
                 self._fill(order, self._adverse(order.stop_price, order.side))
             await self.drain()
 
+        # Resting limits (profit targets) need price to trade THROUGH them.
         for order in self._working(OrderType.LIMIT):
-            if not order.status.is_working:
+            if not order.status.is_working or order.id in self._ioc:
                 continue
-            lim = order.limit_price
-            if order.id in self._ioc and not (
-                (order.side == OrderSide.BUY and bar.open <= lim) or (order.side == OrderSide.SELL and bar.open >= lim)
-            ):
-                await self.cancel_order(order.id)  # immediate-or-cancel: never rests
-                await self.drain()
-                continue
-            if order.side == OrderSide.BUY and bar.open <= lim:  # marketable at the open
-                self._fill(order, min(lim, self._adverse(bar.open, order.side)))
-            elif order.side == OrderSide.SELL and bar.open >= lim:
-                self._fill(order, max(lim, self._adverse(bar.open, order.side)))
-            elif order.side == OrderSide.BUY and bar.low < lim:  # resting limit traded through
-                self._fill(order, lim)
-            elif order.side == OrderSide.SELL and bar.high > lim:
-                self._fill(order, lim)
+            if order.side == OrderSide.BUY and bar.low < order.limit_price:
+                self._fill(order, order.limit_price)
+            elif order.side == OrderSide.SELL and bar.high > order.limit_price:
+                self._fill(order, order.limit_price)
             await self.drain()
 
         self.last_price = bar.close
