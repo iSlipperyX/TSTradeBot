@@ -480,6 +480,7 @@ class TradingCore:
         open_pnl = self.orders.open_pnl()
         equity = self.balance + open_pnl
         plan = self.risk.plan
+        progress = self.risk.combine_progress(self.balance, open_pnl)
         start = self.tracker.starting_balance
         trade = self.orders.trade
         return {
@@ -495,7 +496,8 @@ class TradingCore:
             "open_pnl": round(open_pnl, 2),
             "position": self.orders.position,
             "last_price": self.last_price,
-            "profit_target": plan.profit_target if self.risk.stage == "combine" else None,
+            # Combine: the target after any Consistency Target increase.
+            "profit_target": progress.profit_target if progress else None,
             "total_profit": round(self.balance - start, 2),
             "trade": trade.to_dict() if trade else None,
             "last_trade": self.orders.last_trade.to_dict() if self.orders.last_trade else None,

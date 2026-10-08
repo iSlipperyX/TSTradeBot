@@ -469,3 +469,35 @@ def test_engine_tracks_the_best_day(mnq):
         await core.end_day()
         assert core.risk.best_prior_day == pytest.approx(700)
     run(go())
+
+
+def test_setup_wizard_config_records_the_topstep_dll_and_payout_path():
+    import yaml
+
+    from topstep_bot.wizard import render_config
+
+    cfg = BotConfig.model_validate(yaml.safe_load(render_config(plan="100K", topstep_dll=True, daily_loss=750)))
+    assert cfg.account.topstep_daily_loss_limit == 2_000
+    assert cfg.risk.consistency_guard and cfg.risk.stop_at_profit_target
+    cfg = BotConfig.model_validate(yaml.safe_load(render_config(stage="express", payout_path="consistency")))
+    assert cfg.account.topstep_daily_loss_limit is None and cfg.account.payout_path == "consistency"
+
+
+def test_rules_summary_for_each_account_type():
+    from topstep_bot.risk.summary import rule_rows
+
+    combine = {r[0]: r for r in rule_rows(BotConfig.model_validate({"account": {"topstep_daily_loss_limit": True}}))}
+    assert "$1,650" in combine["Consistency Target"][1] and "$1,500" in combine["Consistency Target"][2]
+    assert "$1,000" in combine["Daily Loss Limit"][1] and "$900" in combine["Daily Loss Limit"][2]
+    assert "50 MNQ micros" in combine["Position size"][1]
+    express = {r[0]: r for r in rule_rows(BotConfig.model_validate(
+        {"account": {"stage": "express", "plan": "150K"}, "instrument": {"symbol": "GC"}, "strategy": {"name": "orb"}}))}
+    assert "Consistency Target" not in express and "Payouts" in express
+    assert "3 GC contracts" in express["Position size"][1]
+
+
+def test_rules_command_prints(tmp_path, monkeypatch, capsys):
+    from topstep_bot.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    assert main(["rules"]) == 0

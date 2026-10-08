@@ -81,6 +81,22 @@ def cmd_strategies(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rules(args: argparse.Namespace) -> int:
+    from topstep_bot.risk.summary import rule_rows
+
+    cfg = _load(args)
+    table = Table(title=f"Topstep rules for your {cfg.account.plan} {cfg.account.stage} account", show_lines=True)
+    table.add_column("Rule", style="bold")
+    table.add_column("Topstep")
+    table.add_column("What the bot does", style="green")
+    for row in rule_rows(cfg):
+        table.add_row(*row)
+    console.print(table)
+    console.print("[dim]Checked against the Topstep Help Center in October 2026 - confirm in your TopstepX Risk Settings. "
+                  "Details: docs/TOPSTEP_RULES.md[/]")
+    return 0
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     from topstep_bot.factory import fees_for
     from topstep_bot.live import resolve_contract
@@ -768,6 +784,7 @@ MENU = [
     ("autostart", "Start the 24/7 service automatically when Windows starts"),
     ("logs", "Show recent errors and where the log files are"),
     ("tune", "TUNE: test every strategy on unseen real data and pick the settings that held up"),
+    ("rules", "Show Topstep's rules for your account and how the bot stays inside them"),
 ]
 
 
@@ -776,6 +793,13 @@ def interactive_menu(parser: argparse.ArgumentParser) -> int:
     if not Path("config.yaml").exists():
         demo = next(i for i, (name, _) in enumerate(MENU, start=1) if name == "demo")
         console.print(f"[yellow]No config.yaml yet - start with option 1 (setup), or {demo} for a demo.[/]")
+    else:
+        try:
+            cfg = load_config()
+            console.print(f"[dim]Your setup: {cfg.account.plan} {cfg.account.stage}, {cfg.instrument.symbol}, "
+                          f"strategy {cfg.strategy.name}, {cfg.mode.upper()} mode, ${cfg.risk.risk_per_trade:,.0f} per trade[/]")
+        except Exception as exc:  # noqa: BLE001 - the menu must open even with a broken config
+            console.print(f"[red]config.yaml has a problem:[/] {exc}\n[yellow]Fix it or run option 1 (setup) again.[/]")
     for i, (_, desc) in enumerate(MENU, start=1):
         console.print(f"  [bold]{i}[/]  {desc}")
     console.print("  [bold]0[/]  Quit")
@@ -798,6 +822,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("setup", help="interactive setup wizard").set_defaults(func=cmd_setup)
     sub.add_parser("check", help="test credentials, list accounts, resolve the contract").set_defaults(func=cmd_check)
     sub.add_parser("strategies", help="list strategies and their parameters").set_defaults(func=cmd_strategies)
+    sub.add_parser("rules", help="Topstep's rules for your account and how the bot enforces them").set_defaults(func=cmd_rules)
     sub.add_parser("telegram-test", help="send a test message to your Telegram bot").set_defaults(func=cmd_telegram_test)
 
     for name, helptext in (("start", "start the dashboard + Telegram, which run the bot 24/7 (recommended)"),

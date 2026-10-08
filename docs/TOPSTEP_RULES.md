@@ -11,6 +11,9 @@ differs (see "If Topstep changes a rule" at the end).
 > the strategy, and backtest results are evidence, not a promise. Run it in paper mode and on a
 > Combine before you rely on it.
 
+To see these numbers for your own account (plan, account type, Daily Loss Limit, symbol), run
+**`topstep-bot rules`** or pick **"Show Topstep's rules"** in the menu.
+
 ## The rules at a glance
 
 | Rule | 50K | 100K | 150K |
@@ -77,7 +80,7 @@ $4,000).
 - Stops opening trades once the day is up 40% of the profit target (`risk.daily_profit_target`).
 - If an open trade keeps running, it is closed when the day reaches 50% of the target, before the
   55% line (`risk.consistency_guard`, on by default).
-- Shows the current target (including any increase) on the dashboard and in `/status`.
+- Shows the current target (including any increase) on the dashboard's profit target meter.
 
 ### Profit target (Combine)
 
@@ -147,8 +150,8 @@ news.
 **Topstep:** the Standard path needs 5 winning days of $150 or more. The Consistency path needs
 3 trading days with the best day at or below 40% of net profit. Payouts are 90/10.
 
-**The bot:** set `account.payout_path` to the path you chose; `/status` and the dashboard show
-your progress toward a payout.
+**The bot:** trades the same way on either path; set `account.payout_path` to the one you chose
+so `topstep-bot rules` describes it correctly. Your TopstepX dashboard tracks payout progress.
 
 ## If Topstep changes a rule
 
@@ -159,8 +162,8 @@ one. If your TopstepX Risk Settings show different values:
   the lower number in `config.yaml`. The bot never goes above it.
 - **Different Daily Loss Limit**: set `account.topstep_daily_loss_limit` to the dollar amount.
 - **Different MLL floor**: set `account.mll_floor_override` to the value in your dashboard.
-- Anything else: update `risk/topstep.py` and run `topstep-bot` tests (`pytest`); every rule has a
-  test in `tests/test_topstep_compliance.py`.
+- Anything else: update `risk/topstep.py` and run the tests (`pytest`); every rule has a test in
+  `tests/test_topstep_compliance.py`.
 
 ## Sources
 
