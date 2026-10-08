@@ -323,3 +323,149 @@ def test_preflight_reports_topstep_rules(tmp_path):
     assert "$1,650.00" in checks["Consistency Target"].detail
     assert "50 MNQ" in checks["Position limit"].detail
     assert "Your computer" in checks
+
+
+# ------------------------------------------------------ guards wired into the bot
+
+def _core(mnq, **cfg):
+    from topstep_bot.broker.paper import PaperBroker
+    from topstep_bot.factory import build_core
+
+    now = [OPEN]
+    broker = PaperBroker(mnq, 50_000, slippage_ticks=0, live=True)
+    core = build_core(BotConfig.model_validate(cfg), mnq, broker, clock=lambda: now[0], account_label="t")
+    return core, broker, now
+
+
+def test_engine_closes_a_max_size_position_before_news(mnq):
+    from topstep_bot.models import OrderSide
+
+    from .conftest import run
+
+    core, broker, now = _core(mnq, risk={"risk_per_trade": 400, "personal_daily_loss_limit": 1_000})
+    core.schedule.news = calendar(NewsEvent("CPI m/m", "USD", "High", OPEN + timedelta(minutes=2)))
+
+    async def go():
+        await core.begin_day(DAY, 50_000)
+        await broker.on_price(now[0], 100.0)
+        await core.orders.enter(OrderSide.BUY, 50, 99.0, None, "t", ref_price=100.0)
+        await broker.drain()
+        assert core.orders.position == 50
+        await core.on_clock(now[0])
+        await broker.drain()
+        assert broker.position == 0
+    run(go())
+
+
+def test_engine_keeps_a_smaller_position_through_news(mnq):
+    from topstep_bot.models import OrderSide
+
+    from .conftest import run
+
+    core, broker, now = _core(mnq)
+    core.schedule.news = calendar(NewsEvent("CPI m/m", "USD", "High", OPEN + timedelta(minutes=2)))
+
+    async def go():
+        await core.begin_day(DAY, 50_000)
+        await broker.on_price(now[0], 100.0)
+        await core.orders.enter(OrderSide.BUY, 2, 90.0, None, "t", ref_price=100.0)
+        await broker.drain()
+        await core.on_clock(now[0])
+        await broker.drain()
+        assert broker.position == 2
+    run(go())
+
+
+def test_order_manager_refuses_an_entry_over_the_cap(mnq):
+    from topstep_bot.models import OrderSide
+
+    from .conftest import run
+
+    core, broker, now = _core(mnq)
+
+    async def go():
+        await core.begin_day(DAY, 50_000)
+        await broker.on_price(now[0], 100.0)
+        assert await core.orders.enter(OrderSide.BUY, 51, 90.0, None, "too big", ref_price=100.0) is None
+        await broker.drain()
+        assert broker.position == 0 and not await broker.open_orders()
+        assert any("Entry refused" in e["message"] for e in core.events)
+    run(go())
+
+
+def test_runaway_order_loop_halts_the_bot(mnq):
+    from .conftest import run
+
+    core, broker, now = _core(mnq)
+    core.orders.guard.max_actions_per_minute = 5
+
+    async def go():
+        await core.begin_day(DAY, 50_000)
+        for _ in range(6):
+            core.orders._count_action()
+        await core.on_clock(now[0])
+        assert core.halted and "high-frequency" in core.halted
+        assert core.risk.entry_block_reason(now[0], 50_000) is not None
+    run(go())
+
+
+def test_live_runner_refuses_a_live_funded_account(tmp_path):
+    import httpx
+
+    from topstep_bot.api.rest import ProjectXClient
+    from topstep_bot.config import Secrets
+    from topstep_bot.live import Controls, LiveRunner, SetupError
+
+    from .conftest import run
+    from .test_live_runner import FakeTopstepX
+
+    fake = FakeTopstepX()
+    original = fake.handler
+
+    def handler(request):
+        if request.url.path == "/api/Account/search":
+            return httpx.Response(200, json={"success": True, "accounts": [
+                {"id": 7, "name": "LFA-1", "balance": 10_000.0, "canTrade": True, "simulated": False}]})
+        return original(request)
+
+    cfg = BotConfig.model_validate({"mode": "live", "data_dir": str(tmp_path), "log_dir": str(tmp_path),
+                                    "news": {"enabled": False}, "dashboard": {"enabled": False}})
+    runner = LiveRunner(cfg, Secrets(username="u", api_key="k"), Controls())
+    runner.client = ProjectXClient("u", "k", transport=httpx.MockTransport(handler))
+    with pytest.raises(SetupError, match="Live Funded Accounts"):
+        run(runner.prepare())
+    assert not any(p == "/api/Order/place" for p, _ in fake.calls)
+    run(runner.client.close())
+    runner.journal.close()
+
+
+def test_best_prior_day_starts_over_after_a_reset(tmp_path):
+    from topstep_bot.config import Secrets
+    from topstep_bot.live import LiveRunner
+
+    from .conftest import run
+
+    cfg = BotConfig.model_validate({"data_dir": str(tmp_path), "log_dir": str(tmp_path)})
+    runner = LiveRunner(cfg, Secrets(username="u", api_key="k"))
+    j = runner.journal
+    j.record_day(date(2026, 3, 2), "A", 50_000, 51_400, 2, 48_000)  # big day, then the account was reset
+    j.record_day(date(2026, 3, 3), "A", 50_000, 50_300, 1, 48_000)
+    j.record_day(date(2026, 3, 4), "A", 50_300, 50_900, 1, 48_300)
+    assert runner._best_prior_day("A", date(2026, 3, 5), 50_000) == pytest.approx(600)
+    assert runner._best_prior_day("A", date(2026, 3, 3), 50_000) == pytest.approx(1_400)
+    j.close()
+    run(runner.client.close())
+
+
+def test_engine_tracks_the_best_day(mnq):
+    from .conftest import run
+
+    core, broker, now = _core(mnq)
+
+    async def go():
+        await core.begin_day(DAY, 50_000)
+        core.risk.trades_today = 1
+        core.balance = 50_700
+        await core.end_day()
+        assert core.risk.best_prior_day == pytest.approx(700)
+    run(go())

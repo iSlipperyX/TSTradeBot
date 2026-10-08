@@ -131,13 +131,19 @@ class LiveRunner:
         self.account = await select_account(self.client, cfg)
         if cfg.mode == "live" and not self.account.can_trade:
             raise SetupError(f"Account {self.account.name} is not allowed to trade right now (canTrade = false).")
+        if cfg.mode == "live":
+            from topstep_bot.risk.guards import api_trading_block
+
+            blocked = api_trading_block(self.account)
+            if blocked:
+                raise SetupError(blocked)
         self.contract = await resolve_contract(self.client, cfg)
         log.info("Account %s (id %s), contract %s (%s)", self.account.name, self.account.id, self.contract.name, self.contract.id)
 
         if "DLL" in self.account.name.upper() and cfg.account.topstep_daily_loss_limit is None:
             from topstep_bot.risk.topstep import PLANS
 
-            cfg.account.topstep_daily_loss_limit = PLANS[cfg.account.plan].legacy_daily_loss_limit
+            cfg.account.topstep_daily_loss_limit = PLANS[cfg.account.plan].daily_loss_limit
             log.info("Account name indicates a Topstep Daily Loss Limit; enforcing $%.0f", cfg.account.topstep_daily_loss_limit)
         label = f"{self.account.name}" if cfg.mode == "live" else f"PAPER-{self.account.name}"
         if cfg.mode == "live":
@@ -184,6 +190,8 @@ class LiveRunner:
             core.recommender = RecommendationBook(core, cfg.recommendations.strategies or None)
         await self._warmup()
         await core.begin_day(today, acct.balance, realized, closed_today)
+        core.risk.live_guards = True
+        core.risk.best_prior_day = self._best_prior_day(label, today, starting_balance(cfg))
         from topstep_bot.remote import RemoteControl
 
         core.remote = RemoteControl(core, cfg.data_path / "remote_settings.json")
@@ -193,6 +201,17 @@ class LiveRunner:
         await self._setup_news()
         self._apply_ramp_up()
         return core
+
+    def _best_prior_day(self, label: str, today: date, start: float) -> float:
+        """Best finished day since the account started (or was last reset), for the Consistency Target."""
+        best = 0.0
+        for row in self.journal.daily(label):
+            if row["trading_day"] >= today.isoformat():
+                continue
+            if abs(row["start_balance"] - start) < 0.01:  # a fresh start or a reset: earlier days don't count
+                best = 0.0
+            best = max(best, row["net_pnl"] or 0.0)
+        return best
 
     async def _setup_knowledge(self) -> None:
         """Attach the knowledge base the bot learns into; retrain it from history when stale."""
