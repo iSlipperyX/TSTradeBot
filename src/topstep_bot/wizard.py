@@ -49,9 +49,36 @@ def render_config(
     risk_per_trade: float = 150,
     daily_loss: float = 500,
     max_trades: int = 4,
+    topstep_dll: bool = False,
+    payout_path: str = "standard",
+    goal: str = "pass",
 ) -> str:
+    """``goal``: "pass" protects the Combine; "learn" trades more so the knowledge base learns faster."""
+    learn = goal == "learn"
+    if learn:
+        strategy = "adaptive"
+        max_trades = max(max_trades, 8)
+    target = PLANS[plan].profit_target
+    params = "{trade_unproven: true}   # learning: also trade strategies the bot has no evidence on yet" if learn else \
+        "{}                   # override strategy defaults here, e.g. {target_r: 1.5}"
+    if learn:
+        profit_lines = (f"  daily_profit_target: {target:g}     # learning: no early stop for the day (a big day only raises the target)\n"
+                        "  consistency_guard: false      # learning: keep trading past 50% of the target in a day\n"
+                        "  max_consecutive_losses: 4\n"
+                        "  cooldown_minutes_after_loss: 5")
+    else:
+        profit_lines = (f"  # daily_profit_target: {0.4 * target:g}   # combine default: 40% of the profit target (protects the consistency rule)\n"
+                        "  consistency_guard: true       # combine: close out before a day reaches 55% of the profit target\n"
+                        "  max_consecutive_losses: 2")
+    goal_line = ("# Goal: LEARN - this account is for teaching the bot. It trades more often, tries unproven\n"
+                 "# strategies, and doesn't stop early for the consistency rule. Every Topstep rule still applies.\n"
+                 if learn else "")
     account_line = f"  account_id: {account_id}" if account_id else "  # account_id: 123456          # set by 'topstep-bot setup'"
-    return f"""# Topstep Bot configuration. Every setting has a safe default; the full list is in
+    dll_amount = PLANS[plan].daily_loss_limit
+    dll_line = (f"  topstep_daily_loss_limit: true  # you added Topstep's ${dll_amount:,.0f} Daily Loss Limit; the bot stops before it"
+                if topstep_dll else
+                f"  # topstep_daily_loss_limit: true  # set this if you added Topstep's optional ${dll_amount:,.0f} Daily Loss Limit")
+    return f"""{goal_line}# Topstep Bot configuration. Every setting has a safe default; the full list is in
 # docs/HOW_TO_USE.md (section "Full configuration reference"). Edit with Notepad; spaces matter.
 
 # paper = simulated fills on real market data (no orders sent). live = real orders on your TopstepX account.
@@ -61,6 +88,8 @@ account:
   plan: "{plan}"                # 50K, 100K or 150K
   stage: {stage}            # combine, express or practice
 {account_line}
+{dll_line}
+  payout_path: {payout_path}         # Express Funded payout path: standard (5 winning days) or consistency
   # mll_floor_override: 48500    # copy your current Max Loss Limit from the Topstep dashboard to sync the bot
 
 instrument:
@@ -73,7 +102,7 @@ instrument:
 # 'topstep-bot tune' compares them on your data.
 strategy:
   name: {strategy}
-  params: {{}}                   # override strategy defaults here, e.g. {{target_r: 1.5}}
+  params: {params}
 
 knowledge:                      # what the bot learns while it runs (drives the adaptive strategy)
   auto_train: true              # retrain on the last 60 days of history at startup when stale (daily)
@@ -83,9 +112,9 @@ risk:
   risk_per_trade: {risk_per_trade:g}          # $ lost if a trade hits its stop (position size is calculated from this)
   personal_daily_loss_limit: {daily_loss:g} # stop trading for the day after losing this much (incl. open P&L)
   max_trades_per_day: {max_trades}
-  max_consecutive_losses: 2
   mll_buffer: 200               # keep this much cushion above Topstep's Maximum Loss Limit
-  # daily_profit_target: 1200   # combine default: 40% of the profit target (protects the consistency rule)
+{profit_lines}
+  stop_at_profit_target: true   # combine: stop trading once the profit target is reached
   # max_contracts: 2            # optional extra cap (Topstep's own cap is always enforced)
   # breakeven_at_r: 1.0         # move stop to breakeven after 1R of profit
   # trail_atr_multiple: 2.0     # ATR trailing stop
@@ -202,7 +231,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         "Your [bold]username[/] is your TopstepX login name (not your email). Create an API key in the same API page."
     )
     account_id = None
-    hint_plan, hint_stage = None, None
+    hint_plan, hint_stage, hint_dll = None, None, False
     if Confirm.ask("Enter API credentials now? (No = skip; you can still backtest on sample data)", default=True):
         username = Prompt.ask("TopstepX username").strip()
         api_key = Prompt.ask("API key (input hidden)", password=True).strip()
@@ -212,6 +241,12 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
             with console.status("Testing login..."):
                 accounts = asyncio.run(_fetch_accounts(username, api_key))
             console.print(f"[green]Login OK.[/] Found {len(accounts)} active account(s).")
+            live_accounts = [a for a in accounts if not a.simulated]
+            if live_accounts:
+                names = ", ".join(a.name for a in live_accounts)
+                console.print(f"[yellow]Not offered: {names}. Topstep does not allow Live Funded Accounts to trade "
+                              "through the API.[/]")
+            accounts = [a for a in accounts if a.simulated]
             if accounts:
                 options = [(str(a.id), f"{a.name}  balance ${a.balance:,.2f}  {'can trade' if a.can_trade else 'NOT tradable'}") for a in accounts]
                 account_id = int(_pick("Which account should the bot use?", options, options[0][0]))
@@ -219,6 +254,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
 
                 chosen = next(a for a in accounts if a.id == account_id)
                 hint_plan, hint_stage = account_hints(chosen.name)
+                hint_dll = "DLL" in chosen.name.upper()
         except ProjectXError as exc:
             console.print(f"[red]Login failed:[/] {exc}\nCheck the username/API key; you can fix them in {env_path} later.")
         except Exception as exc:  # noqa: BLE001
@@ -238,6 +274,28 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         [("combine", "Trading Combine (evaluation)"), ("express", "Express Funded Account (XFA)"), ("practice", "Practice account")],
         hint_stage or "combine",
     )
+    goal = "pass"
+    if stage in ("combine", "practice"):
+        goal = _pick(
+            "What is this account for?",
+            [("pass", "Pass the Combine: protect the account and stop early on big days"),
+             ("learn", "Teach the bot: trade more often and try unproven strategies so it learns faster "
+                       "(losing this account is acceptable)")],
+            "pass",
+        )
+    dll_amount = PLANS[plan].daily_loss_limit
+    topstep_dll = stage != "practice" and Confirm.ask(
+        f"Did you add Topstep's optional Daily Loss Limit (${dll_amount:,.0f}) when you bought this account?\n"
+        "  (It's shown under Risk Settings in TopstepX. The bot always stops before it.)",
+        default=hint_dll,
+    )
+    payout_path = "standard"
+    if stage == "express":
+        payout_path = _pick(
+            "Express Funded payout path (chosen when the account was activated)",
+            [("standard", "5 winning days of $150 or more"), ("consistency", "3 trading days, best day at most 40% of profit")],
+            "standard",
+        )
 
     # ---- instrument & strategy
     symbol = _pick(
@@ -245,8 +303,13 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         [(s, f"{SPECS[s].description} - ${SPECS[s].tick_value:g}/tick") for s in SYMBOL_CHOICES],
         "MNQ",
     )
-    strategy = _pick("5. Strategy (adaptive is recommended: it trades all day and learns what works)",
-                     [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "adaptive")
+    if goal == "learn":
+        strategy = "adaptive"
+        console.print("\n[bold cyan]5. Strategy[/]\nLearning accounts use [bold]adaptive[/]: it runs every strategy and "
+                      "learns from all of them.")
+    else:
+        strategy = _pick("5. Strategy (adaptive is recommended: it trades all day and learns what works)",
+                         [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "adaptive")
 
     # ---- risk
     mll = PLANS[plan].max_loss_limit
@@ -254,8 +317,15 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         f"\n[bold cyan]6. Risk[/]\nYour Maximum Loss Limit is ${mll:,.0f}. Suggested: risk about {7.5:g}% of it per trade "
         f"and stop for the day after losing 25% of it."
     )
-    risk = FloatPrompt.ask("Dollars to risk per trade", default=round(mll * 0.075))
-    daily = FloatPrompt.ask("Personal daily loss limit ($)", default=round(mll * 0.25))
+    risk = FloatPrompt.ask("Dollars to risk per trade", default=round(mll * (0.05 if goal == "learn" else 0.075)))
+    ceiling = min(mll, dll_amount) if topstep_dll else mll
+    suggested = min(round(mll * 0.25), round(ceiling * 0.8))
+    daily = FloatPrompt.ask("Personal daily loss limit ($)", default=suggested)
+    while daily >= ceiling:
+        console.print(f"[yellow]It must be below ${ceiling:,.0f} "
+                      + ("(your Topstep Daily Loss Limit)" if topstep_dll and dll_amount < mll else "(your Maximum Loss Limit)")
+                      + ".[/]")
+        daily = FloatPrompt.ask("Personal daily loss limit ($)", default=suggested)
     if risk > daily:
         console.print("[yellow]Risk per trade is larger than the daily limit; capping it at the daily limit.[/]")
         risk = daily
@@ -272,7 +342,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
     config_path.write_text(
         render_config(
             plan=plan, stage=stage, account_id=account_id, symbol=symbol, strategy=strategy,
-            risk_per_trade=risk, daily_loss=daily,
+            risk_per_trade=risk, daily_loss=daily, topstep_dll=topstep_dll, payout_path=payout_path, goal=goal,
         ),
         encoding="utf-8",
     )

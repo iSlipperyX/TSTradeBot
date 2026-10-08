@@ -46,10 +46,10 @@ def test_mll_breach_is_inclusive_and_uses_equity():
 
 
 def test_consistency_rule():
-    assert consistency([500, 400, 300]).ok  # best 500 < 50% of 1200
+    assert consistency([500, 400, 300]).ok  # best 500 <= 55% of 1200
     status = consistency([1_600, 200, 200])
     assert not status.ok
-    assert status.required_total == 3_200
+    assert status.required_total == pytest.approx(1_600 / 0.55)
 
 
 def test_contract_caps():

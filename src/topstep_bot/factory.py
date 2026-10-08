@@ -13,6 +13,7 @@ from topstep_bot.instruments import SPECS
 from topstep_bot.journal import Journal
 from topstep_bot.models import Contract
 from topstep_bot.notify import Notifier
+from topstep_bot.risk.guards import OrderGuard
 from topstep_bot.risk.manager import RiskManager
 from topstep_bot.risk.topstep import PLANS, LossLimitTracker, starting_balance_for
 from topstep_bot.sessions import SessionSchedule
@@ -61,6 +62,7 @@ def build_core(
         strategy_name=strategy.name,
         max_risk_overrun=cfg.execution.max_risk_overrun,
     )
+    orders.guard = OrderGuard(risk.max_contracts_topstep)
     return TradingCore(
         cfg=cfg,
         contract=contract,

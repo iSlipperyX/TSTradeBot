@@ -22,10 +22,14 @@ Other systems: `pip install -e .` then run `topstep-bot`.
 
 ## Features
 
-- **Topstep-aware risk engine** — trailing Maximum Loss Limit (end-of-day, locks at the start
-  balance, checked in real time with open P&L), contract caps incl. the XFA scaling plan, flat by
-  15:10 CT, a 40% daily profit cap protecting the Combine consistency rule, plus your own daily loss
-  limit, trade count, losing-streak and cooldown limits — all restored after a restart.
+- **Topstep rules enforced in code** ([TOPSTEP_RULES.md](docs/TOPSTEP_RULES.md), checked Oct 2026) —
+  trailing Maximum Loss Limit (end-of-day, locks, checked live with open P&L), the optional Daily
+  Loss Limit, the Combine Consistency Target (55% of the profit target) and stop-at-target, position
+  limits incl. the XFA Scaling Plan and metals/energy product caps (checked again right before every
+  entry order), never holding the maximum size into news, flat by 15:10 CT, an order-rate breaker
+  (no HFT), refusal of Live Funded accounts and a VPS/remote-host warning — plus your own daily loss
+  limit, trade count, losing-streak and cooldown limits, all restored after a restart.
+  `topstep-bot rules` shows the numbers for your account.
 - **Risk-based position sizing** — every trade is sized from its stop so a stop-out costs about
   `risk_per_trade`, and never enough to breach your daily limit or approach the MLL; optional ATR
   floor on stop distance; reduced risk for the first live days (ramp-up).
@@ -70,7 +74,7 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   owner-only, confirmations for dangerous actions; the setup wizard finds your chat ID for you.
 - **Journal** (SQLite) and Telegram/Discord alerts.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
-- 190+ automated tests, including end-to-end runs against a simulated TopstepX server.
+- 240+ automated tests, including end-to-end runs against a simulated TopstepX server and a test for every Topstep rule.
 
 ## Commands
 
@@ -90,6 +94,7 @@ topstep-bot download        save history to data/
 topstep-bot flatten         EMERGENCY: close everything on the account
 topstep-bot journal         recent trades and daily results
 topstep-bot strategies      describe strategies
+topstep-bot rules           Topstep rules for your account and how the bot enforces them
 topstep-bot demo            demo backtest on synthetic data
 topstep-bot telegram-test   send a test message to your Telegram bot
 topstep-bot logs            recent errors and crash reports  (--open, --bundle for support)

@@ -3,6 +3,18 @@
 The bot's own limits are intentionally stricter than Topstep's so that a rule violation
 should never happen: every trade is sized so that hitting its stop cannot breach the
 personal daily loss limit or come within ``mll_buffer`` of the Maximum Loss Limit.
+
+Topstep rules enforced here (see docs/TOPSTEP_RULES.md):
+
+* Maximum Loss Limit - sizing keeps a stop-out above the floor plus ``mll_buffer``; open trades
+  are flattened at half the buffer.
+* Daily Loss Limit (if the account has one) - entries stop at 90% of it, open trades are
+  flattened at 95%.
+* Position size - plan cap, XFA Scaling Plan and product caps (metals/energy).
+* Combine Consistency Target - a daily profit cap keeps the best day below 55% of the profit
+  target, and an open trade is closed before the day crosses it.
+* Combine profit target - once reached, trading stops so the pass can't be given back.
+* News - Topstep's maximum position size is never held into a scheduled major release.
 """
 
 from __future__ import annotations
@@ -12,12 +24,24 @@ from datetime import date, datetime, timedelta
 
 from topstep_bot.config import AccountConfig, RiskConfig
 from topstep_bot.models import Contract
-from topstep_bot.risk.topstep import LossLimitTracker, PlanSpec, max_minis_allowed
+from topstep_bot.risk.topstep import (
+    CombineProgress,
+    LossLimitTracker,
+    PlanSpec,
+    combine_progress,
+    max_contracts_allowed,
+)
 from topstep_bot.sessions import SessionSchedule
 
 # Combine accounts default to capping each day at 40% of the profit target, which keeps
-# the best day comfortably under Topstep's 50% consistency limit.
+# the best day comfortably under Topstep's 55% Consistency Target.
 DEFAULT_COMBINE_DAILY_CAP = 0.40
+# An open Combine trade is closed once the day's P&L reaches this share of the profit target,
+# safely before the 55% line that would raise the target.
+CONSISTENCY_GUARD_FRACTION = 0.50
+# Within this long before a scheduled major release (or when the calendar is unavailable)
+# new trades use at most half of Topstep's maximum position size.
+NEWS_SIZE_GUARD = timedelta(minutes=30)
 
 
 class RiskManager:
@@ -48,6 +72,12 @@ class RiskManager:
         self.lock_reason: str | None = None
         self.paused = False
         self.risk_scale = 1.0  # < 1 during the live ramp-up period
+        # Best finished day of the Combine so far (for the Consistency Target); set by the engine.
+        self.best_prior_day = 0.0
+        # Live and paper trading turn on the guards that need a real account history or a news
+        # calendar (news position-size cap, stop at the Combine target). Backtests replay many
+        # Combine attempts from one run and have no calendar, so they leave these off.
+        self.live_guards = False
 
     # ----------------------------------------------------------------- limits
 
@@ -65,14 +95,54 @@ class RiskManager:
 
     def max_contracts_topstep(self) -> int:
         """Topstep's own position limit for today, in contracts of this instrument."""
-        minis = max_minis_allowed(self.plan, self.stage, self.day_start_balance)
-        return minis * 10 if self.contract.is_micro else minis
+        return max_contracts_allowed(self.plan, self.stage, self.day_start_balance, self.contract.root, self.contract.is_micro)
 
-    def max_contracts(self) -> int:
+    def news_size_cap(self, now: datetime | None) -> int | None:
+        """Half of Topstep's max when a scheduled major release is near (or the calendar is unknown).
+
+        Topstep prohibits taking the maximum position size into a scheduled major news event.
+        """
+        if now is None or not self.live_guards:
+            return None
+        news = self.schedule.news
+        calendar_known = news is not None and news.fetched_at is not None
+        if calendar_known and not any(now <= e.time <= now + NEWS_SIZE_GUARD for e in news.events):
+            return None
+        return max(1, self.max_contracts_topstep() // 2)
+
+    def max_contracts(self, now: datetime | None = None) -> int:
         cap = self.max_contracts_topstep()
         if self.cfg.max_contracts is not None:
             cap = min(cap, self.cfg.max_contracts)
+        news_cap = self.news_size_cap(now)
+        if news_cap is not None:
+            cap = min(cap, news_cap)
         return cap
+
+    # ------------------------------------------------------------ the Combine
+
+    def combine_progress(self, balance: float, open_pnl: float = 0.0) -> CombineProgress | None:
+        """Combine accounts: profit so far against the (consistency-adjusted) profit target."""
+        if self.stage != "combine":
+            return None
+        today = self.day_pnl(balance, open_pnl)
+        best = max(self.best_prior_day, today)
+        return combine_progress(self.plan, balance + open_pnl - self.tracker.starting_balance, best)
+
+    def _combine_reason(self, balance: float, open_pnl: float) -> str | None:
+        """Why the Combine rules say stop trading now (target reached / consistency line), or None."""
+        if self.stage != "combine":
+            return None
+        progress = self.combine_progress(balance, open_pnl)
+        if self.live_guards and self.cfg.stop_at_profit_target and progress and progress.passed:
+            return "Combine profit target reached - trading stopped to protect the pass"
+        if self.cfg.consistency_guard:
+            day = self.day_pnl(balance, open_pnl)
+            line = CONSISTENCY_GUARD_FRACTION * self.plan.profit_target
+            if day >= line:
+                return (f"today's profit ${day:,.0f} is near the Consistency Target "
+                        f"(55% of the ${self.plan.profit_target:,.0f} profit target) - done for the day")
+        return None
 
     # ------------------------------------------------------------- day state
 
@@ -119,7 +189,7 @@ class RiskManager:
         ticks = self.contract.ticks(entry - stop) + self.cfg.slippage_ticks
         return ticks * self.contract.tick_value + self.fees_round_turn
 
-    def position_size(self, entry: float, stop: float, balance: float) -> int:
+    def position_size(self, entry: float, stop: float, balance: float, now: datetime | None = None) -> int:
         rpc = self.risk_per_contract(entry, stop)
         if rpc <= 0:
             return 0
@@ -134,7 +204,7 @@ class RiskManager:
         budget = min(budgets)
         if budget <= 0:
             return 0
-        return max(0, min(math.floor(budget / rpc), self.max_contracts()))
+        return max(0, min(math.floor(budget / rpc), self.max_contracts(now)))
 
     # ---------------------------------------------------------------- checks
 
@@ -147,7 +217,7 @@ class RiskManager:
         after the daily trade count, but every loss limit and session rule still applies.
         """
         if self.paused and not manual:
-            return "paused (dashboard/Telegram)"
+            return "new trades are paused"
         if self.lock_reason:
             return self.lock_reason
         session_reason = self.schedule.entry_block_reason(now)
@@ -169,6 +239,9 @@ class RiskManager:
             return "too close to the Maximum Loss Limit"
         if self.topstep_dll and day_pnl <= -0.9 * self.topstep_dll:
             return self.lock("within 10% of Topstep daily loss limit")
+        combine = self._combine_reason(balance, open_pnl)
+        if combine:
+            return self.lock(combine)
         return None
 
     def check_open_risk(self, balance: float, open_pnl: float) -> str | None:
@@ -181,10 +254,24 @@ class RiskManager:
             return self.lock(f"equity ${equity:,.2f} is within ${self.tracker.room(equity):,.0f} of the MLL")
         if self.topstep_dll and day_pnl <= -0.95 * self.topstep_dll:
             return self.lock("about to hit Topstep daily loss limit")
+        combine = self._combine_reason(balance, open_pnl)
+        if combine:
+            return self.lock(combine)
         return None
+
+    def news_flatten_reason(self, now: datetime, position: int) -> str | None:
+        """A position at Topstep's maximum size must not be held into a scheduled major release."""
+        news = self.schedule.news
+        if position == 0 or news is None or abs(position) < self.max_contracts_topstep():
+            return None
+        event = news.releasing_soon(now)
+        if event is None:
+            return None
+        return f"Topstep's maximum position size may not be held into news ({event.label})"
 
     def snapshot(self, balance: float, open_pnl: float) -> dict:
         equity = balance + open_pnl
+        progress = self.combine_progress(balance, open_pnl)
         return {
             "day": self.day.isoformat() if self.day else None,
             "day_pnl": round(self.day_pnl(balance, open_pnl), 2),
@@ -194,6 +281,16 @@ class RiskManager:
             "mll_size": self.plan.max_loss_limit,
             "consecutive_losses": self.consecutive_losses,
             "max_contracts": self.max_contracts(),
+            "topstep_max_contracts": self.max_contracts_topstep(),
+            "topstep_dll": self.topstep_dll,
+            "combine": None if progress is None else {
+                "profit_target": progress.profit_target,
+                "remaining": round(progress.remaining, 2),
+                "best_day": round(progress.best_day, 2),
+                "target_raised": progress.target_raised,
+                "passed": progress.passed,
+                "summary": progress.describe(),
+            },
             "mll_floor": round(self.tracker.floor, 2),
             "mll_room": round(self.tracker.room(equity), 2),
             "daily_loss_limit": self.cfg.personal_daily_loss_limit,
