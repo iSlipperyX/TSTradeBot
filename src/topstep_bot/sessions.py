@@ -127,13 +127,15 @@ class SessionSchedule:
                 return day
         return day
 
-    def clock(self, now: datetime) -> dict:
+    def clock(self, now: datetime, rth: tuple[time, time] = (time(8, 30), time(15, 0)), symbol: str = "") -> dict:
         """When the market and the bot's day open and close next, for the dashboard's countdowns.
 
         Every time comes from the same rules the bot trades by: the Globex session (17:00-16:00 CT),
         the entry window and flatten time in config.yaml, Topstep's 15:10 CT flat-by deadline, and
         ``no_trade_dates`` (holidays) / ``trade_weekdays`` for the days the bot doesn't trade.
-        Returns ISO times in UTC plus the Chicago wall-clock time of each event.
+        ``rth`` is the traded instrument's regular hours (index futures follow the stock market,
+        08:30-15:00 CT; crude oil and gold have their own). Returns ISO times in UTC plus the
+        Chicago wall-clock time of each event.
         """
         from topstep_bot.risk.topstep import FLAT_BY
 
@@ -155,14 +157,15 @@ class SessionSchedule:
             events.append(event("market", "Market opens", self.next_market_open(now), "CME Globex session (17:00-16:00 CT)"))
 
         rth_day = day if weekday(day) else self._next_day(day, weekday)
-        rth_open, rth_close = self.at(rth_day, time(8, 30)), self.at(rth_day, time(15, 0))
+        rth_open, rth_close = self.at(rth_day, rth[0]), self.at(rth_day, rth[1])
         if local >= rth_close:
             rth_day = self._next_day(rth_day, weekday)
-            rth_open, rth_close = self.at(rth_day, time(8, 30)), self.at(rth_day, time(15, 0))
+            rth_open, rth_close = self.at(rth_day, rth[0]), self.at(rth_day, rth[1])
+        hours = f"{(symbol + ' ') if symbol else ''}regular hours {rth[0]:%H:%M}-{rth[1]:%H:%M} CT"
         if local < rth_open:
-            events.append(event("rth", "Regular hours open", rth_open, "US stock market open (08:30-15:00 CT), the busiest hours"))
+            events.append(event("rth", "Regular hours open", rth_open, f"{hours}, the busiest hours"))
         else:
-            events.append(event("rth", "Regular hours close", rth_close, "US stock market close (08:30-15:00 CT)"))
+            events.append(event("rth", "Regular hours close", rth_close, hours))
 
         trade_day = day if self.is_trade_day(day) else self._next_day(day, self.is_trade_day)
         start, last = self.entry_window(trade_day)

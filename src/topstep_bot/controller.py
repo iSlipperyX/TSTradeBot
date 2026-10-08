@@ -443,8 +443,20 @@ class Controller:
             "log": data.get("log") if data else None,
             "events": list(self.events)[:30],
             # market / trading-day countdowns: computed here so they show even while the bot is stopped
-            "clock": SessionSchedule(self.cfg.session).clock(datetime.now(timezone.utc)),
+            "clock": self._clock(),
         }
+
+    def _clock(self) -> dict:
+        from topstep_bot.instruments import get_spec
+        from topstep_bot.strategies.base import parse_hhmm
+
+        symbol = self.cfg.instrument.symbol
+        try:
+            spec = get_spec(symbol)
+            rth = (parse_hhmm(spec.rth_open), parse_hhmm(spec.rth_close))
+        except KeyError:  # a symbol outside the built-in table: index-futures hours
+            rth = (parse_hhmm("08:30"), parse_hhmm("15:00"))
+        return SessionSchedule(self.cfg.session).clock(datetime.now(timezone.utc), rth, symbol.upper())
 
     def _logs(self, _: Request) -> dict:
         log_dir = Path(self.cfg.log_dir)

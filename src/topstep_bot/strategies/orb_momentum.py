@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections import deque
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Strategy, StrategyContext
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext
 
 
 class OpeningRangeMomentum(Strategy):
@@ -120,6 +120,37 @@ class OpeningRangeMomentum(Strategy):
         candle = "up" if long else "down"
         return Signal("long" if long else "short", stop, target,
                       f"opening {self.p['range_minutes']}-min candle closed {candle} ({self.range_open} -> {bar.close})")
+
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        minutes = self.rth_minutes(now)
+        end = self.p["range_minutes"]
+        if self.decided or minutes < -60 or minutes >= end:
+            return []
+        decide_at = self.rth_time(end)
+        out = []
+        for side in ("long", "short"):
+            if not self.allows(side):
+                continue
+            long = side == "long"
+            started = self.range_open is not None and price is not None
+            moving = started and (price > self.range_open if long else price < self.range_open)
+            conds = [(f"Regular hours open ({self.rth_open:%H:%M} CT)", minutes >= 0),
+                     (f"Opening {end}-min candle closes {'up' if long else 'down'}"
+                      + (f" (opened {self.fmt(self.range_open)})" if self.range_open is not None else ""), moving)]
+            stop = None
+            ref = price
+            if ref is not None:
+                if self.p["stop_mode"] == "range" and self.range_low is not None:
+                    stop = self.range_low if long else self.range_high
+                elif self.p["stop_mode"] == "atr" and self.daily_atr is not None:
+                    d = self.p["atr_stop_frac"] * self.daily_atr
+                    stop = ref - d if long else ref + d
+            target = None
+            if stop is not None and ref is not None and self.p["target_r"] > 0:
+                risk = abs(ref - stop)
+                target = ref + self.p["target_r"] * risk if long else ref - self.p["target_r"] * risk
+            out.append(Setup(side, conds, None, stop, target, f"decides at the {decide_at} CT close"))
+        return out
 
     def state(self) -> dict:
         return {"opening_high": self.range_high, "opening_low": self.range_low, "daily_atr": self.daily_atr}

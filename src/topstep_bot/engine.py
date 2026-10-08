@@ -29,6 +29,7 @@ from topstep_bot.notify import Notifier
 from topstep_bot.risk.manager import RiskManager
 from topstep_bot.risk.topstep import LossLimitTracker
 from topstep_bot.sessions import SessionSchedule
+from topstep_bot.setups import SetupTracker
 from topstep_bot.strategies.base import Strategy, StrategyContext
 
 log = logging.getLogger(__name__)
@@ -121,6 +122,7 @@ class TradingCore:
         self.knowledge: KnowledgeBase | None = None  # what has worked when; drives the adaptive strategy
         self.remote: RemoteControl | None = None  # settings/trades from the dashboard and Telegram
         self.manual = ManualTrading(self)  # trades you open yourself from the dashboard's trade ticket
+        self.setups = SetupTracker(self)  # the trades every strategy is building toward (dashboard)
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
@@ -251,6 +253,7 @@ class TradingCore:
                     await self.orders.exit(value)
                 elif action == "stop":
                     await self.orders.update_stop(value)
+        self.setups.on_bar_closed(bar.ts + self.tf, bar.close)
         if self.remote:
             self.remote.on_flat()
 
@@ -523,6 +526,7 @@ class TradingCore:
                               "point_value": self.contract.point_value, "decimals": self.contract.price_decimals,
                               "atr": round(self.atr.value, 4) if self.atr.value else None},
             "manual_block": self.manual.block_reason(),  # why the trade ticket can't place a trade now
+            "setups": self.setups.view(),
             "last_trade": self.orders.last_trade.to_dict() if self.orders.last_trade else None,
             "risk": self.risk.snapshot(self.balance, open_pnl),
             "strategy_state": {

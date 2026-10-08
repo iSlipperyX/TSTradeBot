@@ -145,6 +145,31 @@ th.now, td.now { background:var(--surface2); }
 .idealine { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:12.5px; flex-wrap:wrap; }
 .idealine .grow { flex:1; min-width:140px; }
 
+/* setups (what the bot is getting ready to trade) */
+.setups { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
+.setup { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--surface2); min-width:0; }
+.setup.bot { border-color:var(--accent); }
+.setup.ready { border-color:var(--warn); box-shadow:0 0 0 1px var(--warn) inset; }
+.setup .t { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-weight:650; }
+.setup .t .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.setup .t > span:last-child { white-space:nowrap; }
+.tag.blocked { border-color:var(--warn); color:var(--warn); }
+.setup .prog { display:flex; align-items:center; gap:8px; margin:6px 0 4px; font-size:11.5px; color:var(--text2); }
+.setup .prog .track { flex:1; height:5px; }
+.conds { list-style:none; margin:4px 0 8px; padding:0; font-size:12.5px; }
+.conds li { padding:2px 0 2px 20px; position:relative; }
+.conds li::before { position:absolute; left:2px; top:2px; content:"○"; color:var(--muted); }
+.conds li.met::before { content:"✔"; color:var(--pos); }
+.conds li:not(.met) { color:var(--text2); }
+.setup dl { font-size:12.5px; }
+.setup .why { color:var(--muted); font-size:11.5px; margin-top:6px; }
+.setup .blk { color:var(--warn); font-size:12px; margin-top:6px; }
+.setupnote { margin:0 0 10px; padding:8px 12px; border-radius:10px; background:var(--warnbg); color:var(--text); font-size:12.5px; }
+.evkind { font-size:11px; font-weight:700; padding:0 6px; border-radius:999px; border:1px solid var(--border); white-space:nowrap; text-transform:uppercase; letter-spacing:.03em; }
+.evkind.forming { color:var(--accent); border-color:var(--accent); } .evkind.fired { color:var(--pos); border-color:var(--pos); }
+.evkind.cancelled { color:var(--muted); }
+.feed .evkind { align-self:flex-start; flex:none; line-height:17px; }
+
 /* settings */
 .setting { display:grid; grid-template-columns:1fr 160px 70px; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); }
 .setting .name { font-size:13px; font-weight:600; } .setting .name small { display:block; color:var(--muted); font-size:11.5px; font-weight:400; }
@@ -231,6 +256,17 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
         <h2 style="margin-top:16px">Strategy</h2>
         <dl id="strategy"></dl>
       </div>
+    </div>
+    <div class="panel" style="margin-top:12px" id="setups-panel">
+      <div class="row"><h2 style="margin:0">Getting ready to trade</h2><span class="spacer"></span>
+        <span class="meta" id="setups-meta"></span></div>
+      <p class="hint" style="margin:4px 0 10px">The trades each strategy is building toward right now, checked against the live price
+        as if the current bar closed here. ✔ = condition met, ○ = still waiting. Nothing here places a trade.</p>
+      <div id="setups-block" class="setupnote" hidden></div>
+      <div id="setups" class="setups"></div>
+      <div id="setups-waiting" class="hint"></div>
+      <h3>Setup history</h3>
+      <div class="feed" id="setups-history" style="max-height:220px"></div>
     </div>
     <div class="panel" style="margin-top:12px">
       <h2>Today's trades</h2>
@@ -574,6 +610,53 @@ function renderOverview(b) {
   $("activity").innerHTML = (b.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(11, 19))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">Nothing yet.</div>`;
 }
 
+// ---- setups: what each strategy is building toward (Overview)
+function renderSetups(b) {
+  const box = $("setups"), sv = b && b.setups;
+  if (!sv) {
+    box.innerHTML = `<div class="empty">${b ? "No setup data yet." : "Start the bot to watch trades form."}</div>`;
+    ["setups-meta", "setups-waiting"].forEach(id => $(id).textContent = ""); $("setups-block").hidden = true;
+    $("setups-history").innerHTML = ""; return;
+  }
+  const bot = sv.items.filter(i => i.role === "bot").length;
+  $("setups-meta").textContent = sv.items.length ? `${plural(sv.items.length, "setup")} forming · ${bot} the bot would trade` : "";
+  $("setups-block").hidden = !sv.blocked;
+  $("setups-block").textContent = sv.blocked ? `Even if one fires now, the bot won't enter: ${sv.blocked}.` : "";
+  box.innerHTML = sv.items.map(i => {
+    const ready = i.met === i.total;
+    const p = i.plan || {};
+    const entry = i.entry_is_level ? `${px(i.entry)} <span class="muted">trigger</span>` : `~${px(i.entry_ref)} <span class="muted">at the close</span>`;
+    const size = p.size ? `${p.size} × ${esc(i.symbol)} · ${money0(p.risk_usd)} risk${p.rr ? ` · ${p.rr}R target` : ""}`
+      : `<span class="muted">${i.stop == null ? "sized when it fires" : "–"}</span>`;
+    const skip = p.problem && i.stop != null ? p.problem : null;
+    return `<div class="setup${i.role === "bot" ? " bot" : ""}${ready ? " ready" : ""}">
+      <div class="t"><span class="name" title="${esc(i.title)}">${esc(i.title)}</span>
+        <span class="side-${esc(i.side)}">${esc(i.side)} ${esc(i.symbol)}</span></div>
+      <div class="prog"><span class="tag ${i.role === "bot" ? "auto" : ""}" title="${i.role === "bot" ? "The auto-traded strategy: the bot places this trade when it fires" : "Shown as an idea when it fires; the bot doesn't trade it"}">${i.role === "bot" ? "bot trades it" : "idea only"}</span>
+        <div class="track"><div class="fill" style="width:${Math.round(i.progress * 100)}%;background:${css(ready ? "--warn" : "--accent")}"></div></div>
+        <span class="num">${i.met}/${i.total}</span>${i.blocked ? `<span class="tag blocked" title="${esc(i.blocked)}">blocked now</span>` : ""}</div>
+      <ul class="conds">${i.conditions.map(c => `<li class="${c.met ? "met" : ""}">${esc(c.text)}</li>`).join("")}</ul>
+      <dl><dt>Entry</dt><dd>${entry}</dd><dt>Stop</dt><dd>${i.stop != null ? px(p.stop ?? i.stop) : "set when it fires"}</dd>
+        <dt>Target</dt><dd>${(p.target ?? i.target) != null ? px(p.target ?? i.target) : "trail / session end"}</dd><dt>Size</dt><dd>${size}</dd></dl>
+      ${skip ? `<div class="blk">⚠ The bot would skip it: ${esc(skip)}</div>` : ""}
+      ${i.note ? `<div class="why">${esc(i.note)}</div>` : ""}
+      ${i.stop != null && !skip && !(b.manual_block) ? `<div class="row" style="margin-top:8px"><button class="small" data-setup="${esc(i.key)}"
+        title="Fill the trade ticket with this setup's side, stop and target. A manual trade enters at the market price now, not at the setup's trigger.">Open in trade ticket</button></div>` : ""}
+    </div>`; }).join("") || `<div class="empty">No setups forming right now. ${sv.waiting.length ? "Strategies are watching for their first condition." : "Outside the strategies' trading hours, or each has already traded today."}</div>`;
+  box.querySelectorAll("[data-setup]").forEach(x => x.onclick = () => {
+    const i = sv.items.find(y => y.key === x.dataset.setup); if (!i) return;
+    openTab("trade"); pickSide(i.side === "LONG" ? "long" : "short");
+    tk("stop").value = i.plan && i.plan.stop != null ? i.plan.stop : i.stop;
+    const target = i.plan && i.plan.target != null ? i.plan.target : i.target;
+    if (target != null) tk("target").value = target;
+    tk("note").value = `From the ${i.title} setup`; scheduleTicket(0);
+  });
+  $("setups-waiting").textContent = sv.waiting.length ? `Also watching (no condition met yet): ${sv.waiting.join(", ")}.` : "";
+  $("setups-history").innerHTML = (sv.events || []).map(e => `<div><time>${esc(e.time)}</time><span class="evkind ${esc(e.kind)}">${esc(e.kind)}</span>
+    <span><b>${esc(e.title)}</b> <span class="side-${esc(e.side)}">${esc(e.side)}</span>: ${esc(e.text.replace(/^(Forming|Fired|Cancelled):\s*/, ""))}</span></div>`).join("")
+    || `<div class="empty">Nothing yet. Each closed bar notes setups that start forming, fire or get cancelled.</div>`;
+}
+
 // ---- trade ticket (Trade tab)
 const T = {side: null, noTarget: false, seq: 0, data: null, timer: null, busy: false};
 const tk = id => $("tk-" + id);
@@ -858,7 +941,7 @@ async function loadLogs() {
 
 function render(s) {
   S = s;
-  renderTop(s); renderClock(s.clock); renderOverview(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
+  renderTop(s); renderClock(s.clock); renderOverview(s.bot); renderSetups(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
 }
 async function refresh() {

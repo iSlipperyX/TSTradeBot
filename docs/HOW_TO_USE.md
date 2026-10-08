@@ -394,8 +394,9 @@ that file.
 - **Market clock** (just under the top bar, works even while the bot is stopped): whether the market
   is open, the time in Chicago, and live countdowns to the next:
   - **Market opens / closes:** the CME Globex session, 17:00–16:00 CT, closed Friday 16:00 to Sunday 17:00.
-  - **Regular hours open / close:** 08:30–15:00 CT, the US stock market's hours and the busiest part
-    of the day for index futures.
+  - **Regular hours open / close:** your contract's regular trading hours, the busiest part of the
+    day. For index futures (ES, NQ, MES, MNQ, …) that's 08:30–15:00 CT, the US stock market's hours;
+    crude oil (CL, MCL) is 08:00–13:30 CT and gold (GC, MGC) 07:20–12:30 CT.
   - **Bot starts trading / Last new entry:** your `session.trade_start` and `last_entry`.
   - **Bot closes all trades:** your `session.flatten_at`.
   - **Topstep flat-by:** 15:10 CT, Topstep's deadline (it starts closing positions at 15:08).
@@ -424,6 +425,10 @@ that file.
   - **Stop to breakeven** moves the stop to the entry price. It's available once price is at least
     2 ticks beyond the entry, and the stop only ever moves in your favour.
   - **New manual trade** opens the Trade tab.
+- **Getting ready to trade:** the trades each strategy is building toward right now, which of their
+  conditions are met, the planned entry, stop, target and size, and whether a rule would block them.
+  Below it, a history of setups forming, firing and being cancelled. See
+  [Watching the bot get ready to trade](#watching-the-bot-get-ready-to-trade) below.
 - Strategy levels, the time-of-day slot and volatility regime, and — with the adaptive strategy —
   which sub-strategy is managing the trade and the last signal it took or skipped.
 - **Today's trades:** every closed trade today, who opened it, entry, exit, P&L, R and how it ended.
@@ -508,6 +513,43 @@ the Knowledge tab show your record next to the strategies', so over a Combine yo
 own trades work and where they don't. Like the bot's real trades, they count double and are never
 dropped by retraining. Trades closed by a shutdown, halt or daily restart aren't counted (the
 ending says nothing about the trade).
+
+### Watching the bot get ready to trade
+
+The **Getting ready to trade** section of the Overview tab shows every trade a strategy is building
+toward, before it happens. Each card is one setup: a strategy, a side and your contract.
+
+- **bot trades it** (blue border) means the auto-traded strategy places this trade when it fires.
+  With the adaptive strategy that's any sub-strategy the knowledge base allows right now; the others
+  show **idea only**, and when they fire they appear as ideas on the Ideas tab instead.
+- **The checklist** is the strategy's own entry rules in plain words. ✔ is met, ○ is still waiting.
+  They're checked against the live price as if the current bar closed there, so a card can tick and
+  untick as the price moves. Strategies only act on closed bars, so nothing happens until the bar
+  actually closes. The bar shows how many conditions are met; a card whose conditions are all met
+  turns amber, meaning it fires if the bar closes here.
+- **Entry** is the trigger price when the setup waits for a level ("a bar closes above the range high
+  (21,050.25)"), or *~price at the close* when it waits for a time or an event.
+- **Stop, Target and Size** are what the bot would use if it fired now, sized by your risk rules exactly
+  like a real trade. *Set when it fires* means the stop depends on the bar that triggers it.
+- **Blocked now** and the amber note above the cards mean the bot wouldn't enter even if the setup
+  fired: a trade is already open, it's outside your trading window, a loss limit is close, the bot is
+  halted and so on. **The bot would skip it** means the setup itself can't be traded as it stands,
+  for example because 1 contract would risk more than your risk per trade.
+- **Open in trade ticket** fills the Trade tab with the setup's side, stop and target so you can take
+  it yourself. Careful: a manual trade enters at the market price now, not at the setup's trigger, and
+  the ticket re-checks every rule before you place it.
+- **Also watching** lists setups that haven't met a single condition yet.
+
+**Setup history** follows each setup through the day, one line per closed bar where something changed:
+
+- **Forming:** half or more of its conditions are met, with the next one it's waiting for.
+- **Fired:** the strategy signalled. It says whether the bot placed the trade, skipped it (and why),
+  or posted it as an idea.
+- **Cancelled:** it fell apart before firing (a condition stopped being true), its time window
+  closed, or the strategy took the other side instead.
+
+Nothing in this section places or blocks a trade; it shows what the strategies and your rules are
+already doing. A setup that's forming is not a prediction that it will fire, or that it would win.
 
 ---
 
@@ -1610,7 +1652,9 @@ Rules of thumb:
 - Use the streaming indicators in `topstep_bot/indicators.py` so backtests and live trading behave
   identically.
 - Optional hooks: `on_new_day(day)` to reset daily state, `trailing_stop(bar, ctx)` to move the
-  stop, `state()` to show values on the dashboard, `warmup_days` if it needs more history.
+  stop, `state()` to show values on the dashboard, `setups(price, now)` to list the entries it's
+  building toward for the dashboard's Getting ready to trade section (see `orb.py` for an example),
+  `warmup_days` if it needs more history.
 - Once registered, the `adaptive` strategy runs it too and the knowledge base starts tracking it.
 - To let `tune` tune it, add a list of candidate settings for it to `GRIDS` in
   `topstep_bot/training.py` — keep it small (a dozen or two combinations).

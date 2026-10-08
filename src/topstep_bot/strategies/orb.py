@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 
 from topstep_bot.indicators import ATR
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Strategy, StrategyContext, parse_hhmm
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext, parse_hhmm
 
 
 class OpeningRangeBreakout(Strategy):
@@ -92,6 +92,37 @@ class OpeningRangeBreakout(Strategy):
             self.traded.add("short")
             return Signal("short", stop, target, f"close {bar.close} broke opening-range low {self.low}")
         return None
+
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        if not self.in_rth(now) or now.time() > self.cutoff or self.trades >= self.p["max_trades_per_day"]:
+            return []
+        if self.range_ready and not self.range_valid:
+            return []  # the opening range was too narrow or too wide: no trade today
+        buf = self.tick(self.p["buffer_ticks"])
+        range_end = self.rth_time(self.p["range_minutes"])
+        out = []
+        for side in ("long", "short"):
+            if side in self.traded or not self.allows(side):
+                continue
+            long = side == "long"
+            conds = [(f"Opening range set ({self.rth_open:%H:%M}-{range_end} CT)", self.range_ready)]
+            entry = stop = target = None
+            if self.range_ready:
+                entry = self.high + buf if long else self.low - buf
+                hit = price is not None and (price > entry if long else price < entry)
+                conds.append((f"A bar closes {'above the range high' if long else 'below the range low'} ({self.fmt(entry)})", hit))
+                mid = (self.high + self.low) / 2
+                stop = {"middle": mid, "opposite": self.low - buf if long else self.high + buf}.get(self.p["stop_mode"])
+                if stop is None and self.atr.value is not None:
+                    stop = entry - self.p["atr_stop_mult"] * self.atr.value if long else entry + self.p["atr_stop_mult"] * self.atr.value
+                if stop is not None:
+                    target = entry + self.p["target_r"] * (entry - stop) if long else entry - self.p["target_r"] * (stop - entry)
+            else:
+                conds.append(("A bar closes beyond the range", False))
+            note = (f"range forms until {range_end} CT" if not self.range_ready
+                    else f"enters on the first close beyond the range, until {self.cutoff:%H:%M} CT")
+            out.append(Setup(side, conds, entry, stop, target, note))
+        return out
 
     def state(self) -> dict:
         return {"range_high": self.high, "range_low": self.low, "range_ready": self.range_ready}

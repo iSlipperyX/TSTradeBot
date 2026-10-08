@@ -128,5 +128,7 @@ def test_market_clock_counts_down_to_the_next_open_and_close():
     assert e["market"] == ("Market opens", "Sun 17:00 CT") and e["entries"][1] == "Mon 08:30 CT"
     c, e = events(2026, 11, 26, 10, 0)  # a no-trade date (holiday)
     assert c["holiday"] and not c["in_entry_window"] and e["entries"] == ("Bot starts trading", "Fri 08:30 CT")
+    oil = {e["key"]: e for e in s.clock(ct(2026, 10, 8, 9, 0), (time(8, 0), time(13, 30)), "CL")["events"]}
+    assert oil["rth"]["local"] == "13:30 CT" and "CL regular hours 08:00-13:30" in oil["rth"]["detail"]
     first = s.clock(ct(2026, 10, 8, 9, 0))["events"][0]["at"]
     assert first.endswith("+00:00") and first.startswith("2026-10-08T21:00")  # 16:00 CT in UTC

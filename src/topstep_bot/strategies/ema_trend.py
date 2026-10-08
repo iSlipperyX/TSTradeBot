@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from topstep_bot.indicators import ATR, EMA
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Strategy, StrategyContext
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext
 
 
 class EmaTrend(Strategy):
@@ -63,6 +65,23 @@ class EmaTrend(Strategy):
         elif ctx.position < 0 and crossed_up:
             return Signal("exit", reason="bullish EMA cross")
         return None
+
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        fast, slow, trend, atr = self.fast.value, self.slow.value, self.trend.value, self.atr.value
+        if None in (fast, slow, trend, atr) or price is None or (self.p["rth_only"] and not self.in_rth(now)):
+            return []
+        out = []
+        for side in ("long", "short"):
+            long = side == "long"
+            if not self.allows(side) or (fast > slow if long else fast < slow):
+                continue  # already crossed this way: it has to cross back before it can signal again
+            word = "above" if long else "below"
+            conds = [(f"Price {word} the {self.p['trend']}-bar trend EMA ({self.fmt(trend)})", price > trend if long else price < trend),
+                     (f"{self.p['fast']}-EMA crosses {word} the {self.p['slow']}-EMA ({abs(slow - fast):.2f} points apart)", False)]
+            stop = price - self.p["atr_stop_mult"] * atr if long else price + self.p["atr_stop_mult"] * atr
+            target = price + self.p["target_r"] * (price - stop) if long else price - self.p["target_r"] * (stop - price)
+            out.append(Setup(side, conds, None, stop, target, "enters on the bar that completes the cross"))
+        return out
 
     def state(self) -> dict:
         return {"ema_fast": self.fast.value, "ema_slow": self.slow.value, "ema_trend": self.trend.value}

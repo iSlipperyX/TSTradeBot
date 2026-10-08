@@ -65,6 +65,9 @@ Other systems: `pip install -e .` then run `topstep-bot`.
 - **Manual trades from the dashboard** — a trade ticket that suggests a stop, target and size, checks
   every Topstep and risk rule first, shows what the knowledge base says, and records your results so the
   bot learns from them too.
+- **Getting ready to trade** — watch each strategy build toward its next trade: which entry conditions
+  are met, the planned entry/stop/target and size, whether a rule would block it, and a history of
+  setups forming, firing and being cancelled.
 - **Recommended trades** — every strategy's signals on the dashboard and in Telegram, sized with your
   risk rules, tracked to a result; take any of them with one tap (re-priced, never oversized).
 - **Knowledge tab** — what works when, per strategy, time of day and regime, with a Retrain button;
@@ -127,6 +130,7 @@ src/topstep_bot/
   preflight.py    same-day readiness checks;  news.py  economic calendar
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram
   manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
+  setups.py       the trades each strategy is building toward (dashboard's Getting ready to trade)
   telegram_control.py  Telegram bot remote control
   cli.py, wizard.py
 tests/            pytest suite (run: pytest)
