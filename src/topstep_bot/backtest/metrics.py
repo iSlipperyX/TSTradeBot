@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from topstep_bot.engine import DayRecord
 from topstep_bot.execution import ManagedTrade
-from topstep_bot.risk.topstep import PlanSpec, consistency
+from topstep_bot.risk.topstep import PlanSpec, combine_progress
 
 
 def compute_metrics(trades: list[ManagedTrade], days: list[DayRecord], starting_balance: float) -> dict:
@@ -88,7 +88,7 @@ def simulate_combine(days: list[DayRecord], plan: PlanSpec, start_index: int = 0
             traded.append(d.pnl)
         floor = max(floor, min(balance - plan.max_loss_limit, size))
         profit = balance - size
-        if profit >= plan.profit_target and consistency(traded).ok:
+        if combine_progress(plan, profit, max(traded, default=0.0)).passed:
             return CombineOutcome("passed", start_index, n, profit, f"target reached on {d.day}")
     return CombineOutcome("incomplete", start_index, len(days) - start_index, balance - size, "data ran out")
 

@@ -72,8 +72,28 @@ class AccountConfig(_Section):
     )
     topstep_daily_loss_limit: float | None = Field(
         default=None,
-        description="Only if your account has a Topstep DLL (legacy platforms / opt-in). New TopstepX accounts have none.",
+        description="The optional Topstep Daily Loss Limit, if you added it at checkout: true (your plan's amount: "
+        "$1,000 / $2,000 / $3,000) or a dollar amount. Leave empty if your account has none.",
     )
+    payout_path: Literal["standard", "consistency"] = Field(
+        default="standard",
+        description="Express Funded Account payout path chosen at activation (only used for progress reports).",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _dll_from_plan(cls, data: Any) -> Any:
+        """``topstep_daily_loss_limit: true`` means "the DLL that comes with my plan"."""
+        if isinstance(data, dict) and isinstance(data.get("topstep_daily_loss_limit"), bool):
+            data = dict(data)
+            if data["topstep_daily_loss_limit"]:
+                from topstep_bot.risk.topstep import PLANS
+
+                plan = PLANS.get(str(data.get("plan", "50K")).upper())
+                data["topstep_daily_loss_limit"] = plan.daily_loss_limit if plan else None
+            else:
+                data["topstep_daily_loss_limit"] = None
+        return data
 
 
 class InstrumentConfig(_Section):
@@ -114,6 +134,14 @@ class RiskConfig(_Section):
     slippage_ticks: float = Field(default=1.0, ge=0, description="Assumed slippage for paper fills and backtests.")
     ramp_up_days: int = Field(default=3, ge=0, description="First N live trading days use reduced risk.")
     ramp_up_risk_fraction: float = Field(default=0.5, gt=0, le=1)
+    consistency_guard: bool = Field(
+        default=True,
+        description="Combine: close out for the day before today's profit reaches 55% of the profit target "
+        "(Topstep's Consistency Target would otherwise raise the target).",
+    )
+    stop_at_profit_target: bool = Field(
+        default=True, description="Combine: stop trading once the profit target is reached, so the pass can't be given back."
+    )
 
 
 class SessionConfig(_Section):
@@ -290,6 +318,30 @@ class BotConfig(_Section):
         symbol = self.instrument.symbol
         contract = offline_contract(symbol) if symbol in SPECS else Contract("CHECK", symbol, 0.25, 1.0, root=symbol)
         create_strategy(self.strategy.name, self.strategy.params, contract, self.instrument.timeframe_minutes)
+        return self
+
+    @model_validator(mode="after")
+    def _check_topstep_rules(self) -> BotConfig:
+        """Settings that would let the bot break a Topstep rule are refused at load time."""
+        from topstep_bot.risk.topstep import PLANS, product_limit
+
+        plan = PLANS[self.account.plan]
+        risk = self.risk
+        problems = []
+        if risk.personal_daily_loss_limit >= plan.max_loss_limit:
+            problems.append(f"risk.personal_daily_loss_limit (${risk.personal_daily_loss_limit:,.0f}) must be below the "
+                            f"{plan.name} Maximum Loss Limit (${plan.max_loss_limit:,.0f})")
+        dll = self.account.topstep_daily_loss_limit
+        if dll is not None and risk.personal_daily_loss_limit >= dll:
+            problems.append(f"risk.personal_daily_loss_limit (${risk.personal_daily_loss_limit:,.0f}) must be below your "
+                            f"Topstep Daily Loss Limit (${dll:,.0f})")
+        if risk.risk_per_trade > risk.personal_daily_loss_limit:
+            problems.append(f"risk.risk_per_trade (${risk.risk_per_trade:,.0f}) can't be more than "
+                            f"risk.personal_daily_loss_limit (${risk.personal_daily_loss_limit:,.0f})")
+        if product_limit(self.instrument.symbol, plan) == 0:
+            problems.append(f"Topstep does not currently allow trading {self.instrument.symbol}")
+        if problems:
+            raise ValueError("; ".join(problems))
         return self
 
     @property
