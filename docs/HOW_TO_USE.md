@@ -233,6 +233,10 @@ that loses money live: with enough combinations, something always looks great on
    on them with a profit factor of at least 1.05 and enough trades to judge. The settings it
    recommends are the ones chosen on the most recent window.
 
+One honest caveat: picking the best of several strategies by their out-of-sample results flatters
+the winner a little, so expect live results to be somewhat below the report's numbers even when
+nothing else changes.
+
 ### Run it
 
 Menu **5**, or:
@@ -518,6 +522,16 @@ or at `atr_stop_frac` × the average daily range (`stop_mode: atr`, as in the au
 follow-up); the target is `target_r` × the risk (10 by default — most trades are simply held until
 the session flatten time). One trade a day.
 
+### `late_day_momentum` — Late-Day Momentum (first & last half hour)
+
+Adapted from Gao, Han, Li & Zhou (2018), *"Market intraday momentum"*, Journal of Financial
+Economics. The market's move from the previous session's close to 9:00 CT (the end of the first
+half hour) tends to continue in the last half hour of the day. At `entry_time` (14:25 CT) the bot
+enters in the direction of that morning move — optionally only if the move since 14:00 agrees
+(`confirm_with_12th`) and the morning move was at least `min_move_pct` — with a safety stop
+`stop_atr` × ATR away, and exits at the session flatten time. One trade a day, late in the session,
+so it complements the opening strategies.
+
 ### `orb` — Opening Range Breakout
 
 Marks the high and low of the first `range_minutes` after the 8:30 CT open. The first bar that
@@ -781,7 +795,7 @@ instrument:
   timeframe_minutes: 5         # 1-60
 
 strategy:
-  name: orb                    # orb | orb_momentum | noise_breakout | ema_trend | vwap_reversion
+  name: orb                    # orb | orb_momentum | noise_breakout | late_day_momentum | ema_trend | vwap_reversion
   params: {}
 
 risk:

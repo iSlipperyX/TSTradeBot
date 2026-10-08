@@ -215,6 +215,31 @@ def test_train_end_to_end_on_synthetic_data(monkeypatch):
     assert report.to_dict()["folds"][0]["train"][0] <= report.to_dict()["folds"][0]["test"][0]
 
 
+def test_training_report_html_and_cli_save(tmp_path, monkeypatch, restore_logging):
+    from topstep_bot import cli
+    from topstep_bot.backtest.train_report import build_training_report
+
+    monkeypatch.setitem(__import__("topstep_bot.training").training.GRIDS, "orb_momentum", [{"target_r": 0}])
+    cfg = BotConfig.model_validate({"strategy": {"name": "orb"}})
+    bars = synthetic_bars("MNQ", days=100, seed=3)
+    report = train(cfg, bars, offline_contract("MNQ"), strategies=["orb_momentum"], folds=2, workers=1)
+    page = build_training_report(report, "MNQ", 5)
+    assert page.startswith("<!doctype html>") and "orb_momentum" in page and "Settings chosen in each window" in page
+    assert "{" not in page.split("<script>")[0].split("</style>")[1]  # no unformatted template fields
+
+    # The CLI saves the recommendation (when there is one) into config.yaml, keeping a backup.
+    (tmp_path / "config.yaml").write_text(CONFIG, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    rec = report.results[0]
+    rec.final = Candidate("orb_momentum", (("target_r", 0),))
+    report.recommended = rec
+    monkeypatch.setattr("topstep_bot.training.train", lambda *a, **k: report)
+    monkeypatch.setattr(cli, "_history", lambda cfg, args, allow_synthetic=True: (bars, False))
+    assert cli.main(["-c", "config.yaml", "train", "--save", "--no-open", "--workers", "1"]) == 0
+    assert load_config(tmp_path / "config.yaml").strategy.name == "orb_momentum"
+    assert (tmp_path / "config.yaml.bak").exists() and list((tmp_path / "reports").glob("training_*.html"))
+
+
 # ---------------------------------------------------------------- save settings
 
 CONFIG = """# my settings

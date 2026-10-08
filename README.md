@@ -35,9 +35,9 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   only tighten, stops resized on partial fills, reconciliation with the account every 15 s,
   idempotent order tags, no blind retries of order placement, and re-adoption of the bot's own
   position after a crash.
-- **5 strategies** — research-based Intraday Momentum "noise area" (Zarattini/Aziz/Barbon 2024) and
-  5-minute Opening Range Momentum (Zarattini/Aziz 2023), classic Opening Range Breakout, EMA trend,
-  VWAP mean reversion; easy to add your own.
+- **6 strategies** — research-based 5-minute Opening Range Momentum (Zarattini/Aziz 2023), Intraday
+  Momentum "noise area" (Zarattini/Aziz/Barbon 2024) and Late-Day Momentum (Gao/Han/Li/Zhou 2018),
+  plus classic Opening Range Breakout, EMA trend and VWAP mean reversion; easy to add your own.
 - **24/7 service** — auto-restart after crashes or hangs (heartbeat), daily maintenance restart,
   keeps the PC awake, start at Windows sign-in, morning check-in message.
 - **Same-day start** — a preflight that checks the account, MLL, contract, data, PC clock,

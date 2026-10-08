@@ -34,3 +34,18 @@ def mnq():
 @pytest.fixture
 def es():
     return offline_contract("ES")
+
+
+@pytest.fixture
+def restore_logging():
+    import logging
+
+    root = logging.getLogger()
+    saved = root.handlers[:], root.level
+    yield
+    for handler in root.handlers[:]:
+        if handler not in saved[0]:
+            root.removeHandler(handler)
+            handler.close()
+    root.handlers[:] = saved[0]
+    root.setLevel(saved[1])

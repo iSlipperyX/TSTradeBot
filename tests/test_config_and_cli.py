@@ -47,21 +47,6 @@ def test_config_problems_are_explained(tmp_path, text, expected):
     assert expected in str(info.value)
 
 
-@pytest.fixture
-def restore_logging():
-    import logging
-
-    root = logging.getLogger()
-    saved = root.handlers[:], root.level
-    yield
-    for handler in root.handlers[:]:
-        if handler not in saved[0]:
-            root.removeHandler(handler)
-            handler.close()
-    root.handlers[:] = saved[0]
-    root.setLevel(saved[1])
-
-
 def test_cli_reports_config_problems_and_unexpected_errors(tmp_path, monkeypatch, capsys, restore_logging):
     monkeypatch.chdir(tmp_path)
     write(tmp_path, "risk:\n  risk_per_trad: 100\n")

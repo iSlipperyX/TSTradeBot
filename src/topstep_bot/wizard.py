@@ -68,7 +68,7 @@ instrument:
   timeframe_minutes: {timeframe}
 
 strategy:
-  name: {strategy}                # orb, orb_momentum, noise_breakout, ema_trend, vwap_reversion (or let 'train' pick)
+  name: {strategy}                # orb_momentum, noise_breakout, late_day_momentum, orb, ema_trend, vwap_reversion - or let 'train' pick
   params: {{}}                 # override strategy defaults here, e.g. {{target_r: 1.5}}
 
 risk:
