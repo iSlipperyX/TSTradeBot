@@ -15,7 +15,8 @@ enforces it, see [TOPSTEP_RULES.md](TOPSTEP_RULES.md).
 1. Install [Python 3.11+](https://www.python.org/downloads/) and tick **"Add python.exe to PATH"**.
 2. Double-click **`start.bat`**. The first run installs everything.
 3. Get a TopstepX API key ([section 4](#4-get-your-topstepx-api-key)).
-4. Menu **1 (setup)**: answer the questions. Press Enter to accept a suggestion.
+4. Menu **1 (setup)**: answer the questions. Press Enter to accept a suggestion. If the account is
+   just for teaching the bot, choose **"Teach the bot"** ([section 17](#using-a-combine-to-teach-the-bot)).
 5. Menu **16 (rules)**: check the limits the bot will enforce for your account.
 6. Menu **5 (train)**, then menu **4 (backtest)** and read the report.
 7. Menu **6 (paper)**: watch it trade with simulated orders for a few days.
@@ -904,6 +905,37 @@ statistical noise to a large degree; the knowledge base reduces the damage from 
 stopped working, it does not guarantee profits. Backtests of the adaptive strategy are **walk-forward**:
 it starts knowing nothing and learns as the data plays (no peeking), so the first weeks of a backtest
 show few or no trades.
+
+### Using a Combine to teach the bot
+
+If an account is for teaching the bot rather than passing, choose **"Teach the bot"** when setup asks
+what the account is for. That writes a learning configuration:
+
+| Setting | Learning | Passing (default) | Why |
+|---|---|---|---|
+| `strategy` | `adaptive` with `trade_unproven: true` | your choice | Also trades strategies the bot has no evidence on yet, so it gets real fills for them. |
+| `risk_per_trade` (50K) | $100 (5% of the MLL) | $150 | Smaller trades, so more of them fit before a daily or account limit. |
+| `max_trades_per_day` | 8 | 4 | More real outcomes per day. |
+| `max_consecutive_losses` | 4 | 2 | Doesn't stop after two losses. |
+| `cooldown_minutes_after_loss` | 5 | 10 | |
+| `daily_profit_target` | the full profit target | 40% of it | No early stop on a big day. |
+| `consistency_guard` | off | on | A big day only raises the target; that doesn't matter on a learning account. |
+
+What stays the same: **every Topstep rule** (MLL, any DLL, position limits, news, flat by 15:10) and
+your personal daily loss limit. Breaking a Topstep rule or touching the MLL ends the Combine, and
+that ends the learning until you reset it, so the bot still protects the account from that.
+
+Good to know:
+
+- The bot learns from **every** strategy's signals, traded or not. Each idea is followed to its
+  outcome and added to the knowledge base, so it learns from the whole market every day, not only
+  from the trades it takes. Real trades count twice as much (`knowledge.real_trade_weight`), because
+  they include real fills and slippage.
+- The knowledge base (`data/knowledge_<SYMBOL>_<TF>m.json`) is shared by paper and live and by
+  every account on the same symbol and timeframe. What it learns on the learning Combine carries
+  over when you later point the bot at an account you want to pass.
+- Watch what it's learning on the dashboard's **Knowledge** tab or with `/knowledge` on Telegram.
+- When you move to an account you want to pass, run setup again and choose **"Pass the Combine"**.
 
 Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
 `half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`. The file is

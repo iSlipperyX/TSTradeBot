@@ -32,10 +32,10 @@ risk:
   risk_per_trade: 150          # $ lost if a trade hits its stop (position size is calculated from this)
   personal_daily_loss_limit: 500 # stop trading for the day after losing this much (incl. open P&L)
   max_trades_per_day: 4
-  max_consecutive_losses: 2
   mll_buffer: 200               # keep this much cushion above Topstep's Maximum Loss Limit
   # daily_profit_target: 1200   # combine default: 40% of the profit target (protects the consistency rule)
   consistency_guard: true       # combine: close out before a day reaches 55% of the profit target
+  max_consecutive_losses: 2
   stop_at_profit_target: true   # combine: stop trading once the profit target is reached
   # max_contracts: 2            # optional extra cap (Topstep's own cap is always enforced)
   # breakeven_at_r: 1.0         # move stop to breakeven after 1R of profit

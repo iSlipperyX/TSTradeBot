@@ -501,3 +501,18 @@ def test_rules_command_prints(tmp_path, monkeypatch, capsys):
 
     monkeypatch.chdir(tmp_path)
     assert main(["rules"]) == 0
+
+
+def test_learning_goal_config_trades_more_but_keeps_topstep_rules():
+    import yaml
+
+    from topstep_bot.wizard import render_config
+
+    cfg = BotConfig.model_validate(yaml.safe_load(render_config(goal="learn", strategy="orb", risk_per_trade=100)))
+    assert cfg.strategy.name == "adaptive" and cfg.strategy.params == {"trade_unproven": True}
+    assert cfg.risk.max_trades_per_day == 8 and not cfg.risk.consistency_guard
+    assert cfg.risk.daily_profit_target == 3_000
+    # The hard Topstep guards stay on whatever the goal.
+    rm = make(offline_contract("MNQ"), balance=48_200, **cfg.risk.model_dump())
+    assert rm.max_contracts_topstep() == 50
+    assert "MLL" in rm.check_open_risk(48_200, -150)
