@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 
 from topstep_bot.config import Secrets
+from topstep_bot.notify import redact
 
 log = logging.getLogger("topstep_bot.service")
 
@@ -52,14 +53,14 @@ def read_exit_note(path: Path) -> dict | None:
 def notify(secrets: Secrets, text: str) -> None:
     """Best-effort alert (Telegram/Discord) from the controller."""
     text = f"[Topstep Bot] {text}"
-    try:
-        if secrets.telegram_bot_token and secrets.telegram_chat_id:
-            httpx.post(
-                f"https://api.telegram.org/bot{secrets.telegram_bot_token}/sendMessage",
-                json={"chat_id": secrets.telegram_chat_id, "text": text},
-                timeout=10,
-            )
-        if secrets.discord_webhook_url:
-            httpx.post(secrets.discord_webhook_url, json={"content": text[:1900]}, timeout=10)
-    except httpx.HTTPError as exc:
-        log.warning("Alert failed: %s", exc)
+    targets = []
+    if secrets.telegram_bot_token and secrets.telegram_chat_id:
+        targets.append((f"https://api.telegram.org/bot{secrets.telegram_bot_token}/sendMessage",
+                        {"chat_id": secrets.telegram_chat_id, "text": text}))
+    if secrets.discord_webhook_url:
+        targets.append((secrets.discord_webhook_url, {"content": text[:1900]}))
+    for url, body in targets:  # one failing channel must not silence the other
+        try:
+            httpx.post(url, json=body, timeout=10)
+        except httpx.HTTPError as exc:
+            log.warning("Alert failed: %s", redact(exc))

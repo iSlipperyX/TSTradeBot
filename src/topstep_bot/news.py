@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import httpx
@@ -96,10 +96,12 @@ class NewsCalendar:
         log.info("Economic calendar loaded: %d relevant event(s) this week", len(self.events))
         return True
 
-    def blackout_reason(self, ts: datetime) -> str | None:
+    def blackout_reason(self, ts: datetime, tz: tzinfo | None = None) -> str | None:
+        """Why ``ts`` is inside a news blackout (release time shown in ``tz``, e.g. Chicago), or None."""
         for e in self.events:
             if e.time - self.before <= ts < e.time + self.after:
-                return f"news blackout: {e.label} at {e.time:%H:%M} UTC"
+                when = f"{e.time.astimezone(tz):%H:%M} CT" if tz else f"{e.time:%H:%M} UTC"
+                return f"news blackout: {e.label} at {when}"
         return None
 
     def releasing_soon(self, ts: datetime) -> NewsEvent | None:

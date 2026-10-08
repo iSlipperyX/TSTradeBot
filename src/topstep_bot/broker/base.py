@@ -85,9 +85,17 @@ class Broker(ABC):
     @abstractmethod
     async def fills_since(self, start: datetime) -> list[Fill]: ...
 
-    async def realized_pnl_since(self, start: datetime) -> tuple[float, int]:
-        """Net realized P&L (after fees) and number of closed round turns since ``start``."""
-        fills = await self.fills_since(start)
+    async def realized_pnl_since(self, start: datetime) -> tuple[float, list[tuple[datetime, float]]]:
+        """Net realized P&L (after all fees) since ``start``, and each closed trade as (time, net P&L).
+
+        A trade is one closing order: its fills are added up, so a 3-contract exit filled in three
+        pieces counts once. Its net P&L subtracts the closing fees twice to cover the entry side.
+        """
+        fills = sorted(await self.fills_since(start), key=lambda f: f.ts)
         net = sum((f.pnl or 0.0) - f.fees for f in fills)
-        closes = sum(1 for f in fills if f.pnl is not None)
-        return net, closes
+        closes: dict[int, list[Fill]] = {}
+        for f in fills:
+            if f.pnl is not None:
+                closes.setdefault(f.order_id, []).append(f)
+        trades = [(group[-1].ts, sum((f.pnl or 0.0) - 2 * f.fees for f in group)) for group in closes.values()]
+        return net, sorted(trades)

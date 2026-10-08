@@ -85,7 +85,7 @@ class SessionSchedule:
             return f"after last_entry {self.cfg.last_entry:%H:%M}"
         reason = self.in_blackout(ts)
         if reason is None and self.news is not None:
-            reason = self.news.blackout_reason(ts)
+            reason = self.news.blackout_reason(ts, self.tz)
         return reason
 
     def must_be_flat(self, ts: datetime) -> bool:

@@ -13,7 +13,8 @@ class OpeningRangeBreakout(Strategy):
     description = (
         "Marks the high and low of the first minutes after the 8:30 CT open, then trades the first "
         "bar that closes beyond that range. Stop at the middle (or other side) of the range, target "
-        "at a multiple of the risk. At most one trade per direction per day."
+        "at a multiple of the risk. One trade a day by default (max_trades_per_day), never twice in the "
+        "same direction."
     )
     defaults = {
         "range_minutes": 15,

@@ -27,7 +27,7 @@ topstep-bot = "topstep_bot.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-topstep_bot = ["dashboard/*.html", "templates/*.yaml"]
+topstep_bot = ["dashboard/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

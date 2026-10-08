@@ -9,8 +9,10 @@ from topstep_bot.models import Contract
 from topstep_bot.strategies.adaptive import AdaptiveAllDay
 from topstep_bot.strategies.base import Strategy, StrategyContext, parse_hhmm
 from topstep_bot.strategies.ema_trend import EmaTrend
+from topstep_bot.strategies.late_day_momentum import LateDayMomentum
 from topstep_bot.strategies.noise_breakout import NoiseAreaMomentum
 from topstep_bot.strategies.orb import OpeningRangeBreakout
+from topstep_bot.strategies.orb_momentum import OpeningRangeMomentum
 from topstep_bot.strategies.vwap_pullback import VwapPullback
 from topstep_bot.strategies.vwap_reversion import VwapReversion
 
@@ -18,7 +20,16 @@ from topstep_bot.strategies.vwap_reversion import VwapReversion
 # order of the trading day they are built for: open, all day, midday, afternoon.
 STRATEGIES: dict[str, type[Strategy]] = {
     cls.name: cls
-    for cls in (AdaptiveAllDay, OpeningRangeBreakout, NoiseAreaMomentum, EmaTrend, VwapReversion, VwapPullback)
+    for cls in (
+        AdaptiveAllDay,
+        OpeningRangeBreakout,
+        OpeningRangeMomentum,
+        NoiseAreaMomentum,
+        EmaTrend,
+        VwapReversion,
+        VwapPullback,
+        LateDayMomentum,
+    )
 }
 BASE_STRATEGIES = tuple(n for n in STRATEGIES if n != AdaptiveAllDay.name)
 

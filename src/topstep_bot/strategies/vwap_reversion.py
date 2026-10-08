@@ -13,7 +13,8 @@ class VwapReversion(Strategy):
     description = (
         "Fades stretched moves: buys when price closes well below the session VWAP band with an "
         "oversold RSI and a bullish reversal bar (and the mirror image for shorts). Targets a return "
-        "to VWAP with a stop just beyond the extreme."
+        "to VWAP with a stop just beyond the extreme. Lost money in every year of testing on Nasdaq "
+        "futures 2018-2025 - not recommended."
     )
     defaults = {
         "band_k": 2.0,

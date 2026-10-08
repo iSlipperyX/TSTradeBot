@@ -17,16 +17,17 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from topstep_bot import __version__
-from topstep_bot.config import BotConfig, load_config, load_secrets
+from topstep_bot.config import BotConfig, ConfigError, load_config, load_secrets
 
 console = Console()
 UTC = timezone.utc
 log = logging.getLogger("topstep_bot")
+LOG_DIR = Path("logs")
 
 
 # --------------------------------------------------------------------- helpers
 
-def setup_logging(cfg: BotConfig, command: str, console_level: str | None = None) -> Path:
+def setup_logging(cfg: BotConfig, command: str, console_level: str | None = None, file_prefix: str = "bot") -> Path:
     """Log to files in cfg.log_dir (see logging_setup.py) and to this window."""
     from topstep_bot.logging_setup import log_startup
     from topstep_bot.logging_setup import setup_logging as _setup
@@ -34,7 +35,7 @@ def setup_logging(cfg: BotConfig, command: str, console_level: str | None = None
     s = load_secrets()
     log_dir = _setup(
         cfg.log_dir, console_level or cfg.log_level, console=console, retention_days=cfg.log_retention_days,
-        secrets=[s.api_key, s.telegram_bot_token, s.discord_webhook_url],
+        secrets=[s.api_key, s.telegram_bot_token, s.discord_webhook_url], file_prefix=file_prefix,
     )
     log_startup(cfg, command)
     return log_dir
@@ -145,22 +146,10 @@ def cmd_download(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_backtest(args: argparse.Namespace) -> int:
+def _history(cfg: BotConfig, args: argparse.Namespace, *, allow_synthetic: bool = True):
+    """Price history for a backtest or training run: --data file, cached download, fresh download from
+    TopstepX, or (only if allowed) synthetic data. Returns (bars, synthetic?)."""
     from topstep_bot.backtest.data import load_csv, synthetic_bars
-    from topstep_bot.backtest.metrics import combine_statistics, compute_metrics
-    from topstep_bot.backtest.report import write_report
-    from topstep_bot.backtest.runner import run_backtest
-    from topstep_bot.instruments import offline_contract
-    from topstep_bot.risk.topstep import PLANS
-
-    cfg = _load(args)
-    if args.strategy:
-        cfg.strategy.name = args.strategy
-        cfg.strategy.params = {}
-    if args.symbol:
-        cfg.instrument.symbol = args.symbol.upper()
-    if args.timeframe:
-        cfg.instrument.timeframe_minutes = args.timeframe
 
     data_file = args.data or cfg.backtest.data_file
     synthetic = args.synthetic
@@ -170,17 +159,42 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             data_file = str(asyncio.run(_download(cfg, args.days, 1)))
         elif cached.exists():
             data_file = str(cached)
-        else:
+        elif allow_synthetic:
             synthetic = True
+        else:
+            raise ValueError("No price history yet. Run setup (API key) and then: topstep-bot download --days 365")
     if synthetic:
         console.print(
             "[yellow]Using SYNTHETIC random data - good for seeing how the bot works, meaningless for judging a "
-            "strategy. Run setup and 'topstep-bot download' to backtest on real data.[/]"
+            "strategy. Run setup and 'topstep-bot download' to use real data.[/]"
         )
-        bars = synthetic_bars(cfg.instrument.symbol, days=args.days, seed=args.seed)
-    else:
-        bars = load_csv(data_file, naive_tz=args.tz)
-        console.print(f"Loaded {len(bars):,} bars from {data_file}")
+        return synthetic_bars(cfg.instrument.symbol, days=args.days, seed=args.seed), True
+    bars = load_csv(data_file, naive_tz=args.tz)
+    if bars:
+        console.print(f"Loaded {len(bars):,} bars from {data_file} ({bars[0].ts:%Y-%m-%d} to {bars[-1].ts:%Y-%m-%d})")
+    return bars, False
+
+
+def _apply_overrides(cfg: BotConfig, args: argparse.Namespace) -> None:
+    if getattr(args, "strategy", None):
+        cfg.strategy.name = args.strategy
+        cfg.strategy.params = {}
+    if getattr(args, "symbol", None):
+        cfg.instrument.symbol = args.symbol.upper()
+    if getattr(args, "timeframe", None):
+        cfg.instrument.timeframe_minutes = args.timeframe
+
+
+def cmd_backtest(args: argparse.Namespace) -> int:
+    from topstep_bot.backtest.metrics import combine_statistics, compute_metrics
+    from topstep_bot.backtest.report import write_report
+    from topstep_bot.backtest.runner import run_backtest
+    from topstep_bot.instruments import offline_contract
+    from topstep_bot.risk.topstep import PLANS
+
+    cfg = _load(args)
+    _apply_overrides(cfg, args)
+    bars, _ = _history(cfg, args)
 
     contract = offline_contract(cfg.instrument.symbol)
     with console.status("Running backtest..."):
@@ -295,8 +309,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     secrets = load_secrets()
     supervised = os.environ.get("TOPSTEP_BOT_SUPERVISED") == "1"
     if cfg.mode == "live" and not args.yes and not supervised:
-        console.print(Panel("[bold red]LIVE MODE[/] - the bot will place REAL orders on your TopstepX account.",
-                            border_style="red"))
+        console.print(
+            Panel(
+                "[bold red]LIVE MODE[/] - the bot will place REAL orders on your TopstepX account.\n"
+                "Rule violations and losses are real. Run 'preflight' first (menu: Start trading today) and watch the\n"
+                "first trades with TopstepX open alongside.\n"
+                "Stop any time with Ctrl+C, the dashboard's Stop button, Telegram /stop, or by creating a file named KILL here.",
+                border_style="red",
+            )
+        )
         if Prompt.ask("Type LIVE to continue") != "LIVE":
             console.print("Cancelled.")
             return 1
@@ -324,10 +345,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             for server in servers:
                 await server.stop()
 
-    from topstep_bot.keepawake import keep_awake
+    from topstep_bot.keepawake import console_stays_responsive, keep_awake
 
     try:
-        with keep_awake(cfg.service.keep_awake):
+        with keep_awake(cfg.service.keep_awake), console_stays_responsive():
             asyncio.run(main())
     except SetupError as exc:
         log.error("Could not start: %s", exc)
@@ -340,8 +361,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         write_exit_note(1, f"crashed: {type(exc).__name__}: {exc}")
         raise
     reason = controls.stop_reason or "normal stop"
-    code = RESTART_EXIT_CODE if controls.restart_requested else 0
     log.info("Bot exited. Reason: %s", reason)
+    if controls.failure:
+        # Exit code 1: the controller restarts the bot (with backoff) and sends the alert.
+        write_exit_note(1, f"stopped after an internal error: {controls.failure}")
+        if not supervised:
+            console.print(f"[red]The bot stopped itself after an internal error:[/] {controls.failure}. "
+                          f"Details: {log_dir} (errors.log)")
+        return 1
+    code = RESTART_EXIT_CODE if controls.restart_requested else 0
     write_exit_note(code, reason)
     if not supervised:
         console.print(f"Stopped ({reason}). Logs: {log_dir}")
@@ -577,6 +605,111 @@ def cmd_journal(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pct(v: float | None) -> str:
+    return "-" if v is None else f"{v * 100:.0f}%"
+
+
+def _pf(v: float) -> str:
+    return "∞" if v == float("inf") else f"{v:.2f}"
+
+
+def _print_tuning(report, cfg: BotConfig) -> None:
+    f0, f1 = report.folds[0], report.folds[-1]
+    console.print(
+        f"\nTested {report.first_day} → {report.last_day}: {report.candidates} candidate settings, "
+        f"{len(report.folds)} walk-forward windows. Settings were chosen on each train window "
+        f"(e.g. {f0.train[0]} → {f0.train[1]}) and judged only on the unseen test window after it "
+        f"({f0.test[0]} → {f0.test[1]}, ... , {f1.test[0]} → {f1.test[1]})."
+    )
+    from rich import box
+
+    table = Table(title="Out-of-sample results (test windows only)", box=box.SIMPLE_HEAD)
+    for col in ("Strategy", "Net $", "Trades", "PF", "Max DD", "Pass", "Verdict"):
+        table.add_column(col, justify="left" if col in ("Strategy", "Verdict") else "right", no_wrap=True)
+    rows = sorted(report.results, key=lambda r: (r.eligible, r.oos.sharpe), reverse=True)
+    for r in rows:
+        o = r.oos
+        name = r.strategy + ("*" if r.strategy == cfg.strategy.name else "") + (" ◀" if report.recommended is r else "")
+        table.add_row(name, f"{o.net:+,.0f}", str(o.trades), _pf(o.profit_factor), f"{o.max_drawdown:,.0f}",
+                      _pct(o.combine_pass_rate), f"[green]✔ {r.reason}[/]" if r.eligible else f"[yellow]✘ {r.reason}[/]")
+    console.print(table)
+    console.print("[dim]PF = profit factor (above 1 = profitable). Pass = Combine pass rate. * = your current strategy. "
+                  "◀ = recommended.[/]")
+    if report.current is not None:
+        c = report.current
+        console.print(f"Your current setting ({report.current_label}) on the same test windows: {c.net:+,.0f} over "
+                      f"{c.trades} trades, PF {_pf(c.profit_factor)}, max drawdown {c.max_drawdown:,.0f}.")
+    rec = report.recommended
+    if rec is None or rec.final is None:
+        console.print(Panel(
+            "[bold yellow]No strategy held up on data it hadn't seen.[/] Don't go live on these results.\n"
+            "Try more history (--days 730), another symbol, or keep paper trading.", border_style="yellow"))
+        return
+    choices = ", ".join(f"{f.test[0]:%b %Y}: {c.label.removeprefix(rec.strategy).strip() or 'defaults'}"
+                        for f, c, _ in rec.choices)
+    settings = ", ".join(f"{k}={v}" for k, v in rec.final.params) or "its default settings"
+    console.print(Panel(
+        f"[bold green]Best out-of-sample: {rec.strategy}[/] - {settings}\n"
+        f"Out-of-sample: {rec.oos.net:+,.0f} over {rec.oos.trades} trades, profit factor {_pf(rec.oos.profit_factor)}, "
+        f"Sharpe {rec.oos.sharpe:.2f}, max drawdown {rec.oos.max_drawdown:,.0f}"
+        + (f", Combine pass rate {_pct(rec.oos.combine_pass_rate)}" if rec.oos.combine_pass_rate is not None else "")
+        + f".\nChosen per window: {choices}.\n"
+        + ("Only these settings were tested (nothing was tuned)." if rec.n_candidates == 1 else
+           f"The same settings were picked in {rec.stability:.0%} of windows"
+           + (" - stable." if rec.stability >= 0.5 else " - they shift over time, so expect results to vary."))
+        + "\n[dim]Past results, even out-of-sample, don't guarantee future ones. Start with reduced size (ramp-up).[/]",
+        title="Recommendation", border_style="green"))
+
+
+def cmd_tune(args: argparse.Namespace) -> int:
+    """Walk-forward tuning: which strategy and settings held up on data they never saw."""
+    import json
+    import os
+
+    from topstep_bot.instruments import offline_contract
+    from topstep_bot.training import save_strategy, train
+
+    cfg = _load(args)
+    _apply_overrides(cfg, args)
+    bars, synthetic = _history(cfg, args, allow_synthetic=args.synthetic)
+    if synthetic:
+        console.print("[yellow]Tuning on synthetic data only demonstrates the process - never save its result.[/]")
+    contract = offline_contract(cfg.instrument.symbol)
+    strategies = args.strategies.split(",") if args.strategies else None
+    workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 1))
+    with console.status("Preparing...") as status:
+        report = train(cfg, bars, contract, strategies=strategies, folds=args.folds, workers=workers,
+                       progress=lambda i, n: status.update(f"Backtesting candidate settings {i}/{n}..."))
+    _print_tuning(report, cfg)
+    out = Path(cfg.backtest.report_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    from topstep_bot.backtest.train_report import write_training_report
+
+    page = write_training_report(report, out, cfg.instrument.symbol, cfg.instrument.timeframe_minutes)
+    page.with_suffix(".json").write_text(json.dumps(report.to_dict(), indent=1), encoding="utf-8")
+    console.print(f"Report: [bold]{page.resolve()}[/] (details: {page.with_suffix('.json').name})")
+    if not args.no_open:
+        webbrowser.open(page.resolve().as_uri())
+    for err in report.errors[:3]:
+        console.print(f"[dim]Skipped: {err}[/]")
+
+    rec = report.recommended
+    if rec is None or rec.final is None or synthetic:
+        return 0
+    if args.save is None and sys.stdin.isatty():
+        args.save = Prompt.ask("Save the recommended strategy and settings to config.yaml?", choices=["y", "n"],
+                               default="n") == "y"
+    if args.save:
+        cfg_path = Path(args.config or "config.yaml")
+        backup = save_strategy(cfg_path, rec.strategy, rec.final.params_dict,
+                               note=f"Tuned {datetime.now():%Y-%m-%d} on {report.first_day}..{report.last_day} "
+                                    f"(topstep-bot tune); previous config saved as {cfg_path.name}.bak")
+        console.print(f"[green]Saved to {cfg_path}[/] (previous version: {backup}). Backtest it with: topstep-bot backtest")
+    else:
+        console.print("Not saved. To use it, run tune again with --save, or edit strategy: in config.yaml.")
+    return 0
+
+
 def cmd_demo(args: argparse.Namespace) -> int:
     args.synthetic, args.data, args.download = True, None, False
     return cmd_backtest(args)
@@ -634,13 +767,15 @@ MENU = [
     ("telegram-test", "Send a test message to your Telegram bot"),
     ("autostart", "Start the 24/7 service automatically when Windows starts"),
     ("logs", "Show recent errors and where the log files are"),
+    ("tune", "TUNE: test every strategy on unseen real data and pick the settings that held up"),
 ]
 
 
 def interactive_menu(parser: argparse.ArgumentParser) -> int:
     console.print(Panel.fit(f"[bold]Topstep Bot[/] v{__version__}", border_style="cyan"))
     if not Path("config.yaml").exists():
-        console.print("[yellow]No config.yaml yet - start with option 1 (setup), or 11 for a demo.[/]")
+        demo = next(i for i, (name, _) in enumerate(MENU, start=1) if name == "demo")
+        console.print(f"[yellow]No config.yaml yet - start with option 1 (setup), or {demo} for a demo.[/]")
     for i, (_, desc) in enumerate(MENU, start=1):
         console.print(f"  [bold]{i}[/]  {desc}")
     console.print("  [bold]0[/]  Quit")
@@ -651,7 +786,7 @@ def interactive_menu(parser: argparse.ArgumentParser) -> int:
     argv = {"paper": ["start", "--mode", "paper"], "live": ["start", "--mode", "live"],
             "autostart": ["autostart", "on"]}.get(name, [name])
     args = parser.parse_args(argv)
-    return args.func(args)
+    return dispatch(args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -713,6 +848,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=None, help="days of history to download (default: knowledge.history_days)")
     p.set_defaults(func=cmd_train)
 
+    p = sub.add_parser("tune", help="walk-forward test: pick the strategy/settings that held up on unseen data")
+    p.add_argument("--data", help="CSV of 1-minute bars (default: data/<SYMBOL>_1m.csv, else download)")
+    p.add_argument("--tz", default="UTC", help="timezone for CSV times without one")
+    p.add_argument("--download", action="store_true", help="download fresh history from TopstepX first")
+    p.add_argument("--days", type=int, default=365, help="days of history to download (default 365; more is better)")
+    p.add_argument("--strategies", help="comma-separated strategies to test (default: all)")
+    p.add_argument("--symbol", help="override the symbol")
+    p.add_argument("--timeframe", type=int, help="override the bar timeframe in minutes")
+    p.add_argument("--folds", type=int, default=4, help="walk-forward windows (default 4)")
+    p.add_argument("--workers", type=int, default=0, help="parallel processes (default: CPUs - 1, max 4)")
+    p.add_argument("--save", action="store_true", default=None, help="save the recommendation to config.yaml")
+    p.add_argument("--no-save", dest="save", action="store_false", help="never ask to save")
+    p.add_argument("--synthetic", action="store_true", help="demo the process on synthetic data (never saved)")
+    p.add_argument("--no-open", action="store_true", help="don't open the report in a browser")
+    p.add_argument("--seed", type=int, default=7, help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_tune, strategy=None)
+
     p = sub.add_parser("download", help="download historical bars to a CSV")
     p.add_argument("--days", type=int, default=90)
     p.add_argument("--tf", type=int, default=1, help="bar size in minutes (default 1)")
@@ -736,6 +888,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def dispatch(args: argparse.Namespace) -> int:
+    """Run one command. Every failure is shown in plain words and written to a log file, so a
+    problem can always be diagnosed afterwards - even if the window has closed."""
+    # The bot and the controller set up their own logging (bot.log / controller.log). Other commands log to
+    # commands.log, so they never rotate bot.log while the bot is writing it (Windows can't do that).
+    log_dir = LOG_DIR
+    if args.command not in ("run", "logs", "service", "start", "go-live"):
+        try:
+            log_dir = setup_logging(_load(args), args.command, console_level="WARNING", file_prefix="commands")
+        except Exception:  # noqa: BLE001 - never block a command because logging failed (e.g. bad config)
+            logging.basicConfig(level=logging.WARNING)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        return 130
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/]")
+        return 2
+    except ConfigError as exc:
+        console.print(f"[red]Configuration problem:[/] {exc}\nFix it in config.yaml (Notepad is fine), or re-run setup.")
+        return 2
+    except ValueError as exc:  # a problem the user can fix (unknown symbol, not enough data, ...)
+        log.warning("%s failed: %s", args.command, exc, exc_info=True)
+        console.print(f"[red]{exc}[/]")
+        return 2
+    except Exception as exc:  # noqa: BLE001 - last line of defence: record it, explain it
+        log.exception("Unexpected error in '%s'", args.command)
+        console.print(f"[red]Unexpected error:[/] {exc!r}\nThe full details were saved in [bold]{Path(log_dir).resolve()}[/] "
+                      "(errors.log) - 'topstep-bot logs --bundle' zips them for support (no passwords or keys).")
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
         with contextlib.suppress(AttributeError, ValueError):
@@ -747,18 +931,4 @@ def main(argv: list[str] | None = None) -> int:
             return interactive_menu(parser)
         except KeyboardInterrupt:
             return 0
-    if args.command not in ("run", "logs", "service", "start", "go-live"):
-        try:
-            setup_logging(_load(args), args.command, console_level="WARNING")
-        except Exception:  # noqa: BLE001 - never block a command because logging failed
-            logging.basicConfig(level=logging.WARNING)
-    try:
-        return args.func(args)
-    except KeyboardInterrupt:
-        return 130
-    except FileNotFoundError as exc:
-        console.print(f"[red]{exc}[/]")
-        return 2
-    except ValueError as exc:
-        console.print(f"[red]Configuration problem:[/] {exc}")
-        return 2
+    return dispatch(args)
