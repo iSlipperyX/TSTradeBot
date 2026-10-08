@@ -69,6 +69,46 @@ def test_orb_momentum_atr_stop_and_no_target(mnq):
     assert sig.target_price is None
 
 
+# ------------------------------------------------------------ late-day momentum
+
+def _session(s, day, closes):
+    """Feed one regular session: {"HH:MM" bar-close time: close price}."""
+    s.on_new_day(day)
+    out = None
+    for hhmm, price in closes.items():
+        h, m = map(int, hhmm.split(":"))
+        close = ct(day.year, day.month, day.day, h, m)
+        sig = s.on_bar(bar(close - timedelta(minutes=5), price, price + 1, price - 1, price), ctx(close))
+        out = sig or out
+    return out
+
+
+def test_late_day_momentum_follows_the_morning_move(mnq):
+    s = create_strategy("late_day_momentum", {}, mnq, 5)
+    for i in range(15):  # warm the ATR up
+        s.atr.update(102.0, 98.0, 100.0)
+    _session(s, DAY - timedelta(days=1), {"14:55": 100.0, "15:00": 100.0})  # yesterday closed at 100
+    sig = _session(s, DAY, {"09:00": 101.0, "14:00": 99.0, "14:25": 99.5})
+    assert sig.side == OrderSide.BUY  # morning move was up (+1%), so buy into the close
+    assert sig.stop_price == pytest.approx(99.5 - 2.0 * s.atr.value) and sig.target_price is None
+    confirmed = create_strategy("late_day_momentum", {"confirm_with_12th": True}, mnq, 5)
+    for i in range(15):
+        confirmed.atr.update(102.0, 98.0, 100.0)
+    _session(confirmed, DAY - timedelta(days=1), {"15:00": 100.0})
+    assert _session(confirmed, DAY, {"09:00": 101.0, "14:00": 100.0, "14:25": 99.5}) is None  # afternoon disagrees
+
+
+def test_late_day_momentum_needs_a_previous_close_and_valid_times(mnq):
+    s = create_strategy("late_day_momentum", {"min_move_pct": 0.5}, mnq, 5)
+    for i in range(15):
+        s.atr.update(102.0, 98.0, 100.0)
+    assert _session(s, DAY, {"09:00": 101.0, "14:25": 101.0}) is None  # first day: no previous close
+    assert _session(s, DAY + timedelta(days=1), {"09:00": 101.2, "14:25": 101.0}) is None  # +0.2% < 0.5%
+    with pytest.raises(ValueError, match="not the close of a 15-minute bar"):
+        create_strategy("late_day_momentum", {}, mnq, 15)  # 14:25 isn't a 15-minute bar close
+    assert create_strategy("late_day_momentum", {"entry_time": "14:15"}, mnq, 15)
+
+
 # ------------------------------------------------- noise breakout checkpoint exits
 
 def test_noise_checkpoint_mode_keeps_safety_stop_and_never_trails(mnq):

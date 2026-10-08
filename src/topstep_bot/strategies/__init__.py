@@ -8,13 +8,14 @@ from topstep_bot.instruments import get_spec
 from topstep_bot.models import Contract
 from topstep_bot.strategies.base import Strategy, StrategyContext, parse_hhmm
 from topstep_bot.strategies.ema_trend import EmaTrend
+from topstep_bot.strategies.late_day_momentum import LateDayMomentum
 from topstep_bot.strategies.noise_breakout import NoiseAreaMomentum
 from topstep_bot.strategies.orb import OpeningRangeBreakout
 from topstep_bot.strategies.orb_momentum import OpeningRangeMomentum
 from topstep_bot.strategies.vwap_reversion import VwapReversion
 
 STRATEGIES: dict[str, type[Strategy]] = {
-    cls.name: cls for cls in (OpeningRangeBreakout, OpeningRangeMomentum, NoiseAreaMomentum, EmaTrend, VwapReversion)
+    cls.name: cls for cls in (OpeningRangeBreakout, OpeningRangeMomentum, NoiseAreaMomentum, LateDayMomentum, EmaTrend, VwapReversion)
 }
 
 

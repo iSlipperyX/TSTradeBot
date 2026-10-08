@@ -51,7 +51,8 @@ def render_config(
     max_trades: int = 4,
 ) -> str:
     account_line = f"  account_id: {account_id}" if account_id else "  # account_id: 123456          # set by 'topstep-bot setup'"
-    return f"""# Topstep Bot configuration. Every setting has a safe default; see README.md for the full list.
+    return f"""# Topstep Bot configuration. Every setting has a safe default; the full list is in
+# docs/HOW_TO_USE.md (section "Full configuration reference"). Edit with Notepad; spaces matter.
 
 # paper = simulated fills on real market data (no orders sent). live = real orders on your TopstepX account.
 mode: {mode}
@@ -67,7 +68,7 @@ instrument:
   timeframe_minutes: {timeframe}
 
 strategy:
-  name: {strategy}                # orb, noise_breakout, ema_trend, vwap_reversion  (see: topstep-bot strategies)
+  name: {strategy}                # orb, orb_momentum, noise_breakout, ema_trend, vwap_reversion (or let 'train' pick)
   params: {{}}                 # override strategy defaults here, e.g. {{target_r: 1.5}}
 
 risk:
@@ -80,6 +81,8 @@ risk:
   # max_contracts: 2            # optional extra cap (Topstep's own cap is always enforced)
   # breakeven_at_r: 1.0         # move stop to breakeven after 1R of profit
   # trail_atr_multiple: 2.0     # ATR trailing stop
+  # min_stop_atr: 0.5           # never place a stop closer than half an ATR
+  # ramp_up_days: 3             # first live trading days on a new account risk half as much
 
 session:                        # times are US Central (exchange) time
   trade_start: "08:30"

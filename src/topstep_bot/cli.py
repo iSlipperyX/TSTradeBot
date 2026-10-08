@@ -557,19 +557,20 @@ def _print_training(report, cfg: BotConfig) -> None:
         f"(e.g. {f0.train[0]} → {f0.train[1]}) and judged only on the unseen test window after it "
         f"({f0.test[0]} → {f0.test[1]}, ... , {f1.test[0]} → {f1.test[1]})."
     )
-    table = Table(title="Out-of-sample results (test windows only)")
-    for col in ("Strategy", "Net $", "Trades", "PF", "Win", "Avg R", "Max DD", "Pass", "Verdict"):
+    from rich import box
+
+    table = Table(title="Out-of-sample results (test windows only)", box=box.SIMPLE_HEAD)
+    for col in ("Strategy", "Net $", "Trades", "PF", "Max DD", "Pass", "Verdict"):
         table.add_column(col, justify="left" if col in ("Strategy", "Verdict") else "right", no_wrap=True)
     rows = sorted(report.results, key=lambda r: (r.eligible, r.oos.sharpe), reverse=True)
     for r in rows:
         o = r.oos
-        name = r.strategy + (" (current)" if r.strategy == cfg.strategy.name else "")
-        name += " ◀" if report.recommended is r else ""
-        table.add_row(name, f"{o.net:+,.0f}", str(o.trades), _pf(o.profit_factor), _pct(o.win_rate),
-                      f"{o.avg_r:+.2f}", f"{o.max_drawdown:,.0f}", _pct(o.combine_pass_rate),
-                      f"[green]✔ {r.reason}[/]" if r.eligible else f"[yellow]✘ {r.reason}[/]")
+        name = r.strategy + ("*" if r.strategy == cfg.strategy.name else "") + (" ◀" if report.recommended is r else "")
+        table.add_row(name, f"{o.net:+,.0f}", str(o.trades), _pf(o.profit_factor), f"{o.max_drawdown:,.0f}",
+                      _pct(o.combine_pass_rate), f"[green]✔ {r.reason}[/]" if r.eligible else f"[yellow]✘ {r.reason}[/]")
     console.print(table)
-    console.print("[dim]PF = profit factor (above 1 = profitable). Pass = Combine pass rate. ◀ = recommended.[/]")
+    console.print("[dim]PF = profit factor (above 1 = profitable). Pass = Combine pass rate. * = your current strategy. "
+                  "◀ = recommended.[/]")
     if report.current is not None:
         c = report.current
         console.print(f"Your current setting ({report.current_label}) on the same test windows: {c.net:+,.0f} over "
@@ -589,8 +590,9 @@ def _print_training(report, cfg: BotConfig) -> None:
         f"Sharpe {rec.oos.sharpe:.2f}, max drawdown {rec.oos.max_drawdown:,.0f}"
         + (f", Combine pass rate {_pct(rec.oos.combine_pass_rate)}" if rec.oos.combine_pass_rate is not None else "")
         + f".\nChosen per window: {choices}.\n"
-        f"The same settings were picked in {rec.stability:.0%} of windows"
-        + (" - stable." if rec.stability >= 0.5 else " - they shift over time, so expect results to vary.")
+        + ("Only these settings were tested (nothing was tuned)." if rec.n_candidates == 1 else
+           f"The same settings were picked in {rec.stability:.0%} of windows"
+           + (" - stable." if rec.stability >= 0.5 else " - they shift over time, so expect results to vary."))
         + "\n[dim]Past results, even out-of-sample, don't guarantee future ones. Start with reduced size (ramp-up).[/]",
         title="Recommendation", border_style="green"))
 
@@ -617,9 +619,13 @@ def cmd_train(args: argparse.Namespace) -> int:
     _print_training(report, cfg)
     out = Path(cfg.backtest.report_dir)
     out.mkdir(parents=True, exist_ok=True)
-    path = out / f"training_{cfg.instrument.symbol}_{datetime.now():%Y%m%d_%H%M%S}.json"
-    path.write_text(json.dumps(report.to_dict(), indent=1), encoding="utf-8")
-    console.print(f"Full results: {path.resolve()}")
+    from topstep_bot.backtest.train_report import write_training_report
+
+    page = write_training_report(report, out, cfg.instrument.symbol, cfg.instrument.timeframe_minutes)
+    page.with_suffix(".json").write_text(json.dumps(report.to_dict(), indent=1), encoding="utf-8")
+    console.print(f"Report: [bold]{page.resolve()}[/] (details: {page.with_suffix('.json').name})")
+    if not args.no_open:
+        webbrowser.open(page.resolve().as_uri())
     for err in report.errors[:3]:
         console.print(f"[dim]Skipped: {err}[/]")
 
@@ -782,6 +788,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save", action="store_true", default=None, help="save the recommendation to config.yaml")
     p.add_argument("--no-save", dest="save", action="store_false", help="never ask to save")
     p.add_argument("--synthetic", action="store_true", help="demo the process on synthetic data (never saved)")
+    p.add_argument("--no-open", action="store_true", help="don't open the report in a browser")
     p.add_argument("--seed", type=int, default=7, help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_train, strategy=None)
 

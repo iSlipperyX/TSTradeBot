@@ -53,6 +53,7 @@ GRIDS: dict[str, list[dict]] = {
               trail_with_vwap=[True, False], stop_atr=[1.5, 2.0, 3.0])
         + _grid(exit_mode=["trail"], band_mult=[1.0], check_every_minutes=[30], trail_with_vwap=[True])
     ),
+    "late_day_momentum": _grid(confirm_with_12th=[False, True], stop_atr=[1.5, 2.0, 3.0], min_move_pct=[0.0, 0.25]),
     "orb": _grid(range_minutes=[15, 30, 60], stop_mode=["middle", "opposite"], target_r=[1.0, 2.0, 4.0],
                  entry_cutoff=["11:00", "13:00"]),
     "ema_trend": [dict(fast=f, slow=s, trend=t, atr_stop_mult=a, target_r=r)
@@ -127,8 +128,10 @@ class StrategyResult:
     final: Candidate | None  # chosen on the most recent train window: what to trade now
     final_train: Stats | None
     stability: float  # share of folds that chose the same settings as `final`
+    n_candidates: int = 1  # settings tried for this strategy (1 = no selection happened)
     eligible: bool = False
     reason: str = ""
+    oos_daily: list[tuple[date, float]] = field(default_factory=list)  # the test-window days, in order
 
 
 @dataclass
@@ -405,6 +408,7 @@ def walk_forward(
             choices.append((f, run.candidate, score))
             oos_windows.append((run, *f.test))
         oos = stats_for(oos_windows, plan)
+        oos_daily = [(d, run.pnl[d]) for run, first, last in oos_windows for d in _window(run, first, last)]
         # What to trade from now on: the settings chosen on the most recent train-length window.
         n_train = len(_window(mine[0], *folds[-1].train))
         recent = mine[0].days[-n_train:]
@@ -412,7 +416,8 @@ def walk_forward(
         final = final_pick[0].candidate if final_pick else None
         final_train = stats_for([(final_pick[0], recent[0], recent[-1])]) if final_pick else None
         stability = sum(1 for _, c, _ in choices if c == final) / len(choices) if choices else 0.0
-        res = StrategyResult(strategy, oos, choices, final, final_train, stability)
+        res = StrategyResult(strategy, oos, choices, final, final_train, stability, n_candidates=len(mine),
+                             oos_daily=oos_daily)
         min_oos = max(15, oos.days * min_trades_per_100_days // 200)
         if len(choices) < len(folds) or oos.trades < min_oos:
             res.reason = "too few trades"
