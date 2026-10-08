@@ -33,11 +33,19 @@ Other systems: `pip install -e .` then run `topstep-bot`.
 - **Paper trading** on live TopstepX prices with simulated fills.
 - **Local dashboard** (http://127.0.0.1:8765) with guardrail meters and Pause / Flatten / Stop
   buttons; KILL-file kill switch; emergency flatten command.
+- **Recommended trades** — every strategy's signals on the dashboard and in Telegram, sized with your
+  risk rules, tracked to a result; take any of them with one tap (re-priced, never oversized).
+- **Live settings** — change risk, limits, times, news pause and the auto-traded strategy from the
+  dashboard or Telegram, within safe bounds, with confirmation and a full audit trail.
+- **Logging** — daily logs, an errors-only file, a JSON event log, crash reports, secrets masked,
+  and the reason for every shutdown (`topstep-bot logs`).
+- **24/7 service** — auto-restart, keep-awake, daily maintenance restart, crash recovery; preflight
+  checks and ramp-up for a same-day start; automatic news blackouts.
 - **Telegram remote control** — `/status`, `/pause`, `/resume`, `/flatten`, `/stop` with tap buttons,
   owner-only, confirmations for dangerous actions; the setup wizard finds your chat ID for you.
 - **Journal** (SQLite), rotating logs, Telegram/Discord alerts, restart-safe state.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
-- 87 automated tests, including an end-to-end run against a simulated TopstepX server.
+- 122 automated tests, including an end-to-end run against a simulated TopstepX server.
 
 ## Commands
 
@@ -52,6 +60,9 @@ topstep-bot journal         recent trades and daily results
 topstep-bot strategies      describe strategies
 topstep-bot demo            demo backtest on synthetic data
 topstep-bot telegram-test   send a test message to your Telegram bot
+topstep-bot preflight       check everything before trading live (go-live = preflight + start)
+topstep-bot service         run 24/7 with auto-restart (autostart on = start with Windows)
+topstep-bot logs            recent errors; --open / --bundle
 ```
 
 ## Project layout

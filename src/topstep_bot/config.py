@@ -193,6 +193,13 @@ class NewsConfig(_Section):
     url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
 
+class RecommendationsConfig(_Section):
+    """Trade ideas on the dashboard from every strategy (the bot only trades the configured one)."""
+
+    enabled: bool = True
+    strategies: list[str] = Field(default_factory=list, description="Which strategies to show ideas from (empty = all).")
+
+
 class ServiceConfig(_Section):
     """Unattended 24/7 operation (used by 'topstep-bot service')."""
 
@@ -230,6 +237,8 @@ class BacktestConfig(_Section):
 class BotConfig(_Section):
     mode: Literal["paper", "live"] = "paper"
     log_level: str = "INFO"
+    log_dir: str = "logs"
+    log_retention_days: int = Field(default=30, ge=1, le=365)
     data_dir: str = "data"
     api: ApiConfig = Field(default_factory=ApiConfig)
     account: AccountConfig = Field(default_factory=AccountConfig)
@@ -243,6 +252,7 @@ class BotConfig(_Section):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     service: ServiceConfig = Field(default_factory=ServiceConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
+    recommendations: RecommendationsConfig = Field(default_factory=RecommendationsConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
 
@@ -300,7 +310,14 @@ def load_config(path: Path | str | None = None) -> BotConfig:
             raise FileNotFoundError(f"Config file not found: {cfg_path}")
         return BotConfig()
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-    return BotConfig.model_validate(raw)
+    cfg = BotConfig.model_validate(raw)
+    # Relative folders live next to config.yaml, wherever the bot is started from.
+    base = cfg_path.resolve().parent
+    for owner, attr in ((cfg, "data_dir"), (cfg, "log_dir"), (cfg.backtest, "report_dir")):
+        value = Path(getattr(owner, attr))
+        if not value.is_absolute():
+            setattr(owner, attr, str(base / value))
+    return cfg
 
 
 def save_config(cfg: BotConfig, path: Path | str = DEFAULT_CONFIG_PATH) -> None:

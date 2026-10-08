@@ -193,6 +193,7 @@ class OrderManager:
         ref_price: float,
         limit_price: float | None = None,
         planned_risk: float | None = None,
+        strategy: str | None = None,
     ) -> ManagedTrade | None:
         """Open a trade. With ``limit_price`` the entry can't fill worse than that price."""
         async with self._lock:
@@ -207,7 +208,7 @@ class OrderManager:
                 target_price=target_price,
                 reason=reason,
                 created_at=self.clock(),
-                strategy=self.strategy_name,
+                strategy=strategy or self.strategy_name,
                 planned_risk=planned_risk,
             )
             self.trade = t

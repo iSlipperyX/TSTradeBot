@@ -52,6 +52,26 @@ CREATE TABLE IF NOT EXISTS events (
     level TEXT,
     message TEXT
 );
+CREATE TABLE IF NOT EXISTS recommendations (
+    id TEXT,
+    created TEXT,
+    strategy TEXT,
+    active INTEGER,
+    side TEXT,
+    entry REAL,
+    stop REAL,
+    target REAL,
+    size INTEGER,
+    risk_usd REAL,
+    reason TEXT,
+    status TEXT,
+    note TEXT,
+    result TEXT,
+    exit_price REAL,
+    outcome_usd REAL,
+    outcome_r REAL,
+    PRIMARY KEY (id, created)
+);
 CREATE TABLE IF NOT EXISTS state (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -108,6 +128,19 @@ class Journal:
             (day.isoformat(), account, start_balance, end_balance, round(end_balance - start_balance, 2), trades, mll_floor),
         )
         self.conn.commit()
+
+    def record_recommendation(self, r: dict) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO recommendations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (r["id"], r["created"], r["strategy"], int(r["active"]), r["side"], r["entry"], r["stop"], r["target"],
+             r["size"], r["risk_usd"], r["reason"], r["status"], r["note"], r["result"], r["exit_price"],
+             r["outcome_usd"], r["outcome_r"]),
+        )
+        self.conn.commit()
+
+    def recommendations(self, limit: int = 100) -> list[dict]:
+        rows = self.conn.execute("SELECT * FROM recommendations ORDER BY created DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
 
     def log_event(self, level: str, message: str) -> None:
         self.conn.execute(

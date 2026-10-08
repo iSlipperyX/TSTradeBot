@@ -37,7 +37,9 @@ class Notifier:
     def start(self) -> None:
         if self.enabled and self._task is None:
             self._client = httpx.AsyncClient(timeout=10)
-            self._task = asyncio.create_task(self._worker(), name="notifier")
+            from topstep_bot.logging_setup import spawn
+
+            self._task = spawn(self._worker(), name="notifier")
 
     async def stop(self) -> None:
         if self._task is None:

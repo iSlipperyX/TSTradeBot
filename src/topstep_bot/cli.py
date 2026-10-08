@@ -8,11 +8,9 @@ import logging
 import sys
 import webbrowser
 from datetime import datetime, timedelta, timezone
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from rich.console import Console
-from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
@@ -27,20 +25,18 @@ log = logging.getLogger("topstep_bot")
 
 # --------------------------------------------------------------------- helpers
 
-def setup_logging(level: str = "INFO", log_dir: Path = Path("logs")) -> None:
-    log_dir.mkdir(exist_ok=True)
-    root = logging.getLogger()
-    root.handlers.clear()
-    root.setLevel(logging.DEBUG)
-    console_handler = RichHandler(console=console, show_path=False, rich_tracebacks=True, markup=False)
-    console_handler.setLevel(level.upper())
-    file_handler = RotatingFileHandler(log_dir / "bot.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s"))
-    root.addHandler(console_handler)
-    root.addHandler(file_handler)
-    for noisy in ("httpx", "httpcore", "websockets"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+def setup_logging(cfg: BotConfig, command: str, console_level: str | None = None) -> Path:
+    """Log to files in cfg.log_dir (see logging_setup.py) and to this window."""
+    from topstep_bot.logging_setup import log_startup
+    from topstep_bot.logging_setup import setup_logging as _setup
+
+    s = load_secrets()
+    log_dir = _setup(
+        cfg.log_dir, console_level or cfg.log_level, console=console, retention_days=cfg.log_retention_days,
+        secrets=[s.api_key, s.telegram_bot_token, s.discord_webhook_url],
+    )
+    log_startup(cfg, command)
+    return log_dir
 
 
 def _load(args: argparse.Namespace) -> BotConfig:
@@ -229,7 +225,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     from topstep_bot.live import Controls, LiveRunner, SetupError
 
     cfg = _load(args)
-    setup_logging(cfg.log_level)
+    log_dir = setup_logging(cfg, f"run ({cfg.mode})")
     secrets = load_secrets()
     if cfg.mode == "live":
         console.print(
@@ -264,7 +260,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             cfg.dashboard.host,
             cfg.dashboard.port,
             core.snapshot,
-            {name: (lambda fn=getattr(actions, name): fn("dashboard")) for name in ("pause", "resume", "flatten", "stop")},
+            {
+                **{name: (lambda payload, fn=getattr(actions, name): fn("dashboard"))
+                   for name in ("pause", "resume", "flatten", "stop")},
+                "preview_setting": lambda p: actions.preview_setting(p.get("key", ""), p.get("value")),
+                "set_setting": lambda p: actions.change_setting(p.get("key", ""), p.get("value"), "dashboard"),
+                "reset_settings": lambda p: actions.reset_settings("dashboard"),
+                "take_idea": lambda p: actions.take_idea(str(p.get("id", "")), "dashboard",
+                                                         int(p["size"]) if p.get("size") else None),
+            },
+            log_stats=True,
         )
         try:
             await server.start()
@@ -296,10 +301,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         with keep_awake(cfg.service.keep_awake):
             asyncio.run(main())
     except SetupError as exc:
-        console.print(f"[red]{exc}[/]")
+        log.error("Could not start: %s", exc)
         return 2
     except KeyboardInterrupt:
+        controls.stop_reason = controls.stop_reason or "Ctrl+C"
         console.print("Stopped.")
+    except Exception:
+        log.critical("The bot crashed. Details are in %s (errors.log and crash_*.txt)", log_dir, exc_info=True)
+        raise
+    log.info("Bot exited. Reason: %s", controls.stop_reason or "normal stop")
+    console.print(f"Stopped ({controls.stop_reason or 'normal stop'}). Logs: {log_dir}")
     return RESTART_EXIT_CODE if controls.restart_requested else 0
 
 
@@ -319,7 +330,9 @@ async def _start_telegram(
         await controller.close()
         return
     telegram.append(controller)
-    background.append(asyncio.create_task(controller.run(), name="telegram"))
+    from topstep_bot.logging_setup import spawn
+
+    background.append(spawn(controller.run(), name="telegram"))
     console.print("Telegram control: [bold]on[/] - send /help to your bot")
 
 
@@ -459,6 +472,47 @@ def cmd_go_live(args: argparse.Namespace) -> int:
     return cmd_run(run_args)
 
 
+def cmd_logs(args: argparse.Namespace) -> int:
+    """Show recent problems, open the log folder, or zip logs for support."""
+    import os
+    import zipfile
+
+    from topstep_bot.logging_setup import tail
+
+    cfg = _load(args)
+    log_dir = Path(cfg.log_dir)
+    if not log_dir.exists():
+        console.print(f"No logs yet ({log_dir}). They are created the first time the bot runs.")
+        return 0
+    if args.open:
+        if sys.platform == "win32":
+            os.startfile(log_dir)  # noqa: S606 - opens the folder in Explorer
+        else:
+            webbrowser.open(log_dir.resolve().as_uri())
+        return 0
+    if args.bundle:
+        path = log_dir / f"support_bundle_{datetime.now():%Y%m%d_%H%M%S}.zip"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in sorted(log_dir.iterdir()):
+                if f.is_file() and f.suffix != ".zip":
+                    zf.write(f, f.name)
+            cfg_file = Path(args.config or "config.yaml")
+            if cfg_file.exists():  # config.yaml holds no secrets (they live in .env, which is never included)
+                zf.write(cfg_file, "config.yaml")
+        console.print(f"[green]Support bundle created:[/] {path}\nIt contains logs and config.yaml - never your .env.")
+        return 0
+    crashes = sorted(log_dir.glob("crash_*.txt"))
+    if crashes:
+        console.print(f"[red]{len(crashes)} crash report(s).[/] Latest: {crashes[-1]}")
+        console.print("".join(tail(crashes[-1], 25)))
+    errors = tail(log_dir / "errors.log", args.lines)
+    console.print(Panel("".join(errors) or "No warnings or errors logged.", title="Recent warnings & errors (errors.log)"))
+    if args.all:
+        console.print(Panel("".join(tail(log_dir / "bot.log", args.lines)), title="Recent activity (bot.log)"))
+    console.print(f"[dim]Log folder: {log_dir}  -  'logs --open' opens it, 'logs --bundle' zips it for support.[/]")
+    return 0
+
+
 def cmd_flatten(args: argparse.Namespace) -> int:
     """Emergency: cancel all open orders and close all positions on the configured account."""
     from topstep_bot.live import select_account
@@ -569,6 +623,7 @@ MENU = [
     ("telegram-test", "Send a test message to your Telegram bot"),
     ("service", "Run 24/7 (auto-restart, keeps the PC awake, daily maintenance restart)"),
     ("autostart", "Start the 24/7 service automatically when Windows starts"),
+    ("logs", "Show recent errors and where the log files are"),
 ]
 
 
@@ -649,6 +704,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true")
     p.set_defaults(func=cmd_flatten)
 
+    p = sub.add_parser("logs", help="show recent errors, open the log folder, or zip logs for support")
+    p.add_argument("--lines", type=int, default=40)
+    p.add_argument("--all", action="store_true", help="also show recent general activity")
+    p.add_argument("--open", action="store_true", help="open the log folder")
+    p.add_argument("--bundle", action="store_true", help="zip the logs (and config.yaml, never .env) for support")
+    p.set_defaults(func=cmd_logs)
+
     p = sub.add_parser("journal", help="show recent trades and daily results")
     p.add_argument("--mode", choices=["paper", "live"])
     p.add_argument("--limit", type=int, default=20)
@@ -669,8 +731,11 @@ def main(argv: list[str] | None = None) -> int:
             return interactive_menu(parser)
         except KeyboardInterrupt:
             return 0
-    if args.command != "run":
-        logging.basicConfig(level=logging.WARNING)
+    if args.command not in ("run", "logs", "service"):
+        try:
+            setup_logging(_load(args), args.command, console_level="WARNING")
+        except Exception:  # noqa: BLE001 - never block a command because logging failed
+            logging.basicConfig(level=logging.WARNING)
     try:
         return args.func(args)
     except KeyboardInterrupt:

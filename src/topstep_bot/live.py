@@ -37,6 +37,7 @@ from topstep_bot.engine import TradingCore
 from topstep_bot.factory import build_core, fees_for, starting_balance
 from topstep_bot.journal import Journal
 from topstep_bot.models import Account, BarUnit, Contract, Quote
+from topstep_bot.logging_setup import asyncio_exception_handler, spawn
 from topstep_bot.news import NewsCalendar
 from topstep_bot.notify import Notifier
 from topstep_bot.sessions import session_open_for
@@ -58,6 +59,12 @@ class Controls:
     flatten_requested: bool = False
     flatten_reason: str = "flatten requested from dashboard"
     restart_requested: bool = False
+    stop_reason: str = ""
+
+    def request_stop(self, reason: str) -> None:
+        if not self.stop_reason:
+            self.stop_reason = reason
+        self.stop.set()
 
 
 async def select_account(client: ProjectXClient, cfg: BotConfig) -> Account:
@@ -162,8 +169,17 @@ class LiveRunner:
         if last_eod is None or last_eod < today.isoformat():
             core.tracker.end_of_day(acct.balance - realized)  # yesterday's close balance
 
+        if cfg.recommendations.enabled:
+            from topstep_bot.recommendations import RecommendationBook
+
+            core.recommender = RecommendationBook(core, cfg.recommendations.strategies or None)
         await self._warmup()
         await core.begin_day(today, acct.balance, realized, trades)
+        from topstep_bot.remote import RemoteControl
+
+        core.remote = RemoteControl(core, cfg.data_path / "remote_settings.json")
+        for change in core.remote.load_saved():
+            log.info("Re-applied remote setting: %s", change)
         await self._setup_news()
         self._apply_ramp_up()
         return core
@@ -186,6 +202,8 @@ class LiveRunner:
     # -------------------------------------------------------------------- run
 
     async def run(self, on_ready: Callable[[TradingCore], Awaitable[None]] | None = None) -> None:
+        asyncio.get_running_loop().set_exception_handler(asyncio_exception_handler)
+        log.info("Preparing: connecting to TopstepX and loading history")
         core = await self.prepare()
         assert self.broker and self.contract
         self.notifier.start()
@@ -198,11 +216,11 @@ class LiveRunner:
         await self._safe_reconcile()
 
         self._tasks = [
-            asyncio.create_task(self.market.hub.run(), name="market-hub"),
-            asyncio.create_task(self._bar_loop(), name="bars"),
-            asyncio.create_task(self._clock_loop(), name="clock"),
-            asyncio.create_task(self._reconcile_loop(), name="reconcile"),
-            asyncio.create_task(self._news_loop(), name="news"),
+            spawn(self.market.hub.run(), name="market-hub"),
+            spawn(self._bar_loop(), name="bars"),
+            spawn(self._clock_loop(), name="clock"),
+            spawn(self._reconcile_loop(), name="reconcile"),
+            spawn(self._news_loop(), name="news"),
         ]
         core.event(
             "info",
@@ -214,7 +232,15 @@ class LiveRunner:
             if on_ready:
                 await on_ready(core)
             await self.controls.stop.wait()
+        except asyncio.CancelledError:
+            self.controls.stop_reason = self.controls.stop_reason or "interrupted (Ctrl+C or window closed)"
+            raise
+        except Exception:
+            self.controls.stop_reason = self.controls.stop_reason or "crashed - see the error above"
+            log.critical("Bot crashed", exc_info=True)
+            raise
         finally:
+            log.warning("Shutting down. Reason: %s", self.controls.stop_reason or "unknown")
             await self.shutdown()
 
     async def shutdown(self) -> None:
@@ -300,6 +326,7 @@ class LiveRunner:
                     self.controls.flatten_requested = False
                     await core.halt(self.controls.flatten_reason)
                 if KILL_FILE.exists() and not core.halted:
+                    log.warning("KILL file found at %s", KILL_FILE.resolve())
                     await core.halt("KILL file found")
                 stale = self._last_price_at is None or now - self._last_price_at > timedelta(seconds=20)
                 if stale and not core.orders.is_flat and now.second % 10 == 0:
@@ -411,7 +438,7 @@ class LiveRunner:
         due = datetime.combine(local.date(), restart_at, tzinfo=core.schedule.tz)
         if self.started_at < due <= now and core.orders.is_flat:
             self.controls.restart_requested = True
-            self.controls.stop.set()
+            self.controls.request_stop("daily maintenance restart")
 
     async def _poll_price(self) -> None:
         """Fallback price source when the realtime stream is quiet or disconnected."""

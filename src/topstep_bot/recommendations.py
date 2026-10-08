@@ -1,0 +1,353 @@
+"""Recommended trades: what every strategy wants to do right now, sized with your risk rules.
+
+* The configured strategy's signals are traded automatically; each one appears here as
+  "taken" or "skipped" (with the reason - outside trading hours, daily limit, too risky...).
+* The other strategies run in "shadow" mode on the same bars. Their signals are shown as
+  ideas you could act on yourself - the bot never trades them.
+* Every recommendation is then followed bar by bar to a result (stop, target, strategy exit or
+  session end), so you can see how good each strategy's ideas really are on live data.
+  Results for ideas that weren't traded are hypothetical (stop-first if a bar hits both).
+"""
+
+from __future__ import annotations
+
+import itertools
+import logging
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING, Any
+
+from topstep_bot.models import Bar, OrderSide, Signal
+from topstep_bot.strategies import STRATEGIES, Strategy, StrategyContext, create_strategy
+
+if TYPE_CHECKING:
+    from topstep_bot.engine import TradePlan, TradingCore
+    from topstep_bot.execution import ManagedTrade
+
+log = logging.getLogger("topstep_bot.recommendations")
+
+OPEN_STATUSES = ("idea", "tracking", "taken", "skipped")
+
+
+@dataclass
+class Recommendation:
+    id: str
+    created: datetime  # UTC time of the bar close that produced it
+    strategy: str
+    title: str
+    active: bool  # True = the configured strategy (auto-traded)
+    side: OrderSide
+    entry: float
+    stop: float | None
+    target: float | None
+    size: int
+    risk_usd: float | None
+    reason: str
+    status: str  # idea | tracking | taken | skipped | closed
+    note: str = ""
+    trade_tag: str | None = None
+    exit_price: float | None = None
+    outcome_usd: float | None = None
+    outcome_r: float | None = None
+    result: str = ""  # won | lost | flat
+    closed_at: datetime | None = None
+    hypothetical: bool = True
+    initial_stop: float | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        if self.initial_stop is None:
+            self.initial_stop = self.stop
+
+    @property
+    def is_open(self) -> bool:
+        return self.result == ""
+
+    @property
+    def reward_usd(self) -> float | None:
+        if self.target is None or self.risk_usd is None or self.stop is None or self.entry == self.stop:
+            return None
+        return self.risk_usd * abs(self.target - self.entry) / abs(self.entry - self.stop)
+
+    @property
+    def rr(self) -> float | None:
+        if self.target is None or self.stop is None or self.entry == self.stop:
+            return None
+        return abs(self.target - self.entry) / abs(self.entry - self.stop)
+
+
+class RecommendationBook:
+    def __init__(self, core: TradingCore, strategies: list[str] | None = None, max_items: int = 200):
+        self.core = core
+        self.items: deque[Recommendation] = deque(maxlen=max_items)
+        self._ids = itertools.count(1)
+        self._day: date | None = None
+        self.shadows: list[Strategy] = []
+        wanted = strategies or [n for n in STRATEGIES if n != core.strategy.name]
+        for name in wanted:
+            if name == core.strategy.name or name not in STRATEGIES:
+                continue
+            try:
+                self.shadows.append(create_strategy(name, {}, core.contract, core.cfg.instrument.timeframe_minutes))
+            except ValueError as exc:
+                log.warning("Strategy '%s' can't produce recommendations on this timeframe: %s", name, exc)
+
+    # ------------------------------------------------------------- feeding bars
+
+    def _context(self, bar: Bar, strategy_name: str, warmup: bool) -> StrategyContext:
+        base = self.core.context(bar, warmup=warmup)
+        rec = self._open_for(strategy_name)
+        position = 0 if rec is None else rec.side.sign * max(rec.size, 1)
+        return StrategyContext(base.bar_close, base.local_close, base.day, position,
+                               rec.entry if rec else None, rec.stop if rec else None, warmup)
+
+    def _new_day_check(self, bar: Bar) -> None:
+        day = self.core.schedule.trading_day(bar.ts)
+        if day == self._day:
+            return
+        self._day = day
+        for strat in self.shadows:
+            strat.on_new_day(day)
+        for rec in self.items:  # anything left open from an earlier day (e.g. the bot was off)
+            if rec.is_open and rec.status != "taken":
+                self._close(rec, rec.entry if rec.exit_price is None else rec.exit_price, "expired (new day)")
+
+    def warmup_bar(self, bar: Bar) -> None:
+        self._new_day_check(bar)
+        for strat in self.shadows:
+            strat.on_bar(bar, self._context(bar, strat.name, warmup=True))
+
+    def on_bar(self, bar: Bar) -> list[tuple[str, str, Any]]:
+        """Advance outcomes with this bar, then collect fresh ideas from the shadow strategies.
+
+        Returns actions for trades you took from ideas: ("exit", tag, reason) / ("stop", tag, price).
+        """
+        actions: list[tuple[str, str, Any]] = []
+        self._new_day_check(bar)
+        self._track(bar)
+        close_time = bar.ts + timedelta(minutes=self.core.cfg.instrument.timeframe_minutes)
+        for strat in self.shadows:
+            ctx = self._context(bar, strat.name, warmup=False)
+            try:
+                sig = strat.on_bar(bar, ctx)
+                open_rec = self._open_for(strat.name)
+                if open_rec is not None:
+                    new_stop = strat.trailing_stop(bar, ctx)
+                    if new_stop is not None and open_rec.stop is not None:
+                        better = new_stop > open_rec.stop if open_rec.side == OrderSide.BUY else new_stop < open_rec.stop
+                        if better and open_rec.status == "taken":
+                            actions.append(("stop", open_rec.trade_tag, new_stop))
+                        elif better:
+                            open_rec.stop = self.core.contract.round_price(new_stop)
+            except Exception:  # noqa: BLE001 - a shadow strategy must never disturb trading
+                log.exception("Shadow strategy %s failed", strat.name)
+                continue
+            if sig is None:
+                continue
+            if sig.action == "exit":
+                if open_rec is not None and open_rec.status == "taken":
+                    actions.append(("exit", open_rec.trade_tag, f"{strat.title} exit: {sig.reason}"))
+                elif open_rec is not None:
+                    self._close(open_rec, bar.close, f"strategy exit: {sig.reason}")
+            elif sig.side is not None and open_rec is None:
+                self._add_idea(strat, sig, bar, close_time)
+        return actions
+
+    def swap_active(self, name: str) -> Strategy:
+        """Make ``name`` the auto-traded strategy, reusing its warmed-up shadow; the old one becomes a shadow."""
+        new = next((s for s in self.shadows if s.name == name), None)
+        if new is None:
+            new = create_strategy(name, {}, self.core.contract, self.core.cfg.instrument.timeframe_minutes)
+        else:
+            self.shadows.remove(new)
+        self.shadows.append(self.core.strategy)
+        return new
+
+    def _add_idea(self, strat: Strategy, sig: Signal, bar: Bar, close_time: datetime) -> None:
+        core = self.core
+        entry = bar.close
+        plan = core.plan_entry(sig, entry)
+        note = ""
+        if isinstance(plan, str):
+            note, size, stop, target, risk = plan, 0, sig.stop_price, sig.target_price, None
+        else:
+            size, stop, target, risk = plan.size, plan.stop, plan.target, plan.planned_risk
+        blocked = core.schedule.entry_block_reason(close_time)
+        if blocked:
+            note = f"outside your rules: {blocked}" + (f"; {note}" if note else "")
+        rec = Recommendation(
+            id=f"R{next(self._ids)}", created=close_time, strategy=strat.name, title=strat.title, active=False,
+            side=sig.side, entry=entry, stop=stop, target=target, size=size, risk_usd=risk,
+            reason=sig.reason, status="idea", note=note,
+        )
+        self._store(rec, new=True)
+
+    def record_active(
+        self,
+        sig: Signal,
+        ctx: StrategyContext,
+        entry_ref: float,
+        plan: TradePlan | None,
+        status: str,
+        note: str,
+        tag: str | None = None,
+    ) -> None:
+        """Called by the engine for every entry signal of the configured strategy."""
+        strat = self.core.strategy
+        rec = Recommendation(
+            id=f"R{next(self._ids)}", created=ctx.bar_close, strategy=strat.name, title=strat.title, active=True,
+            side=sig.side, entry=entry_ref,
+            stop=plan.stop if plan else sig.stop_price, target=plan.target if plan else sig.target_price,
+            size=plan.size if plan else 0, risk_usd=plan.planned_risk if plan else None,
+            reason=sig.reason, status=status, note=note, trade_tag=tag, hypothetical=status != "taken",
+        )
+        self._store(rec, new=True)
+
+    def trade_closed(self, t: ManagedTrade) -> None:
+        """A real trade finished: give its recommendation the actual result."""
+        for rec in self.items:
+            if rec.trade_tag == t.tag and rec.is_open:
+                rec.size = t.filled_size or rec.size
+                if t.entry_price:
+                    rec.entry = t.entry_price
+                self._close(rec, t.exit_price or rec.entry, t.exit_reason, outcome=t.net_pnl)
+                return
+
+    # ------------------------------------------------------------- outcomes
+
+    def _open_for(self, strategy: str) -> Recommendation | None:
+        for rec in self.items:
+            if rec.strategy == strategy and rec.is_open and not rec.active:
+                return rec
+        return None
+
+    def _track(self, bar: Bar) -> None:
+        close_time = bar.ts + timedelta(minutes=self.core.cfg.instrument.timeframe_minutes)
+        session_over = self.core.schedule.must_be_flat(close_time)
+        live_tag = self.core.orders.trade.tag if self.core.orders.trade else None
+        for rec in list(self.items):
+            if not rec.is_open or bar.ts < rec.created:
+                continue
+            if rec.status == "taken":
+                if rec.trade_tag != live_tag:  # the entry was cancelled before it filled
+                    self._close(rec, rec.entry, "entry not filled (price moved away)", outcome=0.0)
+                continue
+            if rec.status == "idea":
+                rec.status = "tracking"
+            long = rec.side == OrderSide.BUY
+            if rec.stop is not None and ((long and bar.low <= rec.stop) or (not long and bar.high >= rec.stop)):
+                self._close(rec, rec.stop, "stop hit")
+            elif rec.target is not None and ((long and bar.high >= rec.target) or (not long and bar.low <= rec.target)):
+                self._close(rec, rec.target, "target hit")
+            elif session_over:
+                self._close(rec, bar.close, "session end")
+
+    def _close(self, rec: Recommendation, price: float, why: str, outcome: float | None = None) -> None:
+        c = self.core.contract
+        points = (price - rec.entry) * rec.side.sign
+        risk_points = abs(rec.entry - rec.initial_stop) if rec.initial_stop is not None else 0
+        rec.exit_price = price
+        rec.outcome_r = round(points / risk_points, 2) if risk_points else None
+        if outcome is None and rec.size:
+            outcome = points * c.point_value * rec.size - self.core.orders.fees_round_turn * rec.size
+        rec.outcome_usd = None if outcome is None else round(outcome, 2)
+        basis = rec.outcome_usd if rec.outcome_usd is not None else points
+        rec.result = "won" if basis > 0 else ("lost" if basis < 0 else "flat")
+        rec.note = f"{rec.note}; {why}" if rec.note and rec.status != "taken" else why
+        if rec.status in ("idea", "tracking"):
+            rec.status = "closed"
+        rec.closed_at = self.core.clock()
+        self._store(rec)
+
+    # ------------------------------------------------------------- output
+
+    def _store(self, rec: Recommendation, new: bool = False) -> None:
+        if new:
+            self.items.appendleft(rec)
+        data = self.to_dict(rec)
+        if new:
+            log.info(
+                "%s %s %s %s @ %s stop %s%s (%s)%s", "Trade" if rec.active else "Idea", rec.title, rec.side.label,
+                rec.size or "-", rec.entry, rec.stop, f" target {rec.target}" if rec.target else "", rec.reason,
+                f" - {rec.status}: {rec.note}" if rec.note else f" - {rec.status}",
+                extra={"event": "recommendation", "data": data},
+            )
+            if not rec.active and self.core.notifier and rec.size and not rec.note:
+                self.core.notifier.notify(
+                    "idea", f"Idea ({rec.title}): {rec.side.label} {rec.size} @ ~{rec.entry} stop {rec.stop}"
+                    + (f" target {rec.target}" if rec.target else "") + f" - {rec.reason}")
+        else:
+            log.info("Recommendation %s %s: %s%s", rec.id, rec.title, rec.result or rec.status,
+                     f" ({rec.note})" if rec.note else "",
+                     extra={"event": "recommendation_result", "data": data})
+        if self.core.journal:
+            self.core.journal.record_recommendation(data)
+
+    def to_dict(self, rec: Recommendation) -> dict[str, Any]:
+        local = self.core.schedule.local(rec.created)
+        return {
+            "id": rec.id,
+            "time": local.strftime("%H:%M"),
+            "date": local.date().isoformat(),
+            "created": rec.created.isoformat(),
+            "strategy": rec.strategy,
+            "title": rec.title,
+            "active": rec.active,
+            "side": rec.side.label,
+            "entry": rec.entry,
+            "stop": rec.stop,
+            "target": rec.target,
+            "size": rec.size,
+            "risk_usd": None if rec.risk_usd is None else round(rec.risk_usd, 2),
+            "reward_usd": None if rec.reward_usd is None else round(rec.reward_usd, 2),
+            "rr": None if rec.rr is None else round(rec.rr, 2),
+            "reason": rec.reason,
+            "status": rec.status,
+            "note": rec.note,
+            "result": rec.result,
+            "exit_price": rec.exit_price,
+            "outcome_usd": rec.outcome_usd,
+            "outcome_r": rec.outcome_r,
+            "hypothetical": rec.hypothetical,
+        }
+
+    def snapshot(self, limit: int = 25) -> dict[str, Any]:
+        today = self.core.schedule.trading_day(self.core.clock())
+        todays = [r for r in self.items if self.core.schedule.trading_day(r.created) == today]
+        summary = []
+        names = [self.core.strategy] + self.shadows
+        for strat in names:
+            mine = [r for r in todays if r.strategy == strat.name]
+            closed = [r for r in mine if r.result]
+            summary.append({
+                "strategy": strat.name, "title": strat.title, "active": strat is self.core.strategy,
+                "ideas": len(mine), "closed": len(closed), "wins": sum(1 for r in closed if r.result == "won"),
+                "pnl": round(sum(r.outcome_usd or 0 for r in closed), 2),
+            })
+        watching = {
+            s.title: {k: (round(v, 2) if isinstance(v, float) else v) for k, v in s.state().items()} for s in self.shadows
+        }
+        return {
+            "items": [self.to_dict(r) for r in list(self.items)[:limit]],
+            "open": [self.to_dict(r) for r in self.items if r.status == "idea"],
+            "summary": summary,
+            "watching": watching,
+        }
+
+    def text(self, limit: int = 8) -> str:
+        """Plain-text list for Telegram."""
+        if not self.items:
+            return "No recommendations yet - they appear when a strategy signals during market hours."
+        lines = []
+        for r in list(self.items)[:limit]:
+            d = self.to_dict(r)
+            head = f"{d['time']} {'★' if r.active else '•'} {r.title}: {r.side.label} {r.size or '-'} @ {r.entry} stop {r.stop}"
+            if r.target is not None:
+                head += f" tgt {r.target}"
+            if r.result:
+                money = f"{r.outcome_usd:+,.0f}$" if r.outcome_usd is not None else f"{r.outcome_r:+.1f}R"
+                tail = f" -> {r.result.upper()} {money}" + (" (hypothetical)" if r.hypothetical else "")
+            else:
+                tail = f" -> {r.status}" + (f" ({r.note})" if r.note else "")
+            lines.append(head + tail)
+        return "Recommended trades (★ = traded by the bot, • = idea only):\n" + "\n".join(lines)

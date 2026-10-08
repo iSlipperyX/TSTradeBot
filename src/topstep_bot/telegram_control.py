@@ -34,6 +34,10 @@ COMMANDS = [
     ("resume", "Allow new trades again"),
     ("flatten", "Close everything and halt trading"),
     ("stop", "Shut the bot down (flattens first)"),
+    ("ideas", "Recommended trades - tap Take to trade one"),
+    ("settings", "Show the settings you can change"),
+    ("set", "Change a setting, e.g. /set risk 150"),
+    ("reset", "Undo all setting changes made remotely"),
     ("trades", "Recent closed trades"),
     ("log", "Recent bot activity"),
     ("help", "Show the commands"),
@@ -46,8 +50,9 @@ KEYBOARD = {
     "inline_keyboard": [
         [{"text": "📊 Status", "callback_data": "cmd:status"}, {"text": "⏸ Pause", "callback_data": "cmd:pause"},
          {"text": "▶️ Resume", "callback_data": "cmd:resume"}],
-        [{"text": "📜 Trades", "callback_data": "cmd:trades"}, {"text": "🛑 Flatten", "callback_data": "cmd:flatten"},
-         {"text": "⏹ Stop bot", "callback_data": "cmd:stop"}],
+        [{"text": "💡 Ideas", "callback_data": "cmd:ideas"}, {"text": "📜 Trades", "callback_data": "cmd:trades"}],
+        # "Stop bot" is deliberately not a quick button: it shuts the program down. Type /stop if you mean it.
+        [{"text": "🛑 Flatten & halt", "callback_data": "cmd:flatten"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
     ]
 }
 
@@ -60,7 +65,9 @@ class TelegramError(Exception):
 
 def help_text() -> str:
     lines = ["Topstep Bot commands:"] + [f"/{name} - {desc}" for name, desc in COMMANDS]
-    lines.append("\n/flatten and /stop ask for confirmation. A stopped bot can only be restarted on your PC.")
+    lines.append("\nExamples: /set risk 150 - /set dailyloss 400 - /set strategy orb - /set news off")
+    lines.append("/flatten, /stop, setting changes and taking ideas all ask for confirmation. "
+                 "A stopped bot can only be restarted on your PC.")
     return "\n".join(lines)
 
 
@@ -189,8 +196,9 @@ class TelegramController:
         if not text.startswith("/"):
             await self.send("Send /help to see the commands.", KEYBOARD)
             return
-        command = text[1:].split()[0].split("@")[0].lower()
-        await self.dispatch(command, self._who(user))
+        parts = text[1:].split()
+        command = parts[0].split("@")[0].lower() if parts else "help"
+        await self.dispatch(command, self._who(user), parts[1:])
 
     async def _handle_callback(self, cq: dict) -> None:
         message = cq.get("message") or {}
@@ -207,13 +215,20 @@ class TelegramController:
         message_id = message.get("message_id")
         if data.startswith("cmd:"):
             await self.dispatch(data[4:], self._who(user))
+        elif data.startswith(("take:", "takeh:")):
+            await self._confirm_take(data.split(":", 1)[1], half=data.startswith("takeh:"))
         elif data.startswith("yes:"):
             action = data[4:]
             pending = self.pending.pop(message_id, None)
             if pending is None or pending[0] != action or time.monotonic() - pending[1] > CONFIRM_SECONDS:
                 await self._edit(message_id, "That confirmation expired - send the command again.")
                 return
-            result = self._execute(action, self._who(user))
+            payload = pending[2] if len(pending) > 2 else None
+            try:
+                result = await self._execute_confirmed(action, payload, self._who(user))
+            except (ValueError, RuntimeError) as exc:
+                await self._edit(message_id, f"❌ {exc}")
+                return
             await self._edit(message_id, f"✅ {result}")
         elif data == "no":
             self.pending.pop(message_id, None)
@@ -232,7 +247,46 @@ class TelegramController:
             "stop": self.actions.stop,
         }[action](source)
 
-    async def dispatch(self, command: str, source: str) -> None:
+    async def _execute_confirmed(self, action: str, payload, source: str) -> str:
+        if action == "set":
+            key, value = payload
+            return self.actions.change_setting(key, value, source)
+        if action == "reset":
+            return self.actions.reset_settings(source)
+        if action == "take":
+            rec_id, size = payload
+            return await self.actions.take_idea(rec_id, source, size)
+        return self._execute(action, source)
+
+    async def _ask(self, question: str, action: str, payload=None, yes: str | None = None) -> None:
+        confirm = {"inline_keyboard": [[{"text": yes or f"Yes, {action}", "callback_data": f"yes:{action}"},
+                                        {"text": "Cancel", "callback_data": "no"}]]}
+        message_id = await self.send(question, confirm)
+        if message_id is not None:
+            self.pending[message_id] = (action, time.monotonic(), payload)
+
+    async def _confirm_take(self, rec_id: str, half: bool) -> None:
+        idea = self.actions.find_idea(rec_id)
+        if idea is None or not idea["size"]:
+            await self.send("That idea can't be taken (not found, or no valid size).")
+            return
+        size = max(1, idea["size"] // 2) if half else idea["size"]
+        target = f", target {idea['target']}" if idea["target"] is not None else ""
+        await self._ask(
+            f"Take {idea['id']} ({idea['title']}): {idea['side']} {size} near {idea['entry']}, stop {idea['stop']}{target}?\n"
+            f"It is re-priced at the current market and sized by your risk rules (never larger). "
+            f"Idea: {idea['reason']}",
+            "take", (rec_id, size), yes=f"Yes, take {size}",
+        )
+
+    async def _send_ideas(self) -> None:
+        ideas = self.actions.open_ideas()
+        rows = [[{"text": f"Take {i['id']} ({i['side']} {i['size']})", "callback_data": f"take:{i['id']}"},
+                 {"text": "½ size", "callback_data": f"takeh:{i['id']}"}] for i in ideas]
+        await self.send(self.actions.ideas_text(), {"inline_keyboard": rows} if rows else KEYBOARD)
+
+    async def dispatch(self, command: str, source: str, args: list[str] | None = None) -> None:
+        args = args or []
         if command in ("status", "start"):
             await self.send(self.actions.status_text(), KEYBOARD)
         elif command in ("pause", "resume"):
@@ -244,7 +298,8 @@ class TelegramController:
             question = (
                 "⚠️ Close any open position, cancel all orders and HALT trading until the bot is restarted?"
                 if command == "flatten"
-                else "⚠️ Shut the bot down? It flattens first and can only be restarted from your PC."
+                else "⚠️ SHUT THE PROGRAM DOWN? It flattens first, the 24/7 service also exits, and it can only be "
+                "restarted from your PC. (To just stop new trades, use /pause instead.)"
             )
             confirm = {"inline_keyboard": [[{"text": f"Yes, {command}", "callback_data": f"yes:{command}"},
                                             {"text": "Cancel", "callback_data": "no"}]]}
@@ -253,6 +308,28 @@ class TelegramController:
                 self.pending[message_id] = (command, time.monotonic())
         elif command == "trades":
             await self.send(self.actions.trades_text())
+        elif command == "ideas":
+            await self._send_ideas()
+        elif command == "settings":
+            await self.send(self.actions.settings_text())
+        elif command == "set":
+            if len(args) < 2:
+                await self.send("Usage: /set <setting> <value>, e.g. /set risk 150. Send /settings for the list.")
+                return
+            try:
+                p = self.actions.preview_setting(args[0], " ".join(args[1:]))
+            except (ValueError, RuntimeError) as exc:
+                await self.send(f"❌ {exc}")
+                return
+            if not p["changed"]:
+                await self.send(f"{p['label']} is already {p['new']}.")
+                return
+            warn = "\n⚠️ This increases your risk." if p["riskier"] else ""
+            await self._ask(f"Change {p['label']}: {p['old']} -> {p['new']}?{warn}", "set", (p["key"], " ".join(args[1:])),
+                            yes="Yes, change it")
+        elif command == "reset":
+            await self._ask("Undo every setting changed from the dashboard/Telegram and go back to config.yaml?", "reset",
+                            yes="Yes, reset")
         elif command == "log":
             await self.send(self.actions.log_text())
         else:

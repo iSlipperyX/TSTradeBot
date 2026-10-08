@@ -94,7 +94,7 @@ def test_dashboard_requires_token_and_local_host(mnq):
         core, _, _ = make_core(mnq)
         await core.begin_day(core.schedule.trading_day(T0), 50_000)
         calls = []
-        server = DashboardServer("127.0.0.1", 0, core.snapshot, {"pause": lambda: calls.append("pause")})
+        server = DashboardServer("127.0.0.1", 0, core.snapshot, {"pause": lambda payload: calls.append("pause")})
         server.port = 0
         server._server = await asyncio.start_server(server._handle, "127.0.0.1", 0)
         port = server._server.sockets[0].getsockname()[1]

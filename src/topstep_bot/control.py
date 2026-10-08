@@ -45,7 +45,7 @@ class BotActions:
 
     def stop(self, source: str) -> str:
         self.core.event("warning", f"Stop requested from {source}")
-        self.controls.stop.set()
+        self.controls.request_stop(f"stop requested from {source}")
         return "Stopping the bot (it flattens first). It can only be restarted from your PC."
 
     # ------------------------------------------------------------------ text
@@ -108,6 +108,49 @@ class BotActions:
             for t in trades
             if t.closed_at
         )
+
+    # ------------------------------------------------------------------ remote settings & trades
+
+    def _remote(self):
+        if self.core.remote is None:
+            raise RuntimeError("Remote settings are not available")
+        return self.core.remote
+
+    def preview_setting(self, key: str, value) -> dict:
+        return self._remote().preview(key, value)
+
+    def change_setting(self, key: str, value, source: str) -> str:
+        return self._remote().apply(key, value, source)
+
+    def reset_settings(self, source: str) -> str:
+        return self._remote().reset(source)
+
+    def settings_text(self) -> str:
+        return self._remote().settings_text()
+
+    async def take_idea(self, rec_id: str, source: str, size: int | None = None) -> str:
+        return await self._remote().take_idea(rec_id, source, size)
+
+    def open_ideas(self, limit: int = 4) -> list[dict]:
+        """Recommendations that can still be taken (newest first)."""
+        from topstep_bot.remote import IDEA_MAX_AGE
+
+        book = self.core.recommender
+        if book is None:
+            return []
+        now = self.core.clock()
+        fresh = [r for r in book.items if r.is_open and r.status in ("idea", "tracking", "skipped")
+                 and r.size and now - r.created <= IDEA_MAX_AGE]
+        return [book.to_dict(r) for r in fresh[:limit]]
+
+    def find_idea(self, rec_id: str) -> dict | None:
+        book = self.core.recommender
+        rec = next((r for r in book.items if r.id == rec_id), None) if book else None
+        return book.to_dict(rec) if rec else None
+
+    def ideas_text(self) -> str:
+        book = self.core.recommender
+        return book.text() if book else "Recommendations are turned off (recommendations.enabled: false)."
 
     def log_text(self, limit: int = 10) -> str:
         events = list(self.core.events)[:limit]
