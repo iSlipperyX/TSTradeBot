@@ -115,7 +115,8 @@ class LateDayMomentum(Strategy):
         conds.append((f"Entry time {self.entry_time:%H:%M} CT", False))
         distance = self.p["stop_atr"] * self.atr.value
         stop = price - distance if long else price + distance
-        return [Setup(side, conds, None, stop, None, f"enters at the {self.entry_time:%H:%M} CT close, exits at the session flatten")]
+        return [Setup(side, conds, None, stop, None, f"enters at the {self.entry_time:%H:%M} CT close, exits at the session flatten",
+                      at=self.entry_time)]
 
     def state(self) -> dict:
         return {"previous_close": self.prev_close,

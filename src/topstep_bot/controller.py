@@ -371,6 +371,15 @@ class ProxyActions:
     async def train(self, source: str) -> str:
         return await self._msg("train", source)
 
+    async def brief_text(self) -> str:
+        return await self._text("brief_text")
+
+    async def next_text(self) -> str:
+        return await self._text("next_text")
+
+    async def learn(self, source: str) -> str:
+        return await self._msg("learn", source)
+
     async def preview_setting(self, key: str, value: Any) -> dict:
         return await self.bot.action("preview_setting", {"key": key, "value": value})
 

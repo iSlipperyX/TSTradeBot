@@ -39,8 +39,11 @@ COMMANDS = [
     ("startbot", "Start the bot if it is stopped"),
     ("stop", "Stop the bot (Telegram and the dashboard stay online)"),
     ("ideas", "Recommended trades - tap Take to trade one"),
+    ("brief", "What the bot knows right now, in plain words"),
+    ("next", "When the bot expects its next trade, and why"),
     ("knowledge", "What the bot has learned: which strategy works when"),
     ("train", "Retrain the knowledge base on recent history now"),
+    ("learn", "Feed the bot more history: backfill and replay all of it"),
     ("settings", "Show the settings you can change"),
     ("set", "Change a setting, e.g. /set risk 150"),
     ("reset", "Undo all setting changes made remotely"),
@@ -58,6 +61,7 @@ KEYBOARD = {
          {"text": "▶️ Resume", "callback_data": "cmd:resume"}],
         [{"text": "💡 Ideas", "callback_data": "cmd:ideas"}, {"text": "📜 Trades", "callback_data": "cmd:trades"},
          {"text": "🧠 Knowledge", "callback_data": "cmd:knowledge"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
+        [{"text": "💬 What I know", "callback_data": "cmd:brief"}, {"text": "⏳ Next trade", "callback_data": "cmd:next"}],
         [{"text": "🛑 Flatten & halt", "callback_data": "cmd:flatten"}, {"text": "🔄 Restart bot", "callback_data": "cmd:restart"},
          {"text": "▶️ Start bot", "callback_data": "cmd:startbot"}],
     ]
@@ -330,6 +334,14 @@ class TelegramController:
         elif command == "train":
             await self.send("🧠 Training on recent history - this takes a few seconds...")
             await self.send(await self._do("train", source))
+        elif command == "brief":
+            await self.send(await self._do("brief_text"))
+        elif command == "next":
+            await self.send(await self._do("next_text"))
+        elif command == "learn":
+            await self.send("📚 Learning from the long-run memory: downloading missing history and replaying all of it. "
+                            "This can take a minute; the bot keeps trading meanwhile...")
+            await self.send(await self._do("learn", source))
         elif command == "set":
             if len(args) < 2:
                 await self.send("Usage: /set <setting> <value>, e.g. /set risk 150. Send /settings for the list.")
