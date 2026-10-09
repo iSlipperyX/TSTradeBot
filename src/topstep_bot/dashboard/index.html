@@ -105,6 +105,12 @@ td.note { white-space:normal; color:var(--text2); min-width:200px; }
 .kb.ok { color:var(--pos); border-color:var(--pos); } .kb.bad { color:var(--neg); border-color:var(--neg); } .kb.unk { color:var(--muted); }
 .kb-cell { display:flex; flex-direction:column; gap:3px; }
 th.now, td.now { background:var(--surface2); }
+.hints { list-style:none; margin:0; padding:0; font-size:13px; }
+.hints li { padding:7px 0; border-bottom:1px solid var(--border); }
+.hints li .why { color:var(--text2); font-size:12.5px; margin-top:3px; display:flex; gap:6px; flex-wrap:wrap; }
+.picker { font:inherit; font-size:12.5px; padding:4px 8px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color:var(--text); }
+td.dim { color:var(--muted); }
+@media (max-width:760px) { #ins-table td:first-child, #ins-cond td:first-child { white-space:normal; min-width:120px; } }
 
 /* trade ticket */
 .sidepick { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
@@ -365,6 +371,25 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
         The bot adds every signal it sees — traded or not — while it runs, and retrains on recent history each day. Older evidence fades out.</p>
     </div>
     <div class="panel" style="margin-top:12px">
+      <div class="row"><h2 style="margin:0">What the bot has learned</h2><span class="spacer"></span>
+        <button class="small" id="ins-csv" title="Every observation, one row each, with its market snapshot">Download CSV</button></div>
+      <div id="ins-meta" class="meta" style="margin:6px 0 10px"></div>
+      <div class="tablewrap"><table id="ins-table"><thead></thead><tbody></tbody></table></div>
+      <p class="hint">Average result per signal in R. <b>After costs</b> takes out fees and, for ideas that weren't traded,
+        the slippage your backtests assume; real fills already include their slippage. <b>Best / worst point</b>: how far a signal
+        went for and against it on average before it ended. <b>Losers up 1R first</b>: losing signals that were 1R in profit
+        on the way, a sign a breakeven stop or a target might help. Observations from before these were measured count before costs.</p>
+      <div id="ins-fills" class="summary" hidden></div>
+      <h3>Conditions worth testing</h3>
+      <ul id="ins-hints" class="hints"></ul>
+      <div class="row" style="margin-top:12px"><h3 style="margin:0">Compare by</h3><select id="ins-feature" class="picker"></select></div>
+      <div id="ins-feature-help" class="hint" style="margin-top:4px"></div>
+      <div class="tablewrap"><table id="ins-cond"><thead></thead><tbody></tbody></table></div>
+      <p class="hint">Hints, not proven: the bot compares many strategies on many measurements, so some differences are luck.
+        Nothing here changes how the bot trades; a condition earns a place in its decisions only after it holds up on data it never saw.
+        Faded numbers have fewer than <span id="ins-min">15</span> observations.</p>
+    </div>
+    <div class="panel" style="margin-top:12px">
       <h2>Your manual trades</h2>
       <div id="kb-manual"></div>
       <p class="hint">Trades you placed from the Trade tab, by time of day and regime. They never switch a strategy on or off; the
@@ -449,6 +474,7 @@ function showTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (name === "logs") loadLogs();
   if (name === "trade") loadTicket();
+  if (name === "knowledge") loadInsights(true);
 }
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 const openTab = showTab;
@@ -472,6 +498,14 @@ $("reset").onclick = () => { settingsBuilt = false; run("action/reset_settings",
 $("logpill").onclick = () => openTab("logs");
 $("reloadlogs").onclick = loadLogs;
 $("newtrade").onclick = () => openTab("trade");
+$("ins-csv").onclick = async () => {
+  const d = await post("action/insights_csv");
+  if (d.ok === false) { toast(d.message || "Could not export the knowledge base", true); return; }
+  const url = URL.createObjectURL(new Blob([d.csv], {type: "text/csv"}));
+  const a = document.createElement("a"); a.href = url; a.download = d.filename || "knowledge.csv";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+$("ins-feature").onchange = () => { store.set("tsb-ins-feature", $("ins-feature").value); renderConditions(); };
 $("train").onclick = async () => {
   if (!confirm("Retrain the knowledge base on recent history now? The bot keeps trading meanwhile; it takes a few seconds.")) return;
   $("train").disabled = true; toast("Training…"); await run("action/train"); $("train").disabled = false;
@@ -889,6 +923,84 @@ function renderKnowledge(b) {
         <td class="num ${x.r < 0 ? "neg" : x.r > 0 ? "pos" : ""}">${signed(x.r)}</td><td class="num">${money0(x.usd)}</td><td class="note">${esc(x.why)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
+// ---- what the bot has learned (insights.py), fetched when the Knowledge tab is open and the base changes
+let INS = null, insKey = null, insBusy = false;
+async function loadInsights(force) {
+  const k = S && S.bot && S.bot.knowledge;
+  const key = k ? `${k.total}|${k.counts.real}|${k.counts.manual}|${k.trained && k.trained.at}` : null;
+  if (insBusy || (!force && key === insKey)) return;
+  if (!k) { INS = null; insKey = null; renderInsights(); return; }
+  insBusy = true;
+  try {
+    const d = await post("action/insights");
+    if (d.ok !== false) { INS = d.report; insKey = key; }
+  } finally { insBusy = false; }
+  renderInsights();
+}
+const rcell = (v, n, min) => v == null ? `<td class="num dim">–</td>`
+  : `<td class="num ${n != null && n < min ? "dim" : v > 0 ? "pos" : v < 0 ? "neg" : ""}">${signed(v)}${n != null ? ` <span class="muted">(${n})</span>` : ""}</td>`;
+function renderInsights() {
+  const head = $("ins-table").querySelector("thead"), body = $("ins-table").querySelector("tbody");
+  const r = INS;
+  $("ins-csv").disabled = !r || !r.coverage.total;
+  if (!r || !r.coverage.total) {
+    $("ins-meta").textContent = r ? "Nothing learned yet: press Retrain now, or let the bot run." : "Start the bot to see what it has learned.";
+    head.innerHTML = body.innerHTML = $("ins-hints").innerHTML = ""; $("ins-fills").hidden = true;
+    $("ins-feature").innerHTML = ""; $("ins-feature-help").textContent = ""; $("ins-cond").querySelector("thead").innerHTML = $("ins-cond").querySelector("tbody").innerHTML = "";
+    return;
+  }
+  const c = r.coverage, min = r.min_row;
+  $("ins-meta").textContent = `${c.total.toLocaleString()} observations from ${c.first_day} to ${c.last_day}: ${c.with_context.toLocaleString()} with a market snapshot, ` +
+    `${c.with_path.toLocaleString()} with their price path, ${c.with_costs.toLocaleString()} with costs. New ones carry all three.`;
+  head.innerHTML = `<tr><th>Strategy</th><th class="num">Signals</th><th class="num">Won</th><th class="num">Before costs</th><th class="num">Costs</th>
+    <th class="num">After costs</th><th class="num">Best point</th><th class="num">Worst point</th><th class="num">Losers up 1R first</th><th class="num">Real trades</th><th class="num">Simulated</th></tr>`;
+  const rows = [...r.strategies, ...(r.manual ? [r.manual] : [])].sort((a, b) => (b.net_r ?? -9) - (a.net_r ?? -9));
+  body.innerHTML = rows.map(x => { const thin = x.n < min;
+    return `<tr class="${thin ? "muted" : ""}"><td>${esc(x.title)}${x.name === "manual" ? ` <span class="tag manual">you</span>` : ""}</td><td class="num">${x.n}</td>
+      <td class="num">${x.win_rate == null ? "–" : Math.round(100 * x.win_rate) + "%"}</td>${rcell(x.gross_r)}
+      <td class="num">${x.cost_r == null ? "–" : x.cost_r.toFixed(2)}</td>${rcell(x.net_r, null)}${rcell(x.mfe_r)}${rcell(x.mae_r)}
+      <td class="num">${x.gave_back == null ? "–" : `${Math.round(100 * x.gave_back)}% <span class="muted">of ${x.n_losers}</span>`}</td>
+      ${x.real_n ? rcell(x.real_net_r, x.real_n, 1) : `<td class="num dim">–</td>`}${x.sim_n ? rcell(x.sim_net_r, x.sim_n, 1) : `<td class="num dim">–</td>`}</tr>`; }).join("");
+
+  const e = r.execution, f = $("ins-fills");
+  f.hidden = false;
+  if (!e.entry_n && !e.exit_n) {
+    f.innerHTML = `<b>Real fills.</b> <span class="muted">No slippage measured yet: it is recorded from the bot's next real trade on.
+      Backtests and ideas assume ${e.assumed} tick per fill.</span>`;
+  } else {
+    const line = (label, v, n, worst) => `<div class="line"><span>${label}</span><span>${n ? `${signed(v, 1)} ticks average, worst ${signed(worst, 1)} (${plural(n, "fill")})` : "–"}</span></div>`;
+    const worse = Math.max(e.entry ?? 0, e.exit ?? 0) > e.assumed;
+    f.innerHTML = `<b>Real fills against the price the bot expected</b> <span class="muted">(positive = a worse price)</span>` +
+      line("Entries", e.entry, e.entry_n, e.entry_worst) + line("Exits (stops, targets, market closes)", e.exit, e.exit_n, e.exit_worst) +
+      `<div class="line"><span>Backtests and ideas assume</span><span>${e.assumed} tick per fill</span></div>` +
+      (worse ? `<div class="warnline">Real fills slip more than your backtests assume: consider raising risk.slippage_ticks so results stay honest.</div>` : "");
+  }
+
+  $("ins-hints").innerHTML = r.hints.length ? r.hints.map(h => `<li><b>${esc(h.title)}</b> · ${esc(h.feature_name)}
+      <div class="why"><span class="kb ok">best ${esc(h.best.label)}: ${signed(h.best.net_r)}R (${h.best.n})</span>
+        <span class="kb bad">worst ${esc(h.worst.label)}: ${signed(h.worst.net_r)}R (${h.worst.n})</span></div></li>`).join("")
+    : `<li class="muted">None yet. A hint needs at least ${r.min_bucket} observations on each side and a result that flips from losing to
+      winning; they build up as the bot runs and retrains.</li>`;
+  $("ins-min").textContent = r.min_bucket;
+
+  const sel = $("ins-feature"), keys = Object.keys(r.conditions);
+  const want = sel.value || store.get("tsb-ins-feature");
+  sel.innerHTML = keys.map(k => `<option value="${esc(k)}">${esc(r.conditions[k].name)}</option>`).join("");
+  if (keys.includes(want)) sel.value = want;
+  renderConditions();
+}
+function renderConditions() {
+  const head = $("ins-cond").querySelector("thead"), body = $("ins-cond").querySelector("tbody");
+  const cond = INS && INS.conditions[$("ins-feature").value];
+  if (!cond) { head.innerHTML = body.innerHTML = ""; $("ins-feature-help").textContent = INS ? "Not enough market snapshots yet to compare." : ""; return; }
+  $("ins-feature-help").textContent = cond.help.charAt(0).toUpperCase() + cond.help.slice(1) + ". Average result after costs, in R (observations).";
+  const labels = cond.labels;  // low -> high (or Mon -> Fri)
+  const titles = Object.fromEntries(INS.strategies.map(x => [x.name, x.title]));
+  head.innerHTML = `<tr><th>Strategy</th>${labels.map(l => `<th class="num">${esc(l)}</th>`).join("")}</tr>`;
+  body.innerHTML = Object.entries(cond.strategies).map(([name, buckets]) => `<tr><td>${esc(titles[name] || name)}</td>${labels.map(l => {
+    const b = buckets.find(x => x.label === l); return b ? rcell(b.net_r, b.n, INS.min_bucket) : `<td class="num dim">–</td>`; }).join("")}</tr>`).join("");
+}
+
 function inputFor(x) {
   if (x.kind === "bool") return `<input type="checkbox" data-key="${x.key}" ${x.value ? "checked" : ""}>`;
   if (x.kind === "choice") return `<select data-key="${x.key}">${x.choices.map(c => `<option ${c === x.value ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
@@ -942,6 +1054,7 @@ async function loadLogs() {
 function render(s) {
   S = s;
   renderTop(s); renderClock(s.clock); renderOverview(s.bot); renderSetups(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
+  if (tabOpen("knowledge")) loadInsights(false);
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
 }
 async function refresh() {

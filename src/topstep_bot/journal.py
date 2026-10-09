@@ -15,6 +15,16 @@ from topstep_bot.execution import ManagedTrade
 
 UTC = timezone.utc
 
+# Columns added after the first release: older journals get them on open (ALTER TABLE).
+TRADE_EXTRA_COLUMNS = {
+    "ref_price": "REAL",  # price when the entry was sent
+    "entry_slip_ticks": "REAL",  # positive = filled worse than expected
+    "exit_slip_ticks": "REAL",
+    "mfe_r": "REAL",  # furthest the trade went in its favour, in R
+    "mae_r": "REAL",  # furthest it went against it, in R
+    "context": "TEXT",  # JSON market snapshot when the trade was opened (market_context.py)
+}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trades (
     tag TEXT PRIMARY KEY,
@@ -86,6 +96,10 @@ class Journal:
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(trades)")}
+        for name, kind in TRADE_EXTRA_COLUMNS.items():
+            if name not in have:
+                self.conn.execute(f"ALTER TABLE trades ADD COLUMN {name} {kind}")
         self.conn.commit()
 
     def close(self) -> None:
@@ -93,30 +107,39 @@ class Journal:
 
     # ------------------------------------------------------------------ writes
 
-    def record_trade(self, t: ManagedTrade, trading_day: date, account: str, contract: str) -> None:
+    def record_trade(self, t: ManagedTrade, trading_day: date, account: str, contract: str,
+                     facts: dict | None = None) -> None:
+        """Save a closed trade. ``facts``: TradingCore.trade_facts (price path, slippage, market snapshot)."""
+        f = facts or {}
+        row = {
+            "tag": t.tag,
+            "trading_day": trading_day.isoformat(),
+            "account": account,
+            "contract": contract,
+            "strategy": t.strategy,
+            "side": t.side.label,
+            "size": t.filled_size,
+            "entry_time": t.opened_at.isoformat() if t.opened_at else None,
+            "entry_price": t.entry_price,
+            "exit_time": t.closed_at.isoformat() if t.closed_at else None,
+            "exit_price": t.exit_price,
+            "initial_stop": t.initial_stop,
+            "target": t.target_price,
+            "gross_pnl": round(t.gross_pnl, 2),
+            "fees": round(t.fees, 2),
+            "net_pnl": round(t.net_pnl, 2),
+            "r_multiple": t.r_multiple(),
+            "entry_reason": t.reason,
+            "exit_reason": t.exit_reason,
+            "ref_price": t.ref_price,
+            "entry_slip_ticks": f.get("slip_in"),
+            "exit_slip_ticks": f.get("slip_out"),
+            "mfe_r": f.get("mfe_r"),
+            "mae_r": f.get("mae_r"),
+            "context": json.dumps(f["ctx"]) if f.get("ctx") else None,
+        }
         self.conn.execute(
-            "INSERT OR REPLACE INTO trades VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                t.tag,
-                trading_day.isoformat(),
-                account,
-                contract,
-                t.strategy,
-                t.side.label,
-                t.filled_size,
-                t.opened_at.isoformat() if t.opened_at else None,
-                t.entry_price,
-                t.closed_at.isoformat() if t.closed_at else None,
-                t.exit_price,
-                t.initial_stop,
-                t.target_price,
-                round(t.gross_pnl, 2),
-                round(t.fees, 2),
-                round(t.net_pnl, 2),
-                t.r_multiple(),
-                t.reason,
-                t.exit_reason,
-            ),
+            f"INSERT OR REPLACE INTO trades ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})", tuple(row.values())
         )
         self.conn.commit()
 

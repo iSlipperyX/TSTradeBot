@@ -403,6 +403,7 @@ class ManualTrading:
         if trade is None:
             raise TicketError("The order could not be placed - see the activity log")
         slot, regime = core.slot(), core.regime.value
+        trade.context = core.market_snapshot(price)
         self._opened[trade.tag] = (slot, regime)
         if core.recommender is not None:  # list it with the ideas so its result shows on the scoreboard
             self._record_in_book(trade, plan, price, note, slot, regime)
@@ -419,7 +420,7 @@ class ManualTrading:
             id=f"R{next(book._ids)}", created=self.core.clock(), strategy=MANUAL, title="Manual", active=False,
             side=plan.side, entry=price, stop=plan.stop, target=plan.target, size=plan.size, risk_usd=plan.planned_risk,
             reason=note or "your own trade", status="taken", trade_tag=trade.tag, hypothetical=False, slot=slot,
-            regime=regime,
+            regime=regime, context=dict(trade.context),
         )
         book._store(rec, new=True)
 
@@ -468,5 +469,5 @@ class ManualTrading:
         kb.record(Observation(
             day=self.core.schedule.trading_day(opened).isoformat(), time=local.strftime("%H:%M"), strategy=MANUAL,
             side=t.side.label, slot=slot or self.core.slot(opened), regime=regime or self.core.regime.value,
-            r=round(r, 2), usd=round(t.net_pnl, 2), source="manual", why=t.exit_reason,
+            r=round(r, 2), usd=round(t.net_pnl, 2), source="manual", why=t.exit_reason, **self.core.trade_facts(t),
         ))

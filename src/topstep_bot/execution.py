@@ -71,6 +71,13 @@ class ManagedTrade:
     gross_pnl: float = 0.0
     fees: float = 0.0
     breakeven_done: bool = False
+    # What the bot learns from (knowledge base, journal): the price it expected each fill at, the best
+    # and worst price reached while open, and the market snapshot when the trade was opened.
+    ref_price: float | None = None  # price when the entry was sent
+    exit_ref: float | None = None  # stop / target price for those exits, last price for market exits
+    best_price: float | None = None
+    worst_price: float | None = None
+    context: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.initial_stop:
@@ -92,6 +99,36 @@ class ManagedTrade:
         if not self.entry_price or self.exit_price is None or self.risk_points == 0:
             return None
         return (self.exit_price - self.entry_price) * self.side.sign / self.risk_points
+
+    def note_prices(self, high: float, low: float) -> None:
+        """Track the best and worst price reached while the position is open."""
+        if self.entry_price is None or self.state not in (TradeState.OPEN, TradeState.EXITING):
+            return
+        best, worst = (high, low) if self.side == OrderSide.BUY else (low, high)
+        better = max if self.side == OrderSide.BUY else min
+        worse = min if self.side == OrderSide.BUY else max
+        self.best_price = best if self.best_price is None else better(self.best_price, best)
+        self.worst_price = worst if self.worst_price is None else worse(self.worst_price, worst)
+
+    def excursion_r(self) -> tuple[float | None, float | None]:
+        """(MFE, MAE) in R: how far the trade went for (>= 0) and against (<= 0) it while open."""
+        if not self.entry_price or self.risk_points == 0:
+            return None, None
+        prices = [p for p in (self.best_price, self.worst_price, self.exit_price) if p is not None]
+        if not prices:
+            return None, None
+        moves = [(p - self.entry_price) * self.side.sign / self.risk_points for p in prices]
+        return round(max(0.0, *moves), 2), round(min(0.0, *moves), 2)
+
+    def slippage_ticks(self, tick_size: float) -> tuple[float | None, float | None]:
+        """(entry, exit) slippage in ticks against the expected price; positive = a worse fill."""
+        def ticks(expected: float | None, actual: float | None, sign: int) -> float | None:
+            if expected is None or actual is None or tick_size <= 0:
+                return None
+            return round((actual - expected) * sign / tick_size, 2)
+
+        return (ticks(self.ref_price, self.entry_price, self.side.sign),
+                ticks(self.exit_ref, self.exit_price, -self.side.sign))
 
     def to_dict(self) -> dict:
         return {
@@ -237,6 +274,7 @@ class OrderManager:
                 created_at=self.clock(),
                 strategy=strategy or self.strategy_name,
                 planned_risk=planned_risk,
+                ref_price=ref_price,
             )
             self.trade = t
             sl_ticks = tp_ticks = None
@@ -389,6 +427,8 @@ class OrderManager:
         t.exit_fills.append((order.filled_price or self.last_price or 0.0, qty))
         if not t.exit_reason:
             t.exit_reason = "stop loss" if role == "stop" else "profit target"
+        if t.exit_ref is None:
+            t.exit_ref = t.stop_price if role == "stop" else t.target_price
         sibling = t.target_order_id if role == "stop" else t.stop_order_id
         await self._safe_cancel(sibling)
         await self._finalize(t)
@@ -477,6 +517,8 @@ class OrderManager:
             return  # a close is already in flight; sending another could reverse the position
         t.state = TradeState.EXITING
         t.exit_sent_at = self.clock()
+        if t.exit_ref is None:
+            t.exit_ref = self.last_price
         t.exit_reason = t.exit_reason or reason
         await self._safe_cancel(t.target_order_id)
         try:

@@ -72,6 +72,10 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   risk rules, tracked to a result; take any of them with one tap (re-priced, never oversized).
 - **Knowledge tab** — what works when, per strategy, time of day and regime, with a Retrain button;
   `/knowledge` and `/train` in Telegram.
+- **What the bot learned** — every signal and trade keeps a market snapshot, its price path (best and
+  worst point), its costs and, for real fills, the slippage. The Knowledge tab, `/knowledge` and
+  `topstep-bot insights` show results after costs, real fills against simulated ones and conditions
+  worth testing; `--csv` exports everything for Excel.
 - **Live settings** — change risk, limits, times, news pause and the auto-traded strategy from the
   dashboard or Telegram, within safe bounds, with confirmation and a full audit trail.
 - **Logging** — daily logs, an errors-only file, a JSON event log, crash reports, secrets masked,
@@ -104,6 +108,7 @@ topstep-bot rules           Topstep rules for your account and how the bot enfor
 topstep-bot demo            demo backtest on synthetic data
 topstep-bot telegram-test   send a test message to your Telegram bot
 topstep-bot logs            recent errors and crash reports  (--open, --bundle for support)
+topstep-bot insights        what the bot has learned: results after costs, real fills, conditions (--csv FILE)
 ```
 
 ## Project layout

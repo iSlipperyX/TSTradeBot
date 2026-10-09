@@ -183,6 +183,20 @@ class BotActions:
     def knowledge_text(self) -> str:
         return self.core.knowledge_text()
 
+    def insights(self) -> dict:
+        """The "What the bot learned" report for the dashboard's Knowledge tab."""
+        return {"report": self.core.insights()}
+
+    def insights_csv(self) -> dict:
+        """Every observation as CSV (the Knowledge tab's Download button)."""
+        from topstep_bot.insights import csv_text
+
+        kb = self.core.knowledge
+        if kb is None:
+            raise RuntimeError("The knowledge base is turned off (knowledge.enabled: false)")
+        name = kb.path.stem if kb.path else "knowledge"
+        return {"csv": csv_text(kb), "filename": f"{name}.csv"}
+
     async def train(self, source: str) -> str:
         """Rebuild the knowledge base from recent history (the bot keeps trading meanwhile)."""
         if self._retrain is None:
@@ -220,6 +234,10 @@ class BotActions:
                  "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text}
         if name in texts:
             return {"text": texts[name]()}
+        if name == "insights":
+            return self.insights()
+        if name == "insights_csv":
+            return self.insights_csv()
         if name == "open_ideas":
             return {"items": self.open_ideas()}
         if name == "find_idea":
