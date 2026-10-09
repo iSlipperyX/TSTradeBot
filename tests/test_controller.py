@@ -23,7 +23,7 @@ FAKE = [sys.executable, str(Path(__file__).parent / "fake_worker.py")]
 def fast(monkeypatch):
     monkeypatch.setattr(controller_mod, "BACKOFF", (0.1, 0.1, 0.1))
     monkeypatch.setattr(controller_mod, "notify", lambda *a: None)
-    for var in ("FAKE_EXIT", "FAKE_HANG", "FAKE_POSITION"):
+    for var in ("FAKE_EXIT", "FAKE_HANG", "FAKE_POSITION", "FAKE_TRAIN_SECONDS"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -231,6 +231,29 @@ def test_telegram_works_while_bot_is_down(tmp_path):
         await tg.handle_update(button("yes:stop", fake.sent[-1]["message_id"]))
         await until(lambda: ctl.bot.state == "stopped")
         assert "Telegram" in ctl.bot.last_exit["reason"]
+        await tg.close()
+    scenario(tmp_path, body)
+
+
+def test_slow_training_is_not_reported_as_a_bot_that_is_down(tmp_path, monkeypatch):
+    """/train (and the dashboard's Retrain) used to time out after 8s and say the bot was 'not ready'."""
+    monkeypatch.setattr(controller_mod, "ACTION_TIMEOUT", 0.3)
+    monkeypatch.setenv("FAKE_TRAIN_SECONDS", "1")
+
+    async def body(ctl, http):
+        fake = FakeTelegram()
+        tg = TelegramController("TOKEN", CHAT, ProxyActions(ctl), TelegramConfig(), transport=httpx.MockTransport(fake.handler))
+        await ctl.bot.start("test")
+        await until(lambda: ctl.bot.state == "running")
+        await tg.handle_update(msg("/train"))
+        await tg.handle_update(msg("/pause"))  # answered while the training is still running
+        assert [m["text"] for m in fake.sent][1:] == ["Done."] and "Training" in fake.sent[0]["text"]
+        await tg.idle()
+        assert fake.sent[-1]["text"] == "trained"
+        monkeypatch.setattr(controller_mod, "SLOW_ACTIONS", {})  # a request that really does time out...
+        with pytest.raises(RuntimeError, match="busy"):  # ...says the bot is busy, not that it is down
+            await ctl.bot.action("train")
+        assert ctl.bot.state == "running"
         await tg.close()
     scenario(tmp_path, body)
 

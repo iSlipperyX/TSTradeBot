@@ -105,6 +105,7 @@ class TelegramController:
         self.offset: int | None = None
         self.pending: dict[int, tuple[str, float]] = {}  # confirmation message id -> (action, created)
         self._warned_chats: set[str] = set()
+        self._background: set[asyncio.Task] = set()  # slow commands, run beside the polling loop
 
     # ---------------------------------------------------------------- API
 
@@ -149,7 +150,21 @@ class TelegramController:
             await self.send("🤖 Topstep Bot is online and listening for commands.\n\n" + help_text(), KEYBOARD)
 
     async def close(self) -> None:
+        for task in list(self._background):
+            task.cancel()
+        await self.idle()
         await self._client.aclose()
+
+    async def idle(self) -> None:
+        """Wait until slow commands (like /train) have answered."""
+        while self._background:
+            await asyncio.wait(list(self._background))
+
+    def _in_background(self, coro) -> None:
+        """Run a slow command without blocking the polling loop, so /flatten or /stop still work meanwhile."""
+        task = asyncio.create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     async def run(self) -> None:
         backoff = 1.0
@@ -179,6 +194,10 @@ class TelegramController:
                     backoff = min(backoff * 2, 60)
             except httpx.HTTPError as exc:
                 log.debug("Telegram network error: %s", redact(exc))
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+            except Exception:  # noqa: BLE001 - never let Telegram control die silently: keep polling
+                log.exception("Telegram polling failed unexpectedly; retrying in %.0fs", backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
 
@@ -336,6 +355,15 @@ class TelegramController:
         "startbot": "▶️ Start the bot? It will trade automatically in its current mode.",
     }
 
+    async def _train(self, source: str) -> None:
+        try:
+            await self.send(await self._do("train", source))
+        except (ValueError, RuntimeError) as exc:
+            await self.send(f"❌ {exc}")
+        except Exception:  # noqa: BLE001 - runs outside the polling loop's own error handling
+            log.exception("Telegram /train failed")
+            await self.send("❌ Training failed - see the Logs tab.")
+
     async def dispatch(self, command: str, source: str, args: list[str] | None = None) -> None:
         args = args or []
         try:
@@ -363,7 +391,7 @@ class TelegramController:
             await self.send(await self._do("knowledge_text"))
         elif command == "train":
             await self.send("🧠 Training on recent history - this takes a few seconds...")
-            await self.send(await self._do("train", source))
+            self._in_background(self._train(source))
         elif command == "set":
             if len(args) < 2:
                 await self.send("Usage: /set <setting> <value>, e.g. /set risk 150. Send /settings for the list.")

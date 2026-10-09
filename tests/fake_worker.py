@@ -7,6 +7,7 @@ Behaviour is driven by the environment / actions:
   action "stop"      graceful stop: exit note + exit code 0
   action "crash"     exit with code 3
   action "maint"     exit with code 75 (daily maintenance restart)
+  action "train"     answer after FAKE_TRAIN_SECONDS (default 0), like a long knowledge-base training
 """
 
 import asyncio
@@ -34,8 +35,11 @@ async def main() -> int:
     def status(_: Request) -> dict:
         return {"bot": {"mode": MODE, "position": position, "trade": None, "pid": os.getpid()}, "log": {"errors": 0, "warnings": 0, "recent": []}}
 
-    def action(req: Request) -> dict | str:
+    async def action(req: Request) -> dict | str:
         name, payload = req.param, req.json()
+        if name == "train":
+            await asyncio.sleep(float(os.environ.get("FAKE_TRAIN_SECONDS", "0")))
+            return "trained"
         if name == "stop":
             write_exit_note(0, f"stop requested from {payload.get('source')}")
             done.set_result(0)

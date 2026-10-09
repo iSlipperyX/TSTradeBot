@@ -52,6 +52,8 @@ log = logging.getLogger("topstep_bot.controller")
 BACKOFF = (10, 30, 60, 120, 300)
 HEALTHY_AFTER = 600  # seconds of uptime that reset the crash backoff
 STOP_TIMEOUT = 45  # seconds to wait for a graceful stop (it flattens first)
+ACTION_TIMEOUT = 8  # seconds to wait for the bot to answer a request
+SLOW_ACTIONS = {"train": 600}  # training downloads and replays weeks of history
 STATE_FILE = "controller.json"
 
 
@@ -117,7 +119,7 @@ class BotProcess:
         self.want_running = False
         self._intent: str | None = None  # why the controller itself is stopping the bot
         self._watcher: asyncio.Task | None = None
-        self._client = httpx.AsyncClient(timeout=8)
+        self._client = httpx.AsyncClient(timeout=ACTION_TIMEOUT)
         self._lock = asyncio.Lock()
 
     # ---------------------------------------------------------------- helpers
@@ -298,7 +300,9 @@ class BotProcess:
             raise RuntimeError("The bot is not running - start it first.")
         try:
             r = await self._client.post(f"http://127.0.0.1:{self.port}/action/{name}", json=payload or {},
-                                        headers={"X-Token": self.token})
+                                        headers={"X-Token": self.token}, timeout=SLOW_ACTIONS.get(name, ACTION_TIMEOUT))
+        except httpx.TimeoutException:
+            raise RuntimeError("The bot is busy and did not answer in time - it is still running; try again shortly.") from None
         except httpx.HTTPError:
             raise RuntimeError("The bot is not ready yet (still starting?)") from None
         data = r.json()
@@ -407,6 +411,8 @@ class ProxyActions:
 # ------------------------------------------------------------------------------ controller
 
 class Controller:
+    telegram_api = "https://api.telegram.org"
+
     def __init__(self, cfg: BotConfig, secrets: Secrets, *, mode: str, config_path: str | None,
                  worker_command: list[str] | None = None, port: int | None = None, poll_seconds: float = 5.0):
         self.cfg = cfg
@@ -418,6 +424,7 @@ class Controller:
         self.started_at = time.time()
         self.token = pysecrets.token_urlsafe(24)
         self.telegram = None
+        self._telegram_task: asyncio.Task | None = None
         self._page = resources.files("topstep_bot.dashboard").joinpath("index.html").read_text(encoding="utf-8")
         self.server = HttpServer(
             cfg.dashboard.host if cfg.dashboard.host in ("127.0.0.1", "localhost") else "127.0.0.1",
@@ -545,7 +552,8 @@ class Controller:
             return
         from topstep_bot.telegram_control import TelegramController
 
-        tg = TelegramController(s.telegram_bot_token, s.telegram_chat_id, ProxyActions(self), self.cfg.telegram)
+        tg = TelegramController(s.telegram_bot_token, s.telegram_chat_id, ProxyActions(self), self.cfg.telegram,
+                                api_base=self.telegram_api)
         try:
             await tg.start(announce=True)
         except Exception as exc:  # noqa: BLE001 - the dashboard still works without Telegram
@@ -553,7 +561,7 @@ class Controller:
             await tg.close()
             return
         self.telegram = tg
-        spawn(tg.run(), name="telegram")
+        self._telegram_task = spawn(tg.run(), name="telegram")
 
     async def run(self, start_bot: bool = True, open_browser: bool = True) -> None:
         try:
@@ -584,6 +592,9 @@ class Controller:
         log.info("Controller shutting down")
         if self.bot.running:
             await self.bot.stop("controller shutdown")
+        if self._telegram_task:  # stop polling before its HTTP client is closed below
+            self._telegram_task.cancel()
+            await asyncio.wait([self._telegram_task], timeout=5)
         if self.telegram:
             await self.telegram.send("⏹ The Topstep Bot controller was closed on the PC. Start it there to resume.")
             await self.telegram.close()

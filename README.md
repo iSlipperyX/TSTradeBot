@@ -88,7 +88,7 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   dashboard and Telegram what changed. It installs only when you confirm, only while no trade or order
   is open (or after the close), test-starts the new version, restarts itself, and puts the previous
   version back if anything fails. Your settings and data are kept ([how](docs/HOW_TO_USE.md#updating)).
-- 300+ automated tests, including end-to-end runs against a simulated TopstepX server and a test for every Topstep rule.
+- 300+ automated tests, including end-to-end runs against a simulated TopstepX server and Telegram, and a test for every Topstep rule.
 
 ## Commands
 
