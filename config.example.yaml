@@ -64,3 +64,4 @@ dashboard:
   enabled: true
   port: 8765
   open_browser: true
+  phone_access: false           # open the dashboard in Telegram on your phone (switch it on in the dashboard's Settings tab)

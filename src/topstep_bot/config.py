@@ -294,6 +294,15 @@ class DashboardConfig(_Section):
     host: str = "127.0.0.1"
     port: int = 8765
     open_browser: bool = True
+    phone_access: bool = Field(
+        default=False,
+        description="Open the dashboard on your phone inside Telegram, through a secure link only your Telegram account "
+                    "can use. Usually switched on and off from the dashboard's Settings tab; that choice wins over this.",
+    )
+    cloudflared_path: str | None = Field(
+        default=None,
+        description="Optional: where cloudflared is installed. Left empty, the bot finds it or downloads it once.",
+    )
 
 
 class BacktestConfig(_Section):
