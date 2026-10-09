@@ -46,6 +46,7 @@ COMMANDS = [
     ("reset", "Undo all setting changes made remotely"),
     ("trades", "Recent closed trades"),
     ("log", "Recent bot activity"),
+    ("update", "Check GitHub for a newer version of the bot and install it"),
     ("help", "Show the commands"),
 ]
 DANGEROUS = {"flatten", "stop", "restart", "startbot"}
@@ -62,6 +63,14 @@ KEYBOARD = {
          {"text": "▶️ Start bot", "callback_data": "cmd:startbot"}],
     ]
 }
+
+
+UPDATE_ACTIONS = ("update", "update_tonight")  # one confirmation message offers both
+
+
+def _answers(asked: str, tapped: str) -> bool:
+    """Does the tapped button answer the question that was asked?"""
+    return tapped == asked or (asked == "update" and tapped in UPDATE_ACTIONS)
 
 
 class TelegramError(Exception):
@@ -244,10 +253,12 @@ class TelegramController:
         elif data.startswith("yes:"):
             action = data[4:]
             pending = self.pending.pop(message_id, None)
-            if pending is None or pending[0] != action or time.monotonic() - pending[1] > CONFIRM_SECONDS:
+            if pending is None or not _answers(pending[0], action) or time.monotonic() - pending[1] > CONFIRM_SECONDS:
                 await self._edit(message_id, "That confirmation expired - send the command again.")
                 return
             payload = pending[2] if len(pending) > 2 else None
+            if action in UPDATE_ACTIONS:
+                await self._edit(message_id, "⏳ Installing the update - this can take a minute...")
             try:
                 result = await self._execute_confirmed(action, payload, self._who(user))
             except (ValueError, RuntimeError) as exc:
@@ -276,6 +287,8 @@ class TelegramController:
         return await self._do(method, source)
 
     async def _execute_confirmed(self, action: str, payload, source: str) -> str:
+        if action in UPDATE_ACTIONS:
+            return await self._do("install_update", source, "tonight" if action == "update_tonight" else "now")
         if action == "set":
             key, value = payload
             return await self._do("change_setting", key, value, source)
@@ -292,6 +305,27 @@ class TelegramController:
         message_id = await self.send(question, confirm)
         if message_id is not None:
             self.pending[message_id] = (action, time.monotonic(), payload)
+
+    async def _offer_update(self, source: str) -> None:
+        if not hasattr(self.actions, "check_update"):
+            raise RuntimeError("/update is only available when the controller is running")
+        await self.send("🔎 Checking GitHub for updates...")
+        offer = await self._do("check_update", source)
+        if not offer["can_install"]:
+            await self.send(offer["text"])
+            return
+        now = {"text": "Install now", "callback_data": "yes:update"}
+        if offer["quiet"]:
+            rows = [[now]]
+            note = "The bot stops for about a minute while it updates. It only installs while no trade or order is open."
+        else:
+            rows = [[{"text": "After the close", "callback_data": "yes:update_tonight"}, now]]
+            note = ("Trading hours are on. 'After the close' installs it once today's trading is done. "
+                    "'Install now' only works while no trade or order is open, and stops the bot for about a minute.")
+        rows.append([{"text": "Not now", "callback_data": "no"}])
+        message_id = await self.send(f"{offer['text']}\n\n{note}", {"inline_keyboard": rows})
+        if message_id is not None:
+            self.pending[message_id] = ("update", time.monotonic(), None)
 
     async def _confirm_take(self, rec_id: str, half: bool) -> None:
         idea = await self._do("find_idea", rec_id)
@@ -374,5 +408,7 @@ class TelegramController:
                             yes="Yes, reset")
         elif command == "log":
             await self.send(await self._do("log_text"))
+        elif command == "update":
+            await self._offer_update(source)
         else:
             await self.send(help_text(), KEYBOARD)

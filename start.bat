@@ -21,6 +21,10 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
-".venv\Scripts\topstep-bot.exe" %*
-echo.
-pause
+REM One block: Windows reads a .bat file line by line while it runs, and an update may replace this file.
+(
+    ".venv\Scripts\topstep-bot.exe" %*
+    echo.
+    pause
+    exit /b
+)

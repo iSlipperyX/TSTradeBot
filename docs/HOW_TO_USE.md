@@ -135,9 +135,99 @@ Now `topstep-bot` is available as a command. Running it with no arguments opens 
 
 ### Updating
 
-After you download a new version of the bot into the same folder, open a Command Prompt in the
-folder and run `.venv\Scripts\python -m pip install -e .` once, so any new dependencies are
-installed. Your `config.yaml`, `.env` and `data/` are kept.
+The bot checks GitHub for a newer version by itself and tells you about it. **Nothing is installed
+until you say so**, and never while a trade or order is open.
+
+#### One-time setup
+
+**Nothing to set up.** The bot's GitHub repository is public, so the bot can look for updates
+whether you cloned it with git or downloaded it as a ZIP. It only reads from GitHub: nobody can
+send your bot an update except through the repository's `main` branch, which only its owner can change.
+
+<details>
+<summary>Only if the repository is ever made private again: give the bot a read-only GitHub token</summary>
+
+A ZIP copy of a private repository needs a GitHub token that can only **read** it. When the bot
+can't see the repository, menu **18 (update)** offers to set one up (or run `start.bat update --token`).
+
+1. Open <https://github.com/settings/personal-access-tokens/new> (signed in to GitHub).
+2. Token name: `Topstep Bot updates`. Expiration: 1 year.
+3. Repository access: **Only select repositories** → `TSTradeBot`.
+4. Permissions → Repository permissions → **Contents: Read-only**. Leave everything else alone.
+5. **Generate token**, copy it (it starts with `github_pat_`) and paste it into the bot. It is
+   tested right away and saved in `.env` as `GITHUB_TOKEN`.
+
+When the token expires, the Updates panel says "GitHub rejected the token": make a new one the same
+way. A **git** clone of a private repository uses your git sign-in instead (run `git pull` once in
+the folder if git has never signed in).
+
+</details>
+
+#### How you hear about a new version
+
+- **Dashboard:** a green **Update available** banner with the newest change, and the **Settings** tab
+  → **Updates** panel listing every change (one line per change, newest first). **Check now** asks
+  GitHub straight away.
+- **Telegram:** one message per new version, with an **Update options** button. `/update` checks any time.
+- **Menu:** a line above the options says an update is waiting; **18 (update)** shows the changes.
+
+The bot checks every 6 hours (`updates.check_every_hours`). Your own trades, settings and data are
+not sent anywhere: the bot only asks GitHub what is new.
+
+#### Installing an update
+
+Pick one:
+
+- **Dashboard:** Settings tab → Updates → **Install now** or **Install after the close**.
+- **Telegram:** `/update` → **Install now** or **After the close** (during trading hours).
+- **Menu 18** on the PC, while the bot is not running (if it is running, the menu sends you to the
+  dashboard or Telegram, which restart it for you).
+
+What happens when you install:
+
+1. The bot pauses new trades and checks that **no trade or working order is open** — in live mode
+   it also asks TopstepX itself. If one is, nothing changes and it tells you why. Close the trade
+   (or let it finish) and try again, or choose **after the close**.
+2. It stops the trading bot, downloads only the files that changed (or does a `git` fast-forward)
+   and installs any new Python packages the new version needs.
+3. It test-starts the new version with your `config.yaml`.
+4. The dashboard, Telegram and the bot restart with the new version, in the same mode (Paper or
+   Live); the bot only if it was running. This takes about 30 seconds. The dashboard reloads by
+   itself, and Telegram says `✅ Topstep Bot updated to …` with what changed.
+
+**After the close** waits for the first moment outside the trading hours (from 15 minutes before
+`session.trade_start` until 10 minutes after `session.flatten_at` on trading days) when the bot is
+flat, then installs the same way. Cancel it on the Settings tab before then if you change your mind.
+
+An update never touches your `config.yaml`, `.env`, `data/` (journal, knowledge base, remote
+settings), `logs/` or `reports/`.
+
+#### If something goes wrong
+
+- If a new package can't be installed, or the new version doesn't start or rejects your
+  `config.yaml`, the **previous version is put back automatically**, the bot is started again and
+  you get an alert. Nothing else changes.
+- If the new version crashes within 2 minutes of restarting, the previous version is restored and
+  started instead, again with an alert.
+- To go back by hand: close the bot window, then run `start.bat update --undo`.
+- In a git folder, an update refuses to install if you edited the bot's own files (it names them),
+  if you are on another branch, or if you have commits that are not on GitHub. Undo or commit those
+  first. Your `config.yaml` is not one of the bot's files, so editing it is always fine.
+- The files an update replaced are kept in `data/updates/backup_*` (the last 3 updates).
+
+#### Settings
+
+```yaml
+updates:
+  enabled: true          # check automatically (false: only when you press Check now or send /update)
+  check_every_hours: 6
+  notify: true           # tell you once on Telegram/Discord when a new version appears
+  branch: main           # the branch the bot follows
+```
+
+To update by hand instead, download the new version into the same folder (keep your `config.yaml`,
+`.env` and `data/`), open a Command Prompt there and run `.venv\Scripts\python -m pip install -e .`
+once, so any new dependencies are installed.
 
 ### Try it before setting anything up
 
@@ -223,9 +313,11 @@ Double-click `start.bat` (or run `topstep-bot`):
 | 15 | tune | **Tuning:** tests every strategy and its settings on real data they never saw and can save what held up ([section 18](#18-tuning-test-strategy-settings-on-unseen-data)) |
 | 16 | rules | Shows Topstep's rules for **your** account (limits in dollars and contracts) and what the bot does about each one |
 | 17 | insights | **What the bot has learned:** each strategy's results after costs, real fills against simulated ones, and the market conditions it did best and worst in ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
+| 18 | update | **Updates:** checks GitHub for a newer version, lists what changed and installs it when you say so ([Updating](#updating)) |
 
 Above the list, the menu shows a one-line summary of your setup (account, symbol, strategy, mode).
-If `config.yaml` has a mistake, that line says what and where.
+If `config.yaml` has a mistake, that line says what and where. When a newer version of the bot is
+waiting, a second line says so.
 
 You can switch between paper and live later from the dashboard, without coming back to this menu.
 
@@ -903,6 +995,7 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/reset` | Undo every remote setting change (back to `config.yaml`) |
 | `/trades` | The last few closed trades |
 | `/log` | Recent bot activity |
+| `/update` | Checks GitHub for a newer version, lists what changed and offers **Install now** / **After the close** ([Updating](#updating)) |
 | `/help` | The command list |
 
 ### Security
@@ -1353,6 +1446,9 @@ then. Act on any alert.
 **After 15:10 CT:** confirm the position is flat. Review the day with menu **9 (journal)** and the
 Knowledge tab (or menu **17**, insights).
 
+**When an update is waiting:** read what changed (dashboard Settings tab, or `/update`) and install
+it **after the close**, so the bot never restarts mid-session.
+
 **Weekly:** compare the bot's MLL floor and position limit with your TopstepX dashboard and Risk
 Settings (Topstep changes product limits with market conditions); look at the Knowledge tab to see
 which strategies have stopped (or started) working.
@@ -1478,6 +1574,13 @@ service:                       # used by the controller ('start')
   heartbeat_timeout_seconds: 180
   max_restarts_per_hour: 6
 
+updates:                       # new versions from GitHub (see "Updating" in section 3)
+  enabled: true                # check automatically every check_every_hours
+  check_every_hours: 6
+  notify: true                 # tell you once (Telegram/Discord) when a new version appears
+  repo: iSlipperyX/TSTradeBot
+  branch: main                 # the branch the bot follows
+
 dashboard:
   enabled: true
   host: 127.0.0.1
@@ -1528,6 +1631,7 @@ different config file.
 | `topstep-bot go-live [--days N] [--skip-backtest]` | Preflight, then start live trading (24/7 or this session) |
 | `topstep-bot autostart on\|off\|status` | Start everything when you sign in to Windows |
 | `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
+| `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
 | `topstep-bot insights [--csv FILE]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat tune --days 730`.
@@ -1550,6 +1654,8 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat tune
 | `data/controller.json` | The mode you chose last (Paper/Live) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
 | `data/heartbeat` | "Still alive" signal the controller watches |
+| `data/updates.json` | Update checks: the last result, which version is installed, a scheduled install |
+| `data/updates/backup_*` | Files the last 3 updates replaced (used to undo an update) |
 
 ---
 
@@ -1642,6 +1748,24 @@ chat is ignored — `logs/bot.log` shows "Ignored Telegram command from unauthor
 its ID). Only one program can read a bot's messages: close any other copy of the bot.
 
 **Telegram: "the bot token was rejected"** — The token is wrong or was revoked. Run setup again.
+
+**Updates: "GitHub did not show the repository"** — The repository is private (or `updates.repo` in
+`config.yaml` is misspelled). For a private repository, run `start.bat update --token` (or menu 18)
+and follow the steps in [Updating](#updating). **"GitHub rejected the token"** means it expired or
+was deleted: make a new one, or delete the `GITHUB_TOKEN` line in `.env` if the repository is public.
+
+**Updates: "GitHub's hourly limit for update checks was reached"** — Without a token GitHub allows
+60 requests an hour from your internet connection, and a check uses a handful. It clears by itself
+within the hour; the next automatic check tries again.
+
+**Updates: "A trade is open"** — Updates only install while the bot is flat. Let the trade finish,
+or choose **Install after the close**.
+
+**Updates: "bot files were edited on this PC"** (git folders) — You (or an editor) changed one of the
+bot's own files. Undo the change (`git checkout -- <file>`) or commit it, then update again.
+
+**After an update the bot behaves differently** — Every change is listed on the Settings tab before
+you install. To go back, close the bot window and run `start.bat update --undo`.
 
 For anything else, `logs/bot.log` has the details.
 
