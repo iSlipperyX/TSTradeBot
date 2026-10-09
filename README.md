@@ -90,6 +90,10 @@ No bot can guarantee passing the Combine or making a profit, and this one doesn'
   and the reason for every shutdown (`topstep-bot logs`).
 - **Telegram remote control** — `/status`, `/pause`, `/resume`, `/flatten`, `/ideas`, `/set`, `/stop` with tap buttons,
   owner-only, confirmations for dangerous actions; the dashboard's Setup tab finds your chat ID for you.
+- **The dashboard on your phone, inside Telegram** — switch on phone access and `/dashboard` opens the
+  full dashboard in Telegram's built-in browser when you're away. Only your Telegram account can open it,
+  LIVE can't be switched on from the phone, and the bot keeps running on your PC: a secure Cloudflare
+  link carries only the dashboard, with no router changes ([how](docs/HOW_TO_USE.md#open-the-dashboard-on-your-phone-inside-telegram)).
 - **Journal** (SQLite) and Telegram/Discord alerts.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
 - **Updates from GitHub** — the bot checks for a newer version every few hours and tells you on the
@@ -152,6 +156,7 @@ src/topstep_bot/
   manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
   setups.py       the trades each strategy is building toward (dashboard's Getting ready to trade)
   telegram_control.py  Telegram bot remote control
+  phone_access.py the dashboard inside Telegram on your phone (Telegram sign-in + Cloudflare tunnel)
   updater.py      updates from GitHub (git or download), install and undo;  update_service.py  when, and the restart
   cli.py, wizard.py
 tests/            pytest suite (run: pytest)

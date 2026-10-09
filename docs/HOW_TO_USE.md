@@ -525,6 +525,8 @@ that file.
 - **Bot status:** Running, Starting…, Stopped, Crashed or Failed to start, plus uptime.
 - **Start, Restart and Stop** for the bot process. Stop closes any position first; the dashboard stays up.
 - **Log badge:** warnings and errors so far. Click it for the Logs tab.
+- **📱 Phone link on** (only while phone access is on): the dashboard can be opened in Telegram on
+  your phone. Click it for its settings ([how it works](#open-the-dashboard-on-your-phone-inside-telegram)).
 - **Theme button** (◐): follow your computer's light/dark setting, or force light or dark. The
   dashboard remembers it, and it remembers which tab you were on.
 - **Market clock** (just under the top bar, works even while the bot is stopped): whether the market
@@ -1030,6 +1032,7 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | Command | What it does |
 |---|---|
 | `/status` | Mode, account, status, balance, today's P&L, open position with stop/target, MLL room, daily loss used, trades today, Combine progress |
+| `/dashboard` | Opens the full dashboard inside Telegram on your phone. Offers to turn phone access on if it's off; `/dashboard off` turns it off ([below](#open-the-dashboard-on-your-phone-inside-telegram)) |
 | `/pause` | Stop opening new trades. An open trade keeps its stop and target. |
 | `/resume` | Allow new trades again (all risk limits still apply). Not possible after a flatten — restart the bot. |
 | `/flatten` | Close any position, cancel orders and **halt** trading until the bot is restarted. Asks for confirmation. |
@@ -1047,6 +1050,64 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/update` | Checks GitHub for a newer version, lists what changed and offers **Install now** / **After the close** ([Updating](#updating)) |
 | `/help` | The command list |
 
+### Open the dashboard on your phone (inside Telegram)
+
+When you're away from home, the whole dashboard (Overview, Trade, Ideas, Knowledge, Settings, Logs)
+can open **inside Telegram** on your phone, in Telegram's built-in browser. Nothing to install on
+the phone and nothing to change on your router.
+
+**Turn it on** (it is off until you do):
+
+- on the PC: dashboard → **Settings** tab → **Phone access (Telegram)** → **Turn on**, or
+- from your phone: send `/dashboard` (or tap **📱 Dashboard**) and tap **Yes, turn it on**.
+
+The first time, the bot downloads Cloudflare's small tunnel program, `cloudflared` (about 60 MB,
+from Cloudflare's official GitHub releases, checked against its published checksum) into
+`data/tools/`. A few seconds later Telegram gets an **📊 Open dashboard** button, and a
+**Dashboard** button appears beside the message box. Tap either one. The choice is remembered: if
+the PC or the bot restarts, phone access comes back on by itself and sends a fresh button.
+
+**Turn it off** with **Turn off** on the Settings tab (on the PC or the phone) or `/dashboard off`.
+The link stops at once.
+
+What you can do from the phone: everything on the dashboard **except** switching to **LIVE** and
+turning phone access on. Those two only work at the PC. Switching back to Paper works from the phone.
+Confirmations appear as a box at the bottom of the screen; every action is listed in Activity as
+*phone (Telegram)*.
+
+How it stays yours:
+
+- **Only your Telegram account can open it.** When you tap the button, Telegram hands the page a
+  sign-in signed with your bot's token. The PC checks that signature, that it is recent, and that
+  it belongs to you (the account of your private chat with the bot, or the IDs in
+  `telegram.allowed_user_ids`). Anyone else, including someone who finds the address, sees
+  *"Only the owner's Telegram account can open this dashboard"*, and the refusal is logged on the
+  Logs tab. Opening the address in an ordinary browser doesn't work either.
+- The sign-in lasts at most 12 hours and ends when phone access is turned off or restarts; the
+  page then signs you in again by itself through Telegram.
+- The link only reaches the dashboard. Your API key, `.env` and files on the PC are never served.
+- The address (`https://<random words>.trycloudflare.com`) changes every time the link starts.
+  The newest button always works; old ones stop working.
+
+**The bot still runs on your PC.** Topstep requires the bot to run on your own computer and
+forbids VPS, VPN and remote servers. Phone access doesn't change that: the bot keeps trading from
+your PC and your home internet connection, exactly as before. The Cloudflare tunnel is an
+outgoing connection from the PC that only carries the **dashboard** to your phone. It is not a
+VPN, and none of the bot's traffic to TopstepX goes through it. (Like any website behind
+Cloudflare, Cloudflare carries the dashboard's traffic on its way to your phone.) The PC has to
+stay on, online and with the Topstep Bot window open.
+
+Good to know:
+
+- It needs Telegram set up (above) and a **private chat** with your bot. In a group chat, list your
+  own Telegram user ID in `telegram.allowed_user_ids` first.
+- Cloudflare's free quick tunnels have no uptime guarantee. If the link drops, the bot reconnects
+  by itself (10 s, 30 s, then up to 5 minutes apart) and sends a new button; the Settings tab shows
+  what it is doing.
+- If you already have `cloudflared` installed (for example `winget install Cloudflare.cloudflared`),
+  the bot uses that copy. To point it at a specific file, set `dashboard.cloudflared_path` in
+  `config.yaml`.
+
 ### Security
 
 - The bot only obeys **your chat** (`TELEGRAM_CHAT_ID`). Messages from anyone else who finds your
@@ -1060,6 +1121,8 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
   trading within the limits in `config.yaml`.
 - The bot checks Telegram *from your PC* (no open ports, no webhook), and orders are still placed
   by your PC, as Topstep requires.
+- Phone access is off by default. While it is on, only your own Telegram account can open the
+  dashboard, and LIVE mode can't be switched on from the phone ([above](#open-the-dashboard-on-your-phone-inside-telegram)).
 - Keep the bot token secret. If it leaks, send `/revoke` to @BotFather and connect the new token on
   the dashboard's Setup tab (**Use another bot**). The
   bot never writes the token (or a Discord webhook) into its log files.
@@ -1640,6 +1703,8 @@ dashboard:
   host: 127.0.0.1
   port: 8765
   open_browser: true
+  phone_access: false          # the dashboard inside Telegram on your phone; the Settings tab switch wins over this
+  cloudflared_path: null       # optional: where cloudflared is; empty = find it or download it once
 
 backtest:
   data_file: null
@@ -1708,7 +1773,8 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `data/remote_settings.json` | Settings changed from the dashboard/Telegram (delete it, or `/reset`, to undo) |
 | `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when, with each observation's market snapshot, price path and costs (delete it to start learning from scratch) |
 | `data/news_cache.json` | This week's economic calendar |
-| `data/controller.json` | The mode you chose last (Paper/Live) |
+| `data/controller.json` | The mode you chose last (Paper/Live) and whether phone access is on |
+| `data/tools/cloudflared.exe` | Cloudflare's tunnel program for phone access (downloaded the first time you turn it on) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
 | `data/heartbeat` | "Still alive" signal the controller watches |
 | `data/updates.json` | Update checks: the last result, which version is installed, a scheduled install |
@@ -1717,6 +1783,20 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 ---
 
 ## 27. Troubleshooting
+
+**Phone access: the Open dashboard button doesn't appear.** Look at **Settings → Phone access** on
+the PC dashboard: it says what the link is doing. "Cloudflare did not answer in time" or
+"cloudflared stopped" usually means the PC is offline or a firewall or antivirus blocks
+`cloudflared.exe`: allow it and the bot retries by itself. If the download fails, install it with
+`winget install Cloudflare.cloudflared` in a Command Prompt and turn phone access off and on.
+
+**Phone access: "Only the owner's Telegram account can open this dashboard".** You opened it from a
+different Telegram account than the one in your chat with the bot, or your chat is a group: put
+your own Telegram user ID in `telegram.allowed_user_ids`. **"This page only opens from your Topstep
+bot in Telegram"** means the address was opened in a normal browser: use the button in Telegram.
+
+**Phone access: "Lost contact with your PC".** The PC is off or offline, the Topstep Bot window was
+closed, or the link restarted with a new address: send `/dashboard` for a fresh button.
 
 **"Login failed"** — Use your TopstepX *username*, not your email. Copy the API key again in full.
 Check your API subscription is active. Paste the key again on the dashboard's Setup tab and press
