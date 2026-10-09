@@ -1,6 +1,7 @@
 """The controller: dashboard + Telegram + supervision, in its own process.
 
     you --> dashboard (http://127.0.0.1:8765) / Telegram --> controller --(local API)--> trading bot
+    your phone (Telegram) --> phone link (phone_access.py, only while switched on) --> controller
 
 The trading bot runs as a separate child process. If it crashes, hangs or is stopped, the
 controller keeps running, so the dashboard and Telegram stay online: you can see what happened
@@ -37,6 +38,8 @@ import httpx
 
 from topstep_bot.config import BotConfig, Secrets
 from topstep_bot.logging_setup import spawn, tail
+from topstep_bot.phone_access import PhoneAccess
+from topstep_bot.phone_access import describe as describe_phone
 from topstep_bot.service import (
     CONFIG_ERROR_EXIT_CODE,
     ENV_EXIT_FILE,
@@ -53,8 +56,13 @@ BACKOFF = (10, 30, 60, 120, 300)
 HEALTHY_AFTER = 600  # seconds of uptime that reset the crash backoff
 STOP_TIMEOUT = 45  # seconds to wait for a graceful stop (it flattens first)
 ACTION_TIMEOUT = 8  # seconds to wait for the bot to answer a request
-SLOW_ACTIONS = {"train": 600}  # training downloads and replays weeks of history
+SLOW_ACTIONS = {"train": 600, "learn": 3600}  # training replays weeks of history; learning backfills and replays up to a year
 STATE_FILE = "controller.json"
+
+
+def source(req: Request) -> str:
+    """Who asked, for the activity log."""
+    return "phone (Telegram)" if req.remote else "dashboard"
 
 
 def _free_port() -> int:
@@ -375,11 +383,30 @@ class ProxyActions:
     async def train(self, source: str) -> str:
         return await self._msg("train", source)
 
+    def dashboard_info(self) -> dict:
+        info = self.ctl.phone.status()
+        return {**info, "text": describe_phone(info)}
+
+    async def phone_on(self, source: str) -> str:
+        return await self.ctl.phone.enable(source)
+
+    async def phone_off(self, source: str) -> str:
+        return await self.ctl.phone.disable(source)
+
     async def check_update(self, source: str) -> dict:
         return await self.ctl.updates.telegram_check(source)
 
     async def install_update(self, source: str, when: str = "now") -> str:
         return await self.ctl.updates.install(source, when)
+
+    async def brief_text(self) -> str:
+        return await self._text("brief_text")
+
+    async def next_text(self) -> str:
+        return await self._text("next_text")
+
+    async def learn(self, source: str) -> str:
+        return await self._msg("learn", source)
 
     async def preview_setting(self, key: str, value: Any) -> dict:
         return await self.bot.action("preview_setting", {"key": key, "value": value})
@@ -420,6 +447,7 @@ class Controller:
         self.secrets = secrets
         self.config_path = config_path
         self.events: deque[dict] = deque(maxlen=100)
+        self._page_errors: deque[tuple[float, str]] = deque()  # (when, message) reported by open dashboards
         self.bot = BotProcess(cfg, secrets, mode=mode, config_path=config_path, worker_command=worker_command,
                               events=self.events, poll_seconds=poll_seconds)
         self.started_at = time.time()
@@ -434,14 +462,14 @@ class Controller:
                 ("GET", "/", self._index),
                 ("GET", "/api/status", self._status),
                 ("GET", "/api/logs", self._logs),
-                ("POST", "/api/bot/start", lambda r: self.start_bot("dashboard")),
-                ("POST", "/api/bot/stop", lambda r: self.bot.stop("dashboard")),
-                ("POST", "/api/bot/restart", lambda r: self.restart_bot("dashboard")),
+                ("POST", "/api/bot/start", lambda r: self.start_bot(source(r))),
+                ("POST", "/api/bot/stop", lambda r: self.bot.stop(source(r))),
+                ("POST", "/api/bot/restart", lambda r: self.restart_bot(source(r))),
                 ("POST", "/api/mode", self._mode),
                 ("POST", "/api/action/*", self._proxy),
-                ("POST", "/api/updates/check", lambda r: self.updates.check_text("dashboard")),
-                ("POST", "/api/updates/install", lambda r: self.updates.install("dashboard", str(r.json().get("when", "now")))),
-                ("POST", "/api/updates/cancel", lambda r: self.updates.cancel("dashboard")),
+                ("POST", "/api/updates/check", lambda r: self.updates.check_text(source(r))),
+                ("POST", "/api/updates/install", lambda r: self.updates.install(source(r), str(r.json().get("when", "now")))),
+                ("POST", "/api/updates/cancel", lambda r: self.updates.cancel(source(r))),
                 ("POST", "/api/setup/state", lambda r: self.setup.state()),
                 ("POST", "/api/setup/login", lambda r: self.setup.login(r.json())),
                 ("POST", "/api/setup/save", lambda r: self.setup.save(r.json())),
@@ -453,6 +481,9 @@ class Controller:
                 ("POST", "/api/setup/discord", lambda r: self.setup.discord_save(r.json())),
                 ("POST", "/api/setup/github_token", lambda r: self.setup.github_token(r.json())),
                 ("POST", "/api/setup/autostart", lambda r: self.setup.autostart(r.json())),
+                ("POST", "/api/phone/on", lambda r: self.phone.enable(source(r))),
+                ("POST", "/api/phone/off", lambda r: self.phone.disable(source(r), wait=not r.remote)),
+                ("POST", "/api/page-error", self._page_error),
             ],
             token=self.token,
             name="dashboard",
@@ -465,13 +496,33 @@ class Controller:
 
         self.updates = UpdateService(self)
         self.setup = SetupService(self, config_error)
+        self.phone = PhoneAccess(self)  # after the dashboard's routes: the phone link serves some of them
 
     # ---------------------------------------------------------------- dashboard routes
 
-    def _index(self, _: Request):
-        return html_response(self._page.replace("__TOKEN__", self.token))
+    def page(self, token: str, view: str = "pc") -> str:
+        """The dashboard page for a viewer: on this PC, or on the phone through Telegram."""
+        return self._page.replace("__TOKEN__", token).replace("__VIEW__", view)
 
-    async def _status(self, _: Request) -> dict:
+    def _index(self, _: Request):
+        return html_response(self.page(self.token))
+
+    def _page_error(self, req: Request) -> str:
+        """An open dashboard reports that its own script failed, so it shows in the logs (a phone has no console)."""
+        body = req.json()
+        message = " ".join(str(body.get("message", "")).split())[:300] or "unknown problem"
+        now = time.time()
+        while self._page_errors and now - self._page_errors[0][0] > 600:
+            self._page_errors.popleft()
+        if len(self._page_errors) >= 10 or any(m == message for _, m in self._page_errors):
+            return "already noted"
+        self._page_errors.append((now, message))
+        where = "on your phone" if req.remote else "on this PC"
+        self.bot._event("warning", f"The dashboard {where} hit a problem showing the page: {message}")
+        log.info("That dashboard runs in: %s", " ".join(str(body.get("browser", "")).split())[:200] or "?")
+        return "noted"
+
+    async def _status(self, req: Request) -> dict:
         data = await self.bot.status() if self.bot.state in ("running", "starting") else None
         return {
             "controller": {**self.bot.info(), "uptime": self.uptime_text(), "telegram": self.telegram is not None},
@@ -480,6 +531,8 @@ class Controller:
             "events": list(self.events)[:30],
             "instance": self.instance,
             "updates": self.updates.status(),
+            "phone": self.phone.status(),
+            "viewer": "phone" if req.remote else "pc",
             "setup": self.setup.summary(),
             # market / trading-day countdowns: computed here so they show even while the bot is stopped
             "clock": self._clock(),
@@ -510,6 +563,8 @@ class Controller:
 
     async def _proxy(self, req: Request) -> dict:
         payload = req.json()
+        if req.remote:
+            payload["source"] = source(req)
         payload.setdefault("source", "dashboard")
         data = await self.bot.action(req.param, payload)
         data.pop("ok", None)
@@ -528,7 +583,9 @@ class Controller:
 
     async def _mode(self, req: Request) -> str:
         body = req.json()
-        return await self.set_mode(str(body.get("mode", "")), str(body.get("confirm", "")), "dashboard")
+        if req.remote and str(body.get("mode", "")) == "live":
+            raise ValueError("Switching to LIVE (real orders) can only be done on the PC. Paper mode can be chosen here.")
+        return await self.set_mode(str(body.get("mode", "")), str(body.get("confirm", "")), source(req))
 
     async def set_mode(self, mode: str, confirm: str, source: str) -> str:
         if mode not in ("paper", "live"):
@@ -602,6 +659,7 @@ class Controller:
         """Pick up a changed Telegram setup (Setup tab) without restarting the server."""
         await self.stop_telegram()
         await self.start_telegram()
+        await self.phone.telegram_changed()
 
     async def run(self, start_bot: bool = True, open_browser: bool = True) -> None:
         try:
@@ -613,6 +671,7 @@ class Controller:
         log.info("Dashboard: %s", self.server.url)
         spawn(self.bot.monitor(), name="bot-monitor")
         await self.start_telegram()
+        await self.phone.start()
         if start_bot:
             try:
                 await self.start_bot("controller start")
@@ -638,6 +697,7 @@ class Controller:
         if self._telegram_task:  # stop polling before its HTTP client is closed below
             self._telegram_task.cancel()
             await asyncio.wait([self._telegram_task], timeout=5)
+        await self.phone.close()  # also puts Telegram's menu button back
         if self.telegram:
             await self.telegram.send("⏹ The Topstep Bot controller was closed on the PC. Start it there to resume.")
             await self.telegram.close()

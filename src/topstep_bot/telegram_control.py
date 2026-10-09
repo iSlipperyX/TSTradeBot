@@ -12,6 +12,8 @@ Security:
     can't fire unexpectedly.
   * Anything that trades, stops or changes settings needs a confirmation tap within 60 seconds.
   * Settings stay within safe bounds; mode (paper/live), account and Topstep rules can't be changed here.
+  * /dashboard opens the dashboard inside Telegram once phone access is on (see phone_access.py);
+    turning phone access on from here needs a confirmation tap.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ log = logging.getLogger(__name__)
 
 COMMANDS = [
     ("status", "Account, position and risk status"),
+    ("dashboard", "Open the dashboard on your phone, inside Telegram"),
     ("pause", "Stop opening new trades"),
     ("resume", "Allow new trades again"),
     ("flatten", "Close everything and halt trading"),
@@ -39,8 +42,11 @@ COMMANDS = [
     ("startbot", "Start the bot if it is stopped"),
     ("stop", "Stop the bot (Telegram and the dashboard stay online)"),
     ("ideas", "Recommended trades - tap Take to trade one"),
+    ("brief", "What the bot knows right now, in plain words"),
+    ("next", "When the bot expects its next trade, and why"),
     ("knowledge", "What the bot has learned: which strategy works when"),
     ("train", "Retrain the knowledge base on recent history now"),
+    ("learn", "Feed the bot more history: backfill and replay all of it"),
     ("settings", "Show the settings you can change"),
     ("set", "Change a setting, e.g. /set risk 150"),
     ("reset", "Undo all setting changes made remotely"),
@@ -56,9 +62,10 @@ MAX_TEXT = 4000
 KEYBOARD = {
     "inline_keyboard": [
         [{"text": "📊 Status", "callback_data": "cmd:status"}, {"text": "⏸ Pause", "callback_data": "cmd:pause"},
-         {"text": "▶️ Resume", "callback_data": "cmd:resume"}],
+         {"text": "▶️ Resume", "callback_data": "cmd:resume"}, {"text": "📱 Dashboard", "callback_data": "cmd:dashboard"}],
         [{"text": "💡 Ideas", "callback_data": "cmd:ideas"}, {"text": "📜 Trades", "callback_data": "cmd:trades"},
          {"text": "🧠 Knowledge", "callback_data": "cmd:knowledge"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
+        [{"text": "💬 What I know", "callback_data": "cmd:brief"}, {"text": "⏳ Next trade", "callback_data": "cmd:next"}],
         [{"text": "🛑 Flatten & halt", "callback_data": "cmd:flatten"}, {"text": "🔄 Restart bot", "callback_data": "cmd:restart"},
          {"text": "▶️ Start bot", "callback_data": "cmd:startbot"}],
     ]
@@ -119,16 +126,29 @@ class TelegramController:
             raise TelegramError(data.get("error_code", resp.status_code), data.get("description", "unknown error"))
         return data.get("result")
 
-    async def send(self, text: str, keyboard: dict | None = None) -> int | None:
+    async def send(self, text: str, keyboard: dict | None = None, silent: bool = False) -> int | None:
         params: dict[str, Any] = {"chat_id": self.chat_id, "text": text[:MAX_TEXT]}
         if keyboard:
             params["reply_markup"] = keyboard
+        if silent:
+            params["disable_notification"] = True
         try:
             msg = await self._call("sendMessage", **params)
             return msg.get("message_id") if isinstance(msg, dict) else None
         except (TelegramError, httpx.HTTPError) as exc:
             log.warning("Telegram send failed: %s", redact(exc))
             return None
+
+    async def set_dashboard_button(self, url: str | None) -> None:
+        """The button beside the message box: opens the dashboard while phone access is on, else the command list."""
+        button = {"type": "web_app", "text": "Dashboard", "web_app": {"url": url}} if url else {"type": "commands"}
+        params: dict[str, Any] = {"menu_button": button}
+        with contextlib.suppress(ValueError):
+            params["chat_id"] = int(self.chat_id)
+        try:
+            await self._call("setChatMenuButton", **params)
+        except (TelegramError, httpx.HTTPError) as exc:
+            log.debug("Telegram menu button not changed: %s", redact(exc))
 
     async def _edit(self, message_id: int, text: str) -> None:
         try:
@@ -294,6 +314,8 @@ class TelegramController:
             return await self._do("change_setting", key, value, source)
         if action == "reset":
             return await self._do("reset_settings", source)
+        if action == "phone":
+            return await self._do("phone_on", source)
         if action == "take":
             rec_id, size = payload
             return await self._do("take_idea", rec_id, source, size)
@@ -327,6 +349,29 @@ class TelegramController:
         if message_id is not None:
             self.pending[message_id] = ("update", time.monotonic(), None)
 
+    async def _dashboard(self, source: str, args: list[str]) -> None:
+        if not hasattr(self.actions, "dashboard_info"):
+            raise RuntimeError("/dashboard is only available when the controller is running")
+        if args and args[0].lower() in ("off", "stop"):
+            await self.send(await self._do("phone_off", source))
+            return
+        info = await self._do("dashboard_info")
+        if info["url"]:
+            from topstep_bot.phone_access import dashboard_keyboard
+
+            if await self.send("📊 Your dashboard, inside Telegram. Only your Telegram account can open it.\n"
+                               "To turn the phone link off: /dashboard off", dashboard_keyboard(info["url"])) is None:
+                await self.send("Telegram would not show the Open dashboard button. It only works in a private chat "
+                                "with your bot, not in a group.")
+        elif info["problem"]:
+            await self.send(f"📱 {info['problem']}")
+        elif info["enabled"]:
+            await self.send(f"⏳ {info['text']}")
+        else:
+            await self._ask("📱 Turn on phone access? The dashboard opens here in Telegram while you are away from the PC, "
+                            "and only your Telegram account can open it. The bot keeps running on the PC. "
+                            "Turn it off any time with /dashboard off.", "phone", yes="Yes, turn it on")
+
     async def _confirm_take(self, rec_id: str, half: bool) -> None:
         idea = await self._do("find_idea", rec_id)
         if idea is None or not idea["size"]:
@@ -355,14 +400,15 @@ class TelegramController:
         "startbot": "▶️ Start the bot? It will trade automatically in its current mode.",
     }
 
-    async def _train(self, source: str) -> None:
+    async def _slow(self, name: str, source: str, failed: str) -> None:
+        """Answer a slow command (/train, /learn) once it finishes; runs in the background."""
         try:
-            await self.send(await self._do("train", source))
+            await self.send(await self._do(name, source))
         except (ValueError, RuntimeError) as exc:
             await self.send(f"❌ {exc}")
         except Exception:  # noqa: BLE001 - runs outside the polling loop's own error handling
-            log.exception("Telegram /train failed")
-            await self.send("❌ Training failed - see the Logs tab.")
+            log.exception("Telegram /%s failed", name)
+            await self.send(f"❌ {failed} - see the Logs tab.")
 
     async def dispatch(self, command: str, source: str, args: list[str] | None = None) -> None:
         args = args or []
@@ -391,7 +437,15 @@ class TelegramController:
             await self.send(await self._do("knowledge_text"))
         elif command == "train":
             await self.send("🧠 Training on recent history - this takes a few seconds...")
-            self._in_background(self._train(source))
+            self._in_background(self._slow("train", source, "Training failed"))
+        elif command == "brief":
+            await self.send(await self._do("brief_text"))
+        elif command == "next":
+            await self.send(await self._do("next_text"))
+        elif command == "learn":
+            await self.send("📚 Learning from the long-run memory: downloading missing history and replaying all of it. "
+                            "This can take a minute; the bot keeps trading meanwhile...")
+            self._in_background(self._slow("learn", source, "Learning failed"))
         elif command == "set":
             if len(args) < 2:
                 await self.send("Usage: /set <setting> <value>, e.g. /set risk 150. Send /settings for the list.")
@@ -410,5 +464,7 @@ class TelegramController:
             await self.send(await self._do("log_text"))
         elif command == "update":
             await self._offer_update(source)
+        elif command == "dashboard":
+            await self._dashboard(source, args)
         else:
             await self.send(help_text(), KEYBOARD)

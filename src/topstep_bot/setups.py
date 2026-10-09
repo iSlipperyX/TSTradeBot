@@ -125,6 +125,7 @@ class SetupTracker:
                 "met": met, "total": len(st.conditions), "progress": round(st.progress, 2),
                 "entry": _round(core, st.entry), "entry_ref": _round(core, ref), "entry_is_level": st.entry is not None,
                 "stop": _round(core, st.stop), "target": _round(core, st.target), "note": st.note,
+                "at": st.at.strftime("%H:%M") if st.at else None,
                 "plan": self._plan(st, ref), "blocked": blocked,
             })
         items.sort(key=lambda i: (i["role"] != "bot", -i["progress"], i["title"]))

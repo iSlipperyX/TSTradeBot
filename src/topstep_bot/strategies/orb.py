@@ -121,7 +121,7 @@ class OpeningRangeBreakout(Strategy):
                 conds.append(("A bar closes beyond the range", False))
             note = (f"range forms until {range_end} CT" if not self.range_ready
                     else f"enters on the first close beyond the range, until {self.cutoff:%H:%M} CT")
-            out.append(Setup(side, conds, entry, stop, target, note))
+            out.append(Setup(side, conds, entry, stop, target, note, at=None if self.range_ready else parse_hhmm(range_end)))
         return out
 
     def state(self) -> dict:

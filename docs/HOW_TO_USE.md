@@ -356,6 +356,7 @@ the preflight, the journal and so on. To open it, open a Command Prompt in the b
 | 16 | rules | Shows Topstep's rules for **your** account (limits in dollars and contracts) and what the bot does about each one |
 | 17 | insights | **What the bot has learned:** each strategy's results after costs, real fills against simulated ones, and the market conditions it did best and worst in ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 | 18 | update | **Updates:** checks GitHub for a newer version, lists what changed and installs it when you say so ([Updating](#updating)) |
+| 19 | learn | **Feeds the bot more history:** downloads up to a year it doesn't have yet and replays all of it through every strategy ([long-run memory](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 
 Above the list, the menu shows a one-line summary of your setup (account, symbol, strategy, mode).
 If `config.yaml` has a mistake, that line says what and where. When a newer version of the bot is
@@ -525,6 +526,8 @@ that file.
 - **Bot status:** Running, Starting…, Stopped, Crashed or Failed to start, plus uptime.
 - **Start, Restart and Stop** for the bot process. Stop closes any position first; the dashboard stays up.
 - **Log badge:** warnings and errors so far. Click it for the Logs tab.
+- **📱 Phone link on** (only while phone access is on): the dashboard can be opened in Telegram on
+  your phone. Click it for its settings ([how it works](#open-the-dashboard-on-your-phone-inside-telegram)).
 - **Theme button** (◐): follow your computer's light/dark setting, or force light or dark. The
   dashboard remembers it, and it remembers which tab you were on.
 - **Market clock** (just under the top bar, works even while the bot is stopped): whether the market
@@ -1030,6 +1033,7 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | Command | What it does |
 |---|---|
 | `/status` | Mode, account, status, balance, today's P&L, open position with stop/target, MLL room, daily loss used, trades today, Combine progress |
+| `/dashboard` | Opens the full dashboard inside Telegram on your phone. Offers to turn phone access on if it's off; `/dashboard off` turns it off ([below](#open-the-dashboard-on-your-phone-inside-telegram)) |
 | `/pause` | Stop opening new trades. An open trade keeps its stop and target. |
 | `/resume` | Allow new trades again (all risk limits still apply). Not possible after a flatten — restart the bot. |
 | `/flatten` | Close any position, cancel orders and **halt** trading until the bot is restarted. Asks for confirmation. |
@@ -1037,6 +1041,9 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/restart` | Restarts the bot (flattens first) — e.g. after an error. Asks for confirmation. |
 | `/startbot` | Starts the bot if it's stopped or crashed. Asks for confirmation. |
 | `/ideas` | Recommended trades with **Take** and **½ size** buttons ([section 16](#16-recommended-trades)) |
+| `/brief` | **What the bot knows**, in plain sentences: how much it has seen, what it would and wouldn't trade right now and why, what has worked after costs, lessons worth testing, and when it expects its next trade ([section 17](#what-the-bot-knows-and-when-it-trades-next)) |
+| `/next` | **When the next trade is likely**, and what that estimate is based on (also a button under every message) |
+| `/learn` | Grow the long-run memory now: download the history it's missing and replay all of it ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 | `/knowledge` | What the bot has learned: per strategy and time of day, ✅ trades now / ❌ switched off / ❔ unproven, then results after costs, real fill slippage and conditions worth testing ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
 | `/train` | Retrain the knowledge base on recent history now (the bot keeps trading meanwhile) |
 | `/settings` | Every setting you can change, with current values and limits |
@@ -1046,6 +1053,64 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/log` | Recent bot activity |
 | `/update` | Checks GitHub for a newer version, lists what changed and offers **Install now** / **After the close** ([Updating](#updating)) |
 | `/help` | The command list |
+
+### Open the dashboard on your phone (inside Telegram)
+
+When you're away from home, the whole dashboard (Overview, Trade, Ideas, Knowledge, Settings, Logs)
+can open **inside Telegram** on your phone, in Telegram's built-in browser. Nothing to install on
+the phone and nothing to change on your router.
+
+**Turn it on** (it is off until you do):
+
+- on the PC: dashboard → **Settings** tab → **Phone access (Telegram)** → **Turn on**, or
+- from your phone: send `/dashboard` (or tap **📱 Dashboard**) and tap **Yes, turn it on**.
+
+The first time, the bot downloads Cloudflare's small tunnel program, `cloudflared` (about 60 MB,
+from Cloudflare's official GitHub releases, checked against its published checksum) into
+`data/tools/`. A few seconds later Telegram gets an **📊 Open dashboard** button, and a
+**Dashboard** button appears beside the message box. Tap either one. The choice is remembered: if
+the PC or the bot restarts, phone access comes back on by itself and sends a fresh button.
+
+**Turn it off** with **Turn off** on the Settings tab (on the PC or the phone) or `/dashboard off`.
+The link stops at once.
+
+What you can do from the phone: everything on the dashboard **except** switching to **LIVE** and
+turning phone access on. Those two only work at the PC. Switching back to Paper works from the phone.
+Confirmations appear as a box at the bottom of the screen; every action is listed in Activity as
+*phone (Telegram)*.
+
+How it stays yours:
+
+- **Only your Telegram account can open it.** When you tap the button, Telegram hands the page a
+  sign-in signed with your bot's token. The PC checks that signature, that it is recent, and that
+  it belongs to you (the account of your private chat with the bot, or the IDs in
+  `telegram.allowed_user_ids`). Anyone else, including someone who finds the address, sees
+  *"Only the owner's Telegram account can open this dashboard"*, and the refusal is logged on the
+  Logs tab. Opening the address in an ordinary browser doesn't work either.
+- The sign-in lasts at most 12 hours and ends when phone access is turned off or restarts; the
+  page then signs you in again by itself through Telegram.
+- The link only reaches the dashboard. Your API key, `.env` and files on the PC are never served.
+- The address (`https://<random words>.trycloudflare.com`) changes every time the link starts.
+  The newest button always works; old ones stop working.
+
+**The bot still runs on your PC.** Topstep requires the bot to run on your own computer and
+forbids VPS, VPN and remote servers. Phone access doesn't change that: the bot keeps trading from
+your PC and your home internet connection, exactly as before. The Cloudflare tunnel is an
+outgoing connection from the PC that only carries the **dashboard** to your phone. It is not a
+VPN, and none of the bot's traffic to TopstepX goes through it. (Like any website behind
+Cloudflare, Cloudflare carries the dashboard's traffic on its way to your phone.) The PC has to
+stay on, online and with the Topstep Bot window open.
+
+Good to know:
+
+- It needs Telegram set up (above) and a **private chat** with your bot. In a group chat, list your
+  own Telegram user ID in `telegram.allowed_user_ids` first.
+- Cloudflare's free quick tunnels have no uptime guarantee. If the link drops, the bot reconnects
+  by itself (10 s, 30 s, then up to 5 minutes apart) and sends a new button; the Settings tab shows
+  what it is doing.
+- If you already have `cloudflared` installed (for example `winget install Cloudflare.cloudflared`),
+  the bot uses that copy. To point it at a specific file, set `dashboard.cloudflared_path` in
+  `config.yaml`.
 
 ### Security
 
@@ -1060,6 +1125,8 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
   trading within the limits in `config.yaml`.
 - The bot checks Telegram *from your PC* (no open ports, no webhook), and orders are still placed
   by your PC, as Topstep requires.
+- Phone access is off by default. While it is on, only your own Telegram account can open the
+  dashboard, and LIVE mode can't be switched on from the phone ([above](#open-the-dashboard-on-your-phone-inside-telegram)).
 - Keep the bot token secret. If it leaks, send `/revoke` to @BotFather and connect the new token on
   the dashboard's Setup tab (**Use another bot**). The
   bot never writes the token (or a Discord webhook) into its log files.
@@ -1206,6 +1273,70 @@ stay honest.
 Knowledge files and journals from older versions keep working; their older observations simply
 have no snapshot, path or costs (and count before costs).
 
+### What the bot knows, and when it trades next
+
+Ask the bot directly:
+
+- **Dashboard → Knowledge tab → What the bot knows** (or `/brief` in Telegram) answers in plain
+  sentences: how many signal outcomes it knows and where they came from, how big its long-run memory
+  is, what it would trade *right now* and what it is staying out of (and why), which strategies have
+  worked after fees and slippage (recent next to the long run), the lessons worth testing, and its
+  next-trade estimate.
+- **Next trade** — a countdown tile in the market clock at the top of the dashboard, a **Next trade**
+  panel on the Overview tab, `/next` in Telegram, and a line at the end of `/status`.
+
+How the next-trade estimate works, so you know how far to trust it:
+
+1. **The rules first.** It walks the same rules the bot trades by (entry window, trading days and
+   holidays, blackout windows and news, the daily trade count, losing streak and cooldown, profit and
+   loss locks) to the first moment an entry is allowed. If the bot is paused, halted or done until
+   you act, it says so instead of guessing.
+2. **Then history.** On each of the last 90 days in the knowledge base, it finds the first signal
+   the bot would have taken *with what it knows today* (for the adaptive strategy: only strategies the
+   knowledge base allows at that time of day and regime). Starting from the first allowed moment, those
+   days give the **most likely time** (half of past days had their signal sooner), the **usual range**
+   (the middle half of days) and the **chance of a trade today**. Days with nothing left today carry
+   the wait over to the next trading days.
+3. **Then the setups forming now.** It names the auto-traded setup closest to firing, what it still
+   waits for and when it can fire (a checkpoint or decision time, or the next bar close).
+
+It needs at least 10 trading days of history. It is an estimate, not a promise: a signal can still be
+skipped by a risk check, markets change, and some days have no trade at all.
+
+### The long-run memory: a much bigger knowledge base
+
+The knowledge base the bot trades with looks at the last two months on purpose: markets change, and
+old evidence fades out. Next to it, the bot keeps a far bigger **long-run memory**, and it is hungry:
+
+- **Every price bar it ever sees is kept** in `data/market_library.sqlite` on your PC: warm-up bars,
+  training downloads, every live bar and everything it backfills. Nothing is thrown away.
+- **Every day it backfills** what it is still missing, up to `knowledge.deep_history_days` back
+  (365 by default, up to 3650; the "Teach the bot" setup uses 730). It only asks TopstepX for ranges it
+  has never downloaded, so after the first time it is a small top-up.
+- **Every day it replays all of it** through every strategy, the same way training replays the last
+  60 days, into `data/knowledge_<SYMBOL>_<TF>m_longrun.json`: every signal every strategy would have
+  given on every day in the library, with its outcome, costs, price path and market snapshot. A year
+  of 5-minute bars takes about a minute.
+- It runs once a day **outside the bot's entry window and only while flat**, so trading never waits on
+  it (normally right after the 16:05 CT restart). Run it any time with **Learn from history now** on the
+  Knowledge tab, `/learn`, menu **19** or `topstep-bot learn`.
+- Have older data? `topstep-bot learn --import mydata.csv` adds a CSV of bars (1-minute or your
+  bot's timeframe) to the library, then replays. `--offline` replays without downloading; `--days 730`
+  reaches further back for that run.
+
+**What it changes:** what the bot can tell you. The Knowledge tab's **What the bot has learned** has a
+**Recent / Long run** switch, the briefing compares each strategy's recent results with the long run
+(a strategy that is hot lately but weak over a year deserves suspicion), and conditions worth testing
+get far more data. `topstep-bot insights --longrun` prints the long-run report.
+
+**What it doesn't change:** how the bot trades. The adaptive strategy still decides from the recent
+knowledge base, and every risk rule, limit and position size stays exactly as configured. Using the
+long run in decisions is a later, separately tested step (the roadmap's "decide on evidence" phase).
+
+How far back TopstepX serves history depends on the contract; the library simply keeps whatever it
+gets and grows every day the bot runs. Prices jump when the front-month contract rolls; the strategies
+reset every day, so that only touches a measurement or two on the first day after a roll.
+
 ### Honest expectations
 
 Training on the last two months of M2K showed most strategies **losing** in most slots, with a thin
@@ -1252,7 +1383,7 @@ Good to know:
   save. Your other settings stay as they are.
 
 Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
-`half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`. The file is
+`half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`, `deep_learning`, `deep_history_days`. The file is
 `data/knowledge_<SYMBOL>_<TF>m.json`, shared by paper and live; delete it to start from scratch.
 
 ---
@@ -1555,6 +1686,8 @@ knowledge:                     # what the bot learns while it runs (drives the a
   min_samples: 8               # weighted observations needed before a strategy may trade in a slot
   min_edge_r: 0.05             # minimum (shrunk) expectancy in R to keep trading a strategy
   real_trade_weight: 2.0       # a real trade counts this many times an idea
+  deep_learning: true          # long-run memory: keep every bar, backfill and replay it all daily (reports only)
+  deep_history_days: 365       # 30-3650: how far back the long-run memory reaches
 
 risk:
   risk_per_trade: 150
@@ -1640,6 +1773,8 @@ dashboard:
   host: 127.0.0.1
   port: 8765
   open_browser: true
+  phone_access: false          # the dashboard inside Telegram on your phone; the Settings tab switch wins over this
+  cloudflared_path: null       # optional: where cloudflared is; empty = find it or download it once
 
 backtest:
   data_file: null
@@ -1688,7 +1823,8 @@ different config file.
 | `topstep-bot autostart on\|off\|status` | Start everything when you sign in to Windows |
 | `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
 | `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
-| `topstep-bot insights [--csv FILE]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
+| `topstep-bot learn [--days N] [--import CSV] [--offline]` | Grow the long-run memory: download the history it's missing, add a CSV, then replay all of it through every strategy ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
+| `topstep-bot insights [--csv FILE] [--longrun]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat menu` or
 `start.bat tune --days 730`. Double-clicking `start.bat` with no command starts the dashboard.
@@ -1707,8 +1843,11 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `logs/` | Log files — see [section 22](#22-logs-finding-out-what-happened) |
 | `data/remote_settings.json` | Settings changed from the dashboard/Telegram (delete it, or `/reset`, to undo) |
 | `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when, with each observation's market snapshot, price path and costs (delete it to start learning from scratch) |
+| `data/market_library.sqlite` | The long-run memory's market library: every price bar the bot has downloaded or imported |
+| `data/knowledge_<SYMBOL>_<TF>m_longrun.json` | What every strategy did on the whole library (reports only; rebuilt daily, safe to delete) |
 | `data/news_cache.json` | This week's economic calendar |
-| `data/controller.json` | The mode you chose last (Paper/Live) |
+| `data/controller.json` | The mode you chose last (Paper/Live) and whether phone access is on |
+| `data/tools/cloudflared.exe` | Cloudflare's tunnel program for phone access (downloaded the first time you turn it on) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
 | `data/heartbeat` | "Still alive" signal the controller watches |
 | `data/updates.json` | Update checks: the last result, which version is installed, a scheduled install |
@@ -1717,6 +1856,27 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 ---
 
 ## 27. Troubleshooting
+
+**Phone access: the Open dashboard button doesn't appear.** Look at **Settings → Phone access** on
+the PC dashboard: it says what the link is doing. "Cloudflare did not answer in time" or
+"cloudflared stopped" usually means the PC is offline or a firewall or antivirus blocks
+`cloudflared.exe`: allow it and the bot retries by itself. If the download fails, install it with
+`winget install Cloudflare.cloudflared` in a Command Prompt and turn phone access off and on.
+
+**Phone access: "Only the owner's Telegram account can open this dashboard".** You opened it from a
+different Telegram account than the one in your chat with the bot, or your chat is a group: put
+your own Telegram user ID in `telegram.allowed_user_ids`. **"This page only opens from your Topstep
+bot in Telegram"** means the address was opened in a normal browser: use the button in Telegram.
+
+**Phone access: "Lost contact with your PC".** The PC is off or offline, the Topstep Bot window was
+closed, or the link restarted with a new address: send `/dashboard` for a fresh button.
+
+**Phone access: the dashboard is empty, or says "Part of the dashboard could not be shown".** The
+bot keeps trading either way: only the page is affected. Install the latest update (Settings →
+Updates); older versions could open an empty dashboard on some phones. The notice names the part
+that failed, and the PC's **Logs** tab has the same line (*"The dashboard on your phone hit a
+problem showing the page: …"*). Send that line, or the zip from `start.bat logs --bundle`, with your
+report.
 
 **"Login failed"** — Use your TopstepX *username*, not your email. Copy the API key again in full.
 Check your API subscription is active. Paste the key again on the dashboard's Setup tab and press

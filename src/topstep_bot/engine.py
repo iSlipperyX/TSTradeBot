@@ -39,6 +39,7 @@ event_log = logging.getLogger("topstep_bot.events")
 if TYPE_CHECKING:
     from topstep_bot.first_trade import FirstTradePlanner
     from topstep_bot.knowledge import KnowledgeBase
+    from topstep_bot.memory import LongRunMemory
     from topstep_bot.recommendations import RecommendationBook
     from topstep_bot.remote import RemoteControl
 
@@ -127,7 +128,8 @@ class TradingCore:
         self.manual = ManualTrading(self)  # trades you open yourself from the dashboard's trade ticket
         self.setups = SetupTracker(self)  # the trades every strategy is building toward (dashboard)
         self.first_trade: FirstTradePlanner | None = None  # an educated trade soon after starting (first_trade.py)
-        self._insights: tuple[tuple, dict] | None = None  # cached "What the bot learned" report
+        self._insights: dict[bool, tuple[tuple, dict]] = {}  # cached "What the bot learned" reports (recent / long-run)
+        self.memory: LongRunMemory | None = None  # every bar seen + what every strategy did on all of it (reports only)
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
@@ -531,18 +533,39 @@ class TradingCore:
         report = self.insights()
         return table if not report or not report["coverage"]["total"] else table + "\n\n" + report_text(report, compact=True)
 
-    def insights(self) -> dict | None:
-        """The "What the bot learned" report (insights.py), rebuilt only when the knowledge base changes."""
-        if self.knowledge is None:
+    def insights(self, longrun: bool = False) -> dict | None:
+        """The "What the bot learned" report (insights.py), rebuilt only when its knowledge base changes.
+
+        ``longrun``: the same report on the long-run memory (memory.py) instead of the recent knowledge base.
+        """
+        kb = (self.memory.knowledge if self.memory else None) if longrun else self.knowledge
+        if kb is None:
             return None
-        key = (id(self.knowledge), self.knowledge.updated, len(self.knowledge.obs))
-        if self._insights is None or self._insights[0] != key:
+        key = (id(kb), kb.updated, len(kb.obs))
+        cached = self._insights.get(longrun)
+        if cached is None or cached[0] != key:
             from topstep_bot.insights import build_report
             from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
 
             names = [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES]
-            self._insights = (key, build_report(self.knowledge, names, slippage_ticks=self.cfg.risk.slippage_ticks))
-        return self._insights[1]
+            cached = self._insights[longrun] = (key, build_report(kb, names, slippage_ticks=self.cfg.risk.slippage_ticks))
+        return cached[1]
+
+    def forecast(self) -> dict | None:
+        """When the next automatic trade is likely, and why (forecast.py). Never raises: it's informational."""
+        from topstep_bot.forecast import forecast
+
+        try:
+            return forecast(self)
+        except Exception:  # noqa: BLE001 - a forecast must never disturb trading or the dashboard
+            log.exception("Next-trade forecast failed")
+            return None
+
+    def brief(self) -> dict:
+        """What the bot knows, in plain sentences (briefing.py)."""
+        from topstep_bot.briefing import build_brief
+
+        return build_brief(self)
 
     def _trade_view(self, t: ManagedTrade) -> dict:
         """The open trade plus where it stands now (open P&L in dollars and R)."""
@@ -603,4 +626,6 @@ class TradingCore:
             "regime": self.regime.value,
             "knowledge": self.knowledge_summary(),
             "first_trade": self.first_trade.view() if self.first_trade else None,
+            "forecast": self.forecast(),
+            "memory": self.memory.status() if self.memory else None,
         }
