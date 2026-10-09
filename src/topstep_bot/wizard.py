@@ -63,6 +63,7 @@ def render_config(
         strategy = "adaptive"
         max_trades = max(max_trades, 8)
     target = PLANS[plan].profit_target
+    deep_days = 730 if learn else 365  # learning: a longer memory to compare against
     params = "{trade_unproven: true}   # learning: also trade strategies the bot has no evidence on yet" if learn else \
         "{}                   # override strategy defaults here, e.g. {target_r: 1.5}"
     if learn:
@@ -111,6 +112,8 @@ strategy:
 knowledge:                      # what the bot learns while it runs (drives the adaptive strategy)
   auto_train: true              # retrain on the last 60 days of history at startup when stale (daily)
   history_days: 60
+  deep_learning: true           # long-run memory: keep every bar, backfill history, replay it all daily (reports only)
+  deep_history_days: {deep_days}        # how far back the long-run memory reaches (up to 3650)
 
 risk:
   risk_per_trade: {risk_per_trade:g}          # $ lost if a trade hits its stop (position size is calculated from this)

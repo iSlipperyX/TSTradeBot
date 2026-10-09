@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Topstep Bot</title>
+<link rel="icon" href="data:,">
 <style>
 :root { color-scheme: light; --bg:#f5f5f3; --surface:#ffffff; --surface2:#f3f2ef; --border:#e4e3df; --text:#111110; --text2:#55544f;
   --muted:#8a8984; --track:#ecebe7; --accent:#2a78d6; --good:#0ca30c; --warn:#d99a00; --crit:#d03b3b;
@@ -197,8 +198,28 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
 .clock .cs { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .clock .soon .cv { color:var(--warn); }
 .clock .holiday { grid-column:1 / -1; font-size:12px; color:var(--warn); padding:2px 2px 0; }
+.clock .next { cursor:pointer; border-color:var(--accent); }
+.clock .next .cv { color:var(--accent); }
+/* next trade + what the bot knows */
+.nexthead { font-size:16px; font-weight:650; margin:2px 0 10px; }
+.stats { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); margin-bottom:10px; }
+.stat { background:var(--surface2); border-radius:10px; padding:8px 11px; min-width:0; }
+.stat .sv { font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.stat .ss { font-size:11px; color:var(--muted); }
+.basis { margin:0; padding-left:18px; font-size:12.5px; color:var(--text2); }
+.basis li { margin:3px 0; }
+.brief h3:first-child { margin-top:0; }
+.brief ul { margin:0; padding-left:18px; font-size:13px; }
+.brief li { margin:3px 0; }
+.memline { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; padding:10px 12px; border-radius:10px; background:var(--surface2); font-size:12.5px; }
+.memline .grow { flex:1; min-width:200px; }
+.memline .track { height:6px; margin-top:6px; }
+.seg.small button { padding:3px 10px; font-size:12px; }
+.seg button.on { background:var(--accent); color:#fff; }
 .offline { display:none; margin-top:12px; background:var(--crit); color:#fff; padding:10px 14px; border-radius:10px; font-weight:600; }
 .offline.updating { background:var(--accent); }
+.pageerror { margin-top:12px; background:var(--warnbg); border:1px solid var(--warn); padding:10px 14px; border-radius:10px; font-size:13.5px; }
+.pageerror button { margin-left:6px; }
 /* updates */
 .changes { list-style:none; margin:10px 0 0; padding:0; font-size:13px; }
 .changes li { padding:6px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:baseline; }
@@ -278,6 +299,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
     <button class="small" id="theme" title="Light / dark / follow your system">◐</button>
   </div>
   <div class="offline" id="offline">The dashboard lost contact with the controller. Is the Topstep Bot window still open on your PC?</div>
+  <div class="pageerror" id="pageerror" hidden><span id="pageerror-text"></span> <button class="small" onclick="location.reload()">Reload</button></div>
   <div class="clock" id="clock" aria-label="Market clock"></div>
   <div class="banner" id="banner" hidden></div>
   <div class="banner ok" id="updbanner" hidden></div>
@@ -323,6 +345,13 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
         <h2 style="margin-top:16px">Strategy</h2>
         <dl id="strategy"></dl>
       </div>
+    </div>
+    <div class="panel" style="margin-top:12px" id="next-panel">
+      <div class="row"><h2 style="margin:0">Next trade</h2><span class="spacer"></span><span class="meta">an estimate, not a promise</span></div>
+      <div id="next-head" class="nexthead">–</div>
+      <div id="next-stats" class="stats"></div>
+      <ul id="next-basis" class="basis"></ul>
+      <p class="hint" id="next-caveat"></p>
     </div>
     <div class="panel" style="margin-top:12px" id="setups-panel">
       <div class="row"><h2 style="margin:0">Getting ready to trade</h2><span class="spacer"></span>
@@ -422,7 +451,18 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 
   <!-- KNOWLEDGE -->
   <section class="tab" id="tab-knowledge">
-    <div class="panel">
+    <div class="panel brief">
+      <div class="row"><h2 style="margin:0">What the bot knows</h2><span class="spacer"></span><span class="meta" id="brief-meta"></span></div>
+      <div id="brief" style="margin-top:8px"><div class="empty">Start the bot to hear what it knows.</div></div>
+      <div class="memline" id="mem-line" hidden>
+        <div class="grow"><b>Long-run memory.</b> <span id="mem-text"></span>
+          <div class="track" id="mem-track" hidden><div class="fill" id="mem-bar"></div></div></div>
+        <button class="small" id="learn" title="Download the history the bot is still missing and replay all of it through every strategy">Learn from history now</button>
+      </div>
+      <p class="hint">The long-run memory keeps every price bar the bot sees and, once a day outside trading hours, replays all of them
+        through every strategy. It feeds these reports; the bot still decides its trades from the recent knowledge base below, with every risk rule unchanged.</p>
+    </div>
+    <div class="panel" style="margin-top:12px">
       <div class="row"><h2 style="margin:0">What works when</h2><span class="spacer"></span><button class="small" id="train">Retrain now</button></div>
       <div id="kb-meta" class="meta" style="margin:6px 0 10px"></div>
       <div class="tablewrap"><table id="kb-table"><thead></thead><tbody></tbody></table></div>
@@ -433,6 +473,8 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
     </div>
     <div class="panel" style="margin-top:12px">
       <div class="row"><h2 style="margin:0">What the bot has learned</h2><span class="spacer"></span>
+        <span class="seg small" id="ins-scope" title="Recent: the knowledge base the bot trades with. Long run: everything in its long-run memory.">
+          <button data-scope="recent" class="on">Recent</button><button data-scope="longrun">Long run</button></span>
         <button class="small" id="ins-csv" title="Every observation, one row each, with its market snapshot">Download CSV</button></div>
       <div id="ins-meta" class="meta" style="margin:6px 0 10px"></div>
       <div class="tablewrap"><table id="ins-table"><thead></thead><tbody></tbody></table></div>
@@ -644,14 +686,68 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
   <div class="row"><span class="spacer"></span><button id="modal-no">Cancel</button><button class="primary" id="modal-yes">OK</button></div></div></div>
 
 <script>
-const TOKEN = "__TOKEN__";
+// If the page's own script fails, say so on the page and in the PC's log (Logs tab) instead of leaving it empty:
+// a phone has no console to look in. A separate script, so it works even when the main one can't run at all.
+const PAGE_ERRORS = new Set(), reportFetch = window.fetch.bind(window);  // not the main script's fetch: no sign-in redirects
+function pageError(what) {
+  const text = String(what || "unknown problem").slice(0, 300);
+  const box = document.getElementById("pageerror");
+  if (box) {
+    document.getElementById("pageerror-text").textContent = `Part of the dashboard could not be shown (${text}). ` +
+      "The bot itself is not affected. Reload; if it keeps happening, the Logs tab has the details.";
+    box.hidden = false;
+  }
+  if (PAGE_ERRORS.has(text) || PAGE_ERRORS.size >= 5) return;
+  PAGE_ERRORS.add(text);
+  let token = "__TOKEN__";  // the PC's; on the phone the session token, once the main script has it
+  try { token = token || TOKEN; } catch (e) { /* the main script didn't get that far */ }
+  try { token = token || sessionStorage.getItem("tsb-token") || ""; } catch (e) { /* no storage */ }
+  reportFetch("/api/page-error", {method: "POST", headers: {"X-Token": token, "Content-Type": "application/json"},
+    body: JSON.stringify({message: text, browser: navigator.userAgent})}).catch(() => {});
+}
+window.addEventListener("error", e => {
+  if (!e.lineno || e.message === "Script error.") return;  // another site's script (Telegram's): nothing to go on
+  pageError(`${e.message} - line ${e.lineno}`);
+});
+window.addEventListener("unhandledrejection", e => {
+  const r = e.reason || {};
+  if (r.name === "AbortError" || (r.name === "TypeError" && /fetch|load failed|network/i.test(r.message))) return;  // offline: its own banner
+  pageError(r.message || String(e.reason));
+});
+</script>
+<script>
 const PHONE = "__VIEW__" === "phone";  // opened on the phone through Telegram (phone_access.py)
-// Every request carries the token: the phone link checks it on reads too. A phone session that ended
-// (12 hours, or phone access restarted) signs in again through Telegram by reloading.
+// The PC's page comes with its token. The phone's page (/app) holds none: the phone sign-in page hands the
+// session token over in the address fragment, which is never sent anywhere, and it is kept for this visit.
+const TOKEN = PHONE ? phoneToken() : "__TOKEN__";
+let LEAVING = false, REFRESH = null;
+function phoneToken() {
+  const m = /^#k=([\w-]+)/.exec(location.hash);
+  let t = m ? m[1] : "";
+  try { if (t) sessionStorage.setItem("tsb-token", t); else t = sessionStorage.getItem("tsb-token") || ""; } catch (e) { /* no storage */ }
+  if (m) history.replaceState(null, "", location.pathname);
+  return t;
+}
+// A phone session that ended (12 hours, or the PC restarted) signs in again through Telegram by itself. If that
+// keeps happening within moments, something is wrong with signing in: say so instead of going round in circles.
+function signInAgain() {
+  if (LEAVING) return;
+  LEAVING = true;
+  let again = true;
+  try {
+    const recent = JSON.parse(sessionStorage.getItem("tsb-signins") || "[]").filter(t => Date.now() - t < 120000);
+    again = recent.length < 3;
+    sessionStorage.setItem("tsb-signins", JSON.stringify([...recent, Date.now()]));
+    sessionStorage.removeItem("tsb-token");
+  } catch (e) { again = !!TOKEN; }  // no storage: only a page that had a token goes back to sign in
+  if (again) location.replace("/");
+  else phoneEnded("Signing in from your phone didn't work just now.", "Close this and tap Open dashboard in Telegram again. If it keeps happening, restart the Topstep Bot window on the PC.");
+}
+// Every request carries the token: the phone link checks it on reads too
 const fetchBase = window.fetch.bind(window);
 window.fetch = async (url, opts = {}) => {
   const r = await fetchBase(url, {...opts, headers: {"X-Token": TOKEN, ...(opts.headers || {})}});
-  if (PHONE && r.status === 401) location.reload();
+  if (PHONE && r.status === 401) signInAgain();
   return r;
 };
 const $ = id => document.getElementById(id);
@@ -673,6 +769,8 @@ async function post(path, body) {
       body: JSON.stringify(body || {})});
   } catch (e) { return {ok: false, message: "No connection to the controller - is the Topstep Bot window still open?"}; }
   let data = {}; try { data = await r.json(); } catch (e) { data = {ok: r.ok}; }
+  // Cloudflare stops waiting after 100 seconds; a long job (training, learning) carries on at the PC
+  if (r.status === 524) data = {ok: true, message: "Still working on it at the PC - this page shows when it is done."};
   if (!r.ok && !data.message) data = {ok: false, message: `The controller refused that request (${r.status}). Reload this page and try again.`};
   return data;
 }
@@ -712,7 +810,7 @@ function showTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (name === "logs") loadLogs();
   if (name === "trade") loadTicket();
-  if (name === "knowledge") loadInsights(true);
+  if (name === "knowledge") { loadInsights(true); loadBrief(true); }
   if (name === "setup") loadSetup(false);
 }
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
@@ -752,11 +850,12 @@ $("ph-off").onclick = async () => {
   if (PHONE && d.ok !== false) { phoneEnded(d.message); return; }
   if (d.message) toast(d.message, d.ok === false); refresh();
 };
-function phoneEnded(message) {
-  clearInterval(REFRESH);
+function phoneEnded(message, hint) {
+  LEAVING = true; clearInterval(REFRESH);
   document.querySelector("main").innerHTML = `<div class="panel ended"><div class="brand">Topstep Bot</div>
-    <p>${esc(message || "Phone access is off.")}</p><p class="hint">Turn it on again on the PC (Settings tab) or send /dashboard to your bot in Telegram.</p></div>`;
-  const tg = window.Telegram && window.Telegram.WebApp; if (tg) setTimeout(() => tg.close(), 2500);
+    <p>${esc(message || "Phone access is off.")}</p><p class="hint">${esc(hint || "Turn it on again on the PC (Settings tab) or send /dashboard to your bot in Telegram.")}</p></div>`;
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg && !hint) setTimeout(() => tg.close(), 2500);  // phone access off: nothing more to do here
 }
 $("upd-token-save").onclick = async () => {
   const d = await run("setup/github_token", {token: $("upd-token").value.trim()});
@@ -764,7 +863,7 @@ $("upd-token-save").onclick = async () => {
 };
 $("newtrade").onclick = () => openTab("trade");
 $("ins-csv").onclick = async () => {
-  const d = await post("action/insights_csv");
+  const d = await post("action/insights_csv", {scope: INS_SCOPE});
   if (d.ok === false) { toast(d.message || "Could not export the knowledge base", true); return; }
   const url = URL.createObjectURL(new Blob([d.csv], {type: "text/csv"}));
   const a = document.createElement("a"); a.href = url; a.download = d.filename || "knowledge.csv";
@@ -843,6 +942,7 @@ function fmtLeft(ms) {
 }
 function renderClock(c) { if (!c) return; CLOCK = c; CLOCK_OFFSET = Date.parse(c.now) - Date.now(); tickClock(); }
 function tickClock() {
+  if (LEAVING) return;  // off to sign in again, or the page was replaced by a message
   const c = CLOCK; if (!c) return;
   const now = Date.now() + CLOCK_OFFSET;
   const state = `<div class="c" title="Chicago time"><div class="cl"><span class="dot" style="background:${css(c.market_open ? "--good" : "--muted")}"></span>
@@ -852,7 +952,20 @@ function tickClock() {
     const soon = left > 0 && left < 15 * 60000 && ["market", "entries", "flatten", "topstep"].includes(e.key) && !/open|starts/i.test(e.label);
     return `<div class="c${soon ? " soon" : ""}" title="${esc(e.detail)}"><div class="cl">${esc(e.label)}</div><div class="cv">${fmtLeft(left)}</div>
       <div class="cs">at ${esc(e.local)}</div></div>`; }).join("");
-  $("clock").innerHTML = state + evs + (c.holiday ? `<div class="holiday">⚠ ${esc(c.holiday)}</div>` : "");
+  $("clock").innerHTML = state + nextTile(now) + evs + (c.holiday ? `<div class="holiday">⚠ ${esc(c.holiday)}</div>` : "");
+}
+// the bot's own estimate of its next trade (forecast.py): a countdown tile next to the market's
+function nextTile(now) {
+  const f = S && S.bot && S.bot.forecast; if (!f) return "";
+  const e = f.estimate || {};
+  let v = "–", sub = "not enough history yet";
+  if (f.state === "in_trade") { v = "In a trade"; sub = "the next can follow it"; }
+  else if (f.state === "blocked") { v = "On hold"; sub = f.blocked || ""; }
+  else if (e.at) { v = "~" + fmtLeft(Date.parse(e.at) - now);
+    sub = `around ${e.at_local}` + (e.p_today != null && f.state !== "closed" ? ` · ${Math.round(100 * e.p_today)}% today` : ""); }
+  else if (f.earliest && Date.parse(f.earliest) > now) { v = fmtLeft(Date.parse(f.earliest) - now); sub = `not before ${f.earliest_local}`; }
+  return `<div class="c next" title="${esc(f.headline)} (click for why)" onclick="openTab('overview');document.getElementById('next-panel').scrollIntoView({behavior:'smooth'})">
+    <div class="cl">Next trade (estimate)</div><div class="cv">${esc(v)}</div><div class="cs">${esc(sub)}</div></div>`;
 }
 setInterval(tickClock, 1000);
 
@@ -919,6 +1032,25 @@ function renderOverview(b) {
     <td class="num ${t.net_pnl < 0 ? "neg" : t.net_pnl > 0 ? "pos" : ""}">${money(t.net_pnl)}</td><td class="num">${t.r != null ? signed(t.r) : "–"}</td>
     <td class="note">${esc(t.exit_reason)}</td></tr>`).join("") || `<tr><td colspan="9" class="empty">No closed trades yet today.</td></tr>`;
   $("activity").innerHTML = (b.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(11, 19))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">Nothing yet.</div>`;
+}
+
+// ---- next trade (Overview): when the bot expects to trade, and what that is based on
+function renderNext(b) {
+  const f = b && b.forecast;
+  $("next-panel").hidden = !b;
+  if (!f) { $("next-head").textContent = b ? "No estimate right now (see the logs)." : "–";
+    $("next-stats").innerHTML = $("next-basis").innerHTML = ""; $("next-caveat").textContent = ""; return; }
+  $("next-head").textContent = f.headline;
+  const e = f.estimate || {}, now = Date.now() + CLOCK_OFFSET, stats = [];
+  const stat = (label, value, small) => `<div class="stat"><div class="label">${esc(label)}</div><div class="sv">${esc(value)}</div><div class="ss">${esc(small || "")}</div></div>`;
+  if (f.earliest && Date.parse(f.earliest) > now + 60000) stats.push(stat("Earliest allowed", f.earliest_local, "the rules allow an entry"));
+  if (e.at) stats.push(stat("Most likely", e.at_local, "in about " + fmtLeft(Date.parse(e.at) - now)));
+  if (e.low && e.high && e.high !== e.low) stats.push(stat("Usual range", `${e.low_local.replace(" CT", "")} – ${e.high_local}`, "half of past days fall inside"));
+  if (e.p_today != null && f.state !== "closed") stats.push(stat("Chance today", Math.round(100 * e.p_today) + "%", "of past days had one after now"));
+  if (e.per_day != null) stats.push(stat("Signals a day", e.per_day.toFixed(1), `over ${e.days} trading days`));
+  $("next-stats").innerHTML = stats.join("");
+  $("next-basis").innerHTML = (f.basis || []).map(x => `<li>${esc(x)}</li>`).join("");
+  $("next-caveat").textContent = ["in_trade", "blocked"].includes(f.state) ? "" : f.caveat;
 }
 
 // ---- setups: what each strategy is building toward (Overview)
@@ -1200,16 +1332,56 @@ function renderKnowledge(b) {
         <td class="num ${x.r < 0 ? "neg" : x.r > 0 ? "pos" : ""}">${signed(x.r)}</td><td class="num">${money0(x.usd)}</td><td class="note">${esc(x.why)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
+// ---- what the bot knows (briefing.py): plain sentences, refreshed while the Knowledge tab is open
+let briefAt = 0, briefBusy = false;
+async function loadBrief(force) {
+  if (!S || !S.bot) { $("brief").innerHTML = `<div class="empty">Start the bot to hear what it knows.</div>`; $("brief-meta").textContent = ""; return; }
+  if (briefBusy || (!force && Date.now() - briefAt < 20000)) return;
+  briefBusy = true;
+  try {
+    const d = await post("action/brief");
+    if (d.ok === false || !d.brief) return;
+    briefAt = Date.now();
+    $("brief").innerHTML = d.brief.sections.map(s => `<h3>${esc(s.title)}</h3><ul>${s.lines.map(l => `<li>${esc(l)}</li>`).join("")}</ul>`).join("");
+    $("brief-meta").textContent = "as of " + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  } finally { briefBusy = false; }
+}
+function renderMemory(b) {
+  const m = b && b.memory, line = $("mem-line");
+  line.hidden = !m; $("learn").disabled = !m || m.running;
+  if (!m) return;
+  const lib = m.library;
+  let text = lib.bars ? `${lib.bars.toLocaleString()} price bars (${lib.days.toLocaleString()} trading days since ${lib.first}, ${lib.mb} MB)` : "Empty so far";
+  text += m.observations ? `, ${m.observations.toLocaleString()} signal outcomes from replaying them` : "";
+  text += m.trained ? `. Last replay ${m.trained.at.slice(0, 16).replace("T", " ")} UTC.` : ". Not replayed yet: it runs once a day outside trading hours.";
+  if (m.running) text = `Learning now: ${m.stage || "working"}…`;
+  if (m.error && !m.running) text += ` Last attempt failed: ${m.error}`;
+  $("mem-text").textContent = text;
+  $("mem-track").hidden = !m.running || m.progress == null;
+  $("mem-bar").style.width = Math.round(100 * (m.progress || 0)) + "%";
+}
+$("learn").onclick = async () => {
+  if (!await ask("Download the history the bot is still missing and replay all of it through every strategy now?\n\nThe bot keeps trading meanwhile. A year of history takes about a minute.")) return;
+  $("learn").disabled = true; toast("Learning from history…"); await run("action/learn"); briefAt = 0; loadBrief(true);
+};
+
 // ---- what the bot has learned (insights.py), fetched when the Knowledge tab is open and the base changes
-let INS = null, insKey = null, insBusy = false;
+let INS = null, insKey = null, insBusy = false, INS_SCOPE = store.get("tsb-ins-scope") === "longrun" ? "longrun" : "recent";
+function showScope() { document.querySelectorAll("#ins-scope button").forEach(x => x.classList.toggle("on", x.dataset.scope === INS_SCOPE)); }
+document.querySelectorAll("#ins-scope button").forEach(x => x.onclick = () => {
+  INS_SCOPE = x.dataset.scope; store.set("tsb-ins-scope", INS_SCOPE); showScope(); loadInsights(true); });
+showScope();
 async function loadInsights(force) {
-  const k = S && S.bot && S.bot.knowledge;
-  const key = k ? `${k.total}|${k.counts.real}|${k.counts.manual}|${k.trained && k.trained.at}` : null;
+  const k = S && S.bot && S.bot.knowledge, m = S && S.bot && S.bot.memory;
+  $("ins-scope").hidden = !m;
+  if (!m && INS_SCOPE === "longrun") { INS_SCOPE = "recent"; showScope(); }
+  const key = !k ? null : INS_SCOPE === "longrun" ? `L|${m.observations}|${m.trained && m.trained.at}`
+    : `R|${k.total}|${k.counts.real}|${k.counts.manual}|${k.trained && k.trained.at}`;
   if (insBusy || (!force && key === insKey)) return;
   if (!k) { INS = null; insKey = null; renderInsights(); return; }
   insBusy = true;
   try {
-    const d = await post("action/insights");
+    const d = await post("action/insights", {scope: INS_SCOPE});
     if (d.ok !== false) { INS = d.report; insKey = key; }
   } finally { insBusy = false; }
   renderInsights();
@@ -1221,13 +1393,16 @@ function renderInsights() {
   const r = INS;
   $("ins-csv").disabled = !r || !r.coverage.total;
   if (!r || !r.coverage.total) {
-    $("ins-meta").textContent = r ? "Nothing learned yet: press Retrain now, or let the bot run." : "Start the bot to see what it has learned.";
+    $("ins-meta").textContent = !r && !(S && S.bot) ? "Start the bot to see what it has learned."
+      : INS_SCOPE === "longrun" ? "The long-run memory hasn't been replayed yet: press Learn from history now, or let it run tonight."
+      : "Nothing learned yet: press Retrain now, or let the bot run.";
     head.innerHTML = body.innerHTML = $("ins-hints").innerHTML = ""; $("ins-fills").hidden = true;
     $("ins-feature").innerHTML = ""; $("ins-feature-help").textContent = ""; $("ins-cond").querySelector("thead").innerHTML = $("ins-cond").querySelector("tbody").innerHTML = "";
     return;
   }
   const c = r.coverage, min = r.min_row;
-  $("ins-meta").textContent = `${c.total.toLocaleString()} observations from ${c.first_day} to ${c.last_day}: ${c.with_context.toLocaleString()} with a market snapshot, ` +
+  $("ins-meta").textContent = (INS_SCOPE === "longrun" ? "Long-run memory: " : "") +
+    `${c.total.toLocaleString()} observations from ${c.first_day} to ${c.last_day}: ${c.with_context.toLocaleString()} with a market snapshot, ` +
     `${c.with_path.toLocaleString()} with their price path, ${c.with_costs.toLocaleString()} with costs. New ones carry all three.`;
   head.innerHTML = `<tr><th>Strategy</th><th class="num">Signals</th><th class="num">Won</th><th class="num">Before costs</th><th class="num">Costs</th>
     <th class="num">After costs</th><th class="num">Best point</th><th class="num">Worst point</th><th class="num">Losers up 1R first</th><th class="num">Real trades</th><th class="num">Simulated</th></tr>`;
@@ -1603,32 +1778,59 @@ async function loadLogs() {
   } catch (e) { /* offline banner covers it */ }
 }
 
+// Each part is drawn on its own: one that fails is reported (pageError) and can't leave the rest of the page empty
+function shown(part, draw) { try { draw(); } catch (e) { pageError(`${part}: ${(e && e.message) || e}`); } }
 function render(s) {
   const first = S === null;
   S = s;
-  renderTop(s); renderUpdates(s.updates); renderPhone(s.phone, s.viewer); renderClock(s.clock); renderOverview(s.bot); renderSetups(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
+  shown("top bar", () => renderTop(s)); shown("updates", () => renderUpdates(s.updates));
+  shown("phone access", () => renderPhone(s.phone, s.viewer)); shown("market clock", () => renderClock(s.clock));
+  shown("overview", () => renderOverview(s.bot)); shown("next trade", () => renderNext(s.bot)); shown("setups", () => renderSetups(s.bot));
+  shown("long-run memory", () => renderMemory(s.bot)); shown("ideas", () => renderIdeas(s.bot));
+  shown("knowledge", () => renderKnowledge(s.bot)); shown("settings", () => renderSettings(s.bot)); shown("events", () => renderLogs(s));
   if (s.setup) $("setupflag").hidden = s.setup.configured && !s.setup.error;
   if (first && s.setup && !s.setup.configured && !ASKED_TAB && !PHONE) showTab("setup");  // first run: straight to setup
-  if (tabOpen("knowledge")) loadInsights(false);
+  if (tabOpen("knowledge")) { loadInsights(false); loadBrief(false); }
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
 }
+let REFRESHING = false;
 async function refresh() {
+  if (REFRESHING || LEAVING) return;  // one at a time: over the phone link an answer can take a few seconds
+  REFRESHING = true;
+  let s;
   try {
-    const r = await fetch("/api/status", {cache:"no-store"}), s = await r.json();
-    if (INSTANCE && s.instance && s.instance !== INSTANCE) { location.reload(); return; }  // restarted (e.g. after an update)
-    INSTANCE = s.instance || INSTANCE;
-    render(s); $("offline").style.display = "none";
+    const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 15000);
+    try {
+      const r = await fetch("/api/status", {cache:"no-store", signal:stop.signal});
+      if (!r.ok) throw new Error(`the controller answered ${r.status}`);
+      s = await r.json();
+    } finally { clearTimeout(timer); }
   } catch (e) {
-    const o = $("offline"); o.style.display = "block"; o.classList.toggle("updating", UPDATING);
-    o.textContent = UPDATING ? "Restarting with the new version… this page reloads by itself when it is back." : OFFLINE_TEXT;
-  }
+    if (!LEAVING) {
+      const o = $("offline"); o.style.display = "block"; o.classList.toggle("updating", UPDATING);
+      o.textContent = UPDATING ? "Restarting with the new version… this page reloads by itself when it is back." : OFFLINE_TEXT;
+    }
+    return;
+  } finally { REFRESHING = false; }
+  if (INSTANCE && s.instance && s.instance !== INSTANCE) { location.reload(); return; }  // restarted (e.g. after an update)
+  INSTANCE = s.instance || INSTANCE;
+  $("offline").style.display = "none";
+  render(s);
 }
 const ASKED_TAB = location.hash.slice(1);  // a link to a tab wins over the first-run jump to Setup
 showTab(ASKED_TAB || store.get("tsb-tab") || "overview");
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => store.set("tsb-tab", b.dataset.tab)));
-if (PHONE) { $("m-live").title = "LIVE can only be switched on at the PC";
-  document.querySelector('.tabs [data-tab="setup"]').hidden = true; }
-refresh(); const REFRESH = setInterval(refresh, 2000);
+if (PHONE) {
+  $("m-live").title = "LIVE can only be switched on at the PC";
+  document.querySelector('.tabs [data-tab="setup"]').hidden = true;
+  // Telegram's helper: full height, and closing the page when phone access is turned off
+  const tg = document.createElement("script");
+  tg.src = "https://telegram.org/js/telegram-web-app.js"; tg.async = true;
+  tg.onload = () => { const app = window.Telegram && window.Telegram.WebApp; if (app) { app.ready(); app.expand(); } };
+  document.head.appendChild(tg);
+  if (!TOKEN) signInAgain();
+}
+if (!LEAVING) { refresh(); REFRESH = setInterval(refresh, 2000); }
 setInterval(() => { if (tabOpen("logs")) loadLogs(); }, 10000);
 </script>
 </body>

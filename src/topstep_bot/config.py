@@ -243,6 +243,12 @@ class KnowledgeConfig(_Section):
     min_samples: int = Field(default=8, ge=1, description="Evidence needed before a strategy may trade in a slot.")
     min_edge_r: float = Field(default=0.05, description="Minimum shrunk expectancy (in R) to keep trading a strategy.")
     real_trade_weight: float = Field(default=2.0, ge=1.0, description="How much more a real trade counts than an idea.")
+    deep_learning: bool = Field(
+        default=True,
+        description="Long-run memory: keep every bar the bot sees, backfill up to deep_history_days of history and replay "
+        "all of it through every strategy once a day. Feeds the reports only; it does not change how the bot trades.",
+    )
+    deep_history_days: int = Field(default=365, ge=30, le=3650, description="How far back the long-run memory reaches.")
 
 
 class ServiceConfig(_Section):
@@ -376,6 +382,16 @@ class BotConfig(_Section):
     def knowledge_path(self) -> Path:
         """One knowledge base per symbol and timeframe (shared by paper and live)."""
         return self.data_path / f"knowledge_{self.instrument.symbol}_{self.instrument.timeframe_minutes}m.json"
+
+    @property
+    def longrun_knowledge_path(self) -> Path:
+        """What every strategy did on the whole market library (memory.py): reports only, never trading decisions."""
+        return self.data_path / f"knowledge_{self.instrument.symbol}_{self.instrument.timeframe_minutes}m_longrun.json"
+
+    @property
+    def library_path(self) -> Path:
+        """Every price bar the bot has downloaded or imported (memory.py), for all symbols and timeframes."""
+        return self.data_path / "market_library.sqlite"
 
 
 class Secrets(BaseModel):

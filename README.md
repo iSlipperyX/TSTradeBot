@@ -84,6 +84,13 @@ No bot can guarantee passing the Combine or making a profit, and this one doesn'
   worst point), its costs and, for real fills, the slippage. The Knowledge tab, `/knowledge` and
   `topstep-bot insights` show results after costs, real fills against simulated ones and conditions
   worth testing; `--csv` exports everything for Excel.
+- **What the bot knows and when it trades next** — the bot explains in plain sentences what it knows,
+  what it would trade right now and why, and when its next trade is likely (an honest estimate from
+  its own history and the rules, with what it's based on): Knowledge tab, a countdown on the
+  dashboard, `/brief` and `/next` in Telegram.
+- **Long-run memory** — every price bar the bot sees is kept, up to a year (or more) of history is
+  backfilled, and all of it is replayed through every strategy daily, for a much bigger knowledge base
+  to report on and compare against. It doesn't change how the bot trades.
 - **Live settings** — change risk, limits, times, news pause and the auto-traded strategy from the
   dashboard or Telegram, within safe bounds, with confirmation and a full audit trail.
 - **Logging** — daily logs, an errors-only file, a JSON event log, crash reports, secrets masked,
@@ -125,7 +132,8 @@ topstep-bot rules           Topstep rules for your account and how the bot enfor
 topstep-bot demo            demo backtest on synthetic data
 topstep-bot telegram-test   send a test message to your Telegram bot
 topstep-bot logs            recent errors and crash reports  (--open, --bundle for support)
-topstep-bot insights        what the bot has learned: results after costs, real fills, conditions (--csv FILE)
+topstep-bot insights        what the bot has learned: results after costs, real fills, conditions (--csv FILE, --longrun)
+topstep-bot learn           grow the long-run memory: backfill history and replay it all (--import CSV, --days N)
 topstep-bot update          check GitHub for a newer version and install it (--check, --token, --undo)
 ```
 
@@ -142,6 +150,8 @@ src/topstep_bot/
   engine.py       trading core shared by backtests and live trading
   knowledge.py    the knowledge base (what works when) and its training
   recommendations.py  every strategy's signals tracked to an outcome (feeds the knowledge base)
+  memory.py       long-run memory: the market library and replaying all of it
+  forecast.py     when the next trade is likely;  briefing.py  what the bot knows, in plain words
   execution.py    order/trade lifecycle (entry, stop, target, OCO, reconciliation)
   controller.py   dashboard + Telegram + supervision of the bot process
   setup_service.py  the dashboard's Setup tab;  config_edit.py  edits config.yaml keeping comments

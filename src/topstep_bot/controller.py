@@ -56,7 +56,7 @@ BACKOFF = (10, 30, 60, 120, 300)
 HEALTHY_AFTER = 600  # seconds of uptime that reset the crash backoff
 STOP_TIMEOUT = 45  # seconds to wait for a graceful stop (it flattens first)
 ACTION_TIMEOUT = 8  # seconds to wait for the bot to answer a request
-SLOW_ACTIONS = {"train": 600}  # training downloads and replays weeks of history
+SLOW_ACTIONS = {"train": 600, "learn": 3600}  # training replays weeks of history; learning backfills and replays up to a year
 STATE_FILE = "controller.json"
 
 
@@ -399,6 +399,15 @@ class ProxyActions:
     async def install_update(self, source: str, when: str = "now") -> str:
         return await self.ctl.updates.install(source, when)
 
+    async def brief_text(self) -> str:
+        return await self._text("brief_text")
+
+    async def next_text(self) -> str:
+        return await self._text("next_text")
+
+    async def learn(self, source: str) -> str:
+        return await self._msg("learn", source)
+
     async def preview_setting(self, key: str, value: Any) -> dict:
         return await self.bot.action("preview_setting", {"key": key, "value": value})
 
@@ -438,6 +447,7 @@ class Controller:
         self.secrets = secrets
         self.config_path = config_path
         self.events: deque[dict] = deque(maxlen=100)
+        self._page_errors: deque[tuple[float, str]] = deque()  # (when, message) reported by open dashboards
         self.bot = BotProcess(cfg, secrets, mode=mode, config_path=config_path, worker_command=worker_command,
                               events=self.events, poll_seconds=poll_seconds)
         self.started_at = time.time()
@@ -473,6 +483,7 @@ class Controller:
                 ("POST", "/api/setup/autostart", lambda r: self.setup.autostart(r.json())),
                 ("POST", "/api/phone/on", lambda r: self.phone.enable(source(r))),
                 ("POST", "/api/phone/off", lambda r: self.phone.disable(source(r), wait=not r.remote)),
+                ("POST", "/api/page-error", self._page_error),
             ],
             token=self.token,
             name="dashboard",
@@ -495,6 +506,21 @@ class Controller:
 
     def _index(self, _: Request):
         return html_response(self.page(self.token))
+
+    def _page_error(self, req: Request) -> str:
+        """An open dashboard reports that its own script failed, so it shows in the logs (a phone has no console)."""
+        body = req.json()
+        message = " ".join(str(body.get("message", "")).split())[:300] or "unknown problem"
+        now = time.time()
+        while self._page_errors and now - self._page_errors[0][0] > 600:
+            self._page_errors.popleft()
+        if len(self._page_errors) >= 10 or any(m == message for _, m in self._page_errors):
+            return "already noted"
+        self._page_errors.append((now, message))
+        where = "on your phone" if req.remote else "on this PC"
+        self.bot._event("warning", f"The dashboard {where} hit a problem showing the page: {message}")
+        log.info("That dashboard runs in: %s", " ".join(str(body.get("browser", "")).split())[:200] or "?")
+        return "noted"
 
     async def _status(self, req: Request) -> dict:
         data = await self.bot.status() if self.bot.state in ("running", "starting") else None

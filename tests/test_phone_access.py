@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import sys
 import tarfile
 import time
@@ -250,9 +251,15 @@ def test_only_the_owner_signs_in_and_every_request_needs_the_session(tmp_path):
 
             r = await sign_in(phone)
             d = r.json()
-            assert r.status_code == 200 and d["ok"]
-            assert f'const TOKEN = "{d["token"]}"' in d["page"] and '"phone" === "phone"' in d["page"]
-            assert ctl.token not in d["page"]  # the phone never sees the PC's token
+            assert r.status_code == 200 and d["ok"] and len(d["token"]) > 30
+
+            # the dashboard page itself is a plain page load that holds no token: the sign-in page hands it
+            # the session token in the address fragment, so anyone may load it, and it is no use without one
+            app = await phone.get("/app")
+            assert app.status_code == 200 and '"phone" === "phone"' in app.text and "__TOKEN__" not in app.text
+            assert ctl.token not in app.text and d["token"] not in app.text  # the phone never sees the PC's token
+            assert "frame-ancestors https://web.telegram.org" in app.headers["content-security-policy"]
+            assert (await phone.get("/api/status")).status_code == 401
 
         async with phone_client(ctl, d["token"]) as phone:
             s = (await phone.get("/api/status")).json()
@@ -278,6 +285,30 @@ def test_phone_can_run_the_bot_and_its_actions_are_labelled(tmp_path):
             r = (await phone.post("/api/action/pause", json={"source": "forged"})).json()
             assert r["payload"]["source"] == "phone (Telegram)"
             assert any("requested by phone (Telegram)" in e["message"] for e in ctl.events)
+    scenario(tmp_path, body)
+
+
+def test_a_dashboard_that_breaks_says_so_in_the_pc_log(tmp_path, caplog):
+    """A phone has no console: the page reports its own script errors, so they show on the Logs tab."""
+    caplog.set_level(logging.INFO, logger="topstep_bot.controller")
+
+    async def body(ctl, pc):
+        await turn_on(ctl, pc)
+        async with phone_client(ctl) as phone:
+            assert (await phone.post("/api/page-error", json={"message": "x"})).status_code == 401  # signed-in pages only
+            token = (await sign_in(phone)).json()["token"]
+        report = {"message": "TypeError: s.bot.risk is undefined - line 812", "browser": "Mozilla/5.0 (iPhone) Telegram"}
+        async with phone_client(ctl, token) as phone:
+            for _ in range(3):  # the same problem every 2 seconds is noted once
+                assert (await phone.post("/api/page-error", json=report)).json()["ok"]
+        warnings = [e["message"] for e in ctl.events if "hit a problem" in e["message"]]
+        assert warnings == ["The dashboard on your phone hit a problem showing the page: TypeError: s.bot.risk is undefined - line 812"]
+        assert "iPhone" in caplog.text  # which browser, for the support bundle
+        assert (await pc.post("/api/page-error", headers={"X-Token": "wrong"}, json=report)).status_code == 403
+        for i in range(15):  # a page that keeps breaking in new ways can't flood the log
+            await pc.post("/api/page-error", json={"message": f"problem {i}\n" + "x" * 500})
+        warnings = [e["message"] for e in ctl.events if "hit a problem" in e["message"]]
+        assert len(warnings) == 10 and "on this PC" in warnings[0] and len(warnings[0]) < 400 and "\n" not in warnings[0]
     scenario(tmp_path, body)
 
 

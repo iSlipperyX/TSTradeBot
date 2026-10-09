@@ -151,6 +151,10 @@ class AdaptiveAllDay(Strategy):
             return Verdict(True, "unproven", 0.0, v.why + " (trading anyway: trade_unproven)")
         return v
 
+    def would_take(self, name: str, slot: str, regime: str, day: date) -> bool:
+        """Would a signal from sub-strategy ``name`` be traded at this slot and regime, with today's knowledge?"""
+        return self._verdict(name, slot, regime, day).allowed
+
     def allowed_now(self, slot: str, regime: str, day: date) -> list[str]:
         key = (slot, regime, day, self.knowledge.updated if self.knowledge else -1)
         if self._allowed_cache and self._allowed_cache[0] == key:
