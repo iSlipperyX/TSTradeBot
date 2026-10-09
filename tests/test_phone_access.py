@@ -159,8 +159,11 @@ def make(tmp_path, secrets=None, state=None, **cfg_kw) -> Controller:
     cfg = BotConfig.model_validate({"data_dir": str(tmp_path / "data"), "log_dir": str(tmp_path / "logs"), **cfg_kw})
     if state is not None:
         controller_mod.save_state(cfg, state)
-    secrets = secrets or Secrets(telegram_bot_token=BOT_TOKEN, telegram_chat_id=str(OWNER))
-    ctl = Controller(cfg, secrets, mode="paper", config_path=None, worker_command=FAKE, port=0, poll_seconds=0.1)
+    secrets = secrets or Secrets(username="me", api_key="key", telegram_bot_token=BOT_TOKEN, telegram_chat_id=str(OWNER))
+    path = tmp_path / "config.yaml"  # setup finished, as after the Setup tab
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("mode: paper\n", encoding="utf-8")
+    ctl = Controller(cfg, secrets, mode="paper", config_path=str(path), worker_command=FAKE, port=0, poll_seconds=0.1)
     ctl.phone = PhoneAccess(ctl, tunnel_args=FAKE_TUNNEL)
     return ctl
 
@@ -404,3 +407,30 @@ def test_dashboard_command_explains_what_is_missing(tmp_path):
 
 def test_dashboard_button_is_on_the_keyboard():
     assert {"text": "📱 Dashboard", "callback_data": "cmd:dashboard"} in KEYBOARD["inline_keyboard"][0]
+
+
+def test_setup_stays_on_the_pc(tmp_path):
+    async def body(ctl, pc):
+        await turn_on(ctl, pc)
+        async with phone_client(ctl) as phone:
+            token = (await sign_in(phone)).json()["token"]
+        async with phone_client(ctl, token) as phone:
+            for path in ("/api/setup/state", "/api/setup/login", "/api/setup/telegram/save", "/api/setup/github_token"):
+                assert (await phone.post(path, json={})).status_code == 404  # API keys and accounts: PC only
+        assert (await pc.post("/api/setup/state")).json()["ok"]
+    scenario(tmp_path, body)
+
+
+def test_telegram_set_up_again_signs_everyone_out(tmp_path):
+    async def body(ctl, pc):
+        await turn_on(ctl, pc)
+        async with phone_client(ctl) as phone:
+            token = (await sign_in(phone)).json()["token"]
+        await ctl.restart_telegram()  # e.g. a new chat saved on the Setup tab
+        assert not ctl.phone.sessions and ctl.phone.state == "on"
+        async with phone_client(ctl, token) as phone:
+            assert (await phone.get("/api/status")).status_code == 401
+        ctl.secrets.telegram_bot_token = None  # Telegram removed on the Setup tab
+        await ctl.restart_telegram()
+        assert ctl.phone.state == "off" and ctl.phone.enabled  # off until Telegram is back; the choice is kept
+    scenario(tmp_path, body)
