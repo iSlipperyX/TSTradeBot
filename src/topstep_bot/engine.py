@@ -181,6 +181,8 @@ class TradingCore:
             self.current_day, self.risk.day_start_balance, self.balance, self._day_min_equity, self.risk.trades_today
         )
         self.daily_records.append(rec)
+        if rec.trades:
+            self.risk.best_prior_day = max(self.risk.best_prior_day, rec.pnl)
         if self.journal:
             self.journal.record_day(rec.day, self.account_label, rec.start_balance, rec.end_balance, rec.trades, floor)
             self.journal.set_state(f"mll_floor:{self.account_label}", floor)
@@ -337,7 +339,8 @@ class TradingCore:
             return f"stop is {c.ticks(distance):.0f} ticks away (max {self.cfg.risk.max_stop_ticks})"
         max_slip = self.cfg.execution.max_entry_slippage_ticks
         worst_entry = entry_ref + side.sign * c.price_offset(max_slip or 0)
-        size = self.risk.position_size(worst_entry, stop, self.balance)  # risk holds even at the worst fill
+        # Risk holds even at the worst fill; near scheduled news the size is capped below Topstep's max.
+        size = self.risk.position_size(worst_entry, stop, self.balance, now=self.clock())
         if size < 1:
             return "1 contract would risk more than the allowed budget"
         target = None
@@ -420,8 +423,13 @@ class TradingCore:
 
     async def on_clock(self, now: datetime) -> None:
         await self.roll_day_if_needed(now)
+        guard = self.orders.guard
+        if guard is not None and guard.tripped and not self.halted:
+            await self.halt(guard.tripped)
         if self.schedule.must_be_flat(now) and not self.orders.is_flat:
             await self._flatten("session flatten time (Topstep requires flat by 15:10 CT)", now)
+        elif (news_reason := self.risk.news_flatten_reason(now, self.orders.position)) is not None:
+            await self._flatten(news_reason, now, kind="risk")
         elif self.cfg.news.flatten_before and self.schedule.news and not self.orders.is_flat:
             event = self.schedule.news.releasing_soon(now)
             if event:
@@ -472,6 +480,7 @@ class TradingCore:
         open_pnl = self.orders.open_pnl()
         equity = self.balance + open_pnl
         plan = self.risk.plan
+        progress = self.risk.combine_progress(self.balance, open_pnl)
         start = self.tracker.starting_balance
         trade = self.orders.trade
         return {
@@ -487,7 +496,8 @@ class TradingCore:
             "open_pnl": round(open_pnl, 2),
             "position": self.orders.position,
             "last_price": self.last_price,
-            "profit_target": plan.profit_target if self.risk.stage == "combine" else None,
+            # Combine: the target after any Consistency Target increase.
+            "profit_target": progress.profit_target if progress else None,
             "total_profit": round(self.balance - start, 2),
             "trade": trade.to_dict() if trade else None,
             "last_trade": self.orders.last_trade.to_dict() if self.orders.last_trade else None,

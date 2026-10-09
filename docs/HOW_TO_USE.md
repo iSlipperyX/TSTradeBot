@@ -2,7 +2,27 @@
 
 This guide takes you from zero to a running bot, explains every screen and setting, and covers
 what to do when something goes wrong. If you only read one section, read
-[The path to live trading](#7-the-path-to-live-trading).
+[The path to live trading](#7-the-path-to-live-trading). For every Topstep rule and the guard that
+enforces it, see [TOPSTEP_RULES.md](TOPSTEP_RULES.md).
+
+> **Honest expectations.** No bot can guarantee passing the Combine or making money, and this one
+> doesn't either. What it does guarantee is that it won't break a Topstep rule by itself: every
+> rule below is enforced in code and covered by tests. Backtest results are evidence, not a promise.
+> Paper trade first, then run it on a Combine, and only then on an account you care about.
+
+## Quick start (the short version)
+
+1. Install [Python 3.11+](https://www.python.org/downloads/) and tick **"Add python.exe to PATH"**.
+2. Double-click **`start.bat`**. The first run installs everything.
+3. Get a TopstepX API key ([section 4](#4-get-your-topstepx-api-key)).
+4. Menu **1 (setup)**: answer the questions. Press Enter to accept a suggestion. If the account is
+   just for teaching the bot, choose **"Teach the bot"** ([section 17](#using-a-combine-to-teach-the-bot)).
+5. Menu **16 (rules)**: check the limits the bot will enforce for your account.
+6. Menu **5 (train)**, then menu **4 (backtest)** and read the report.
+7. Menu **6 (paper)**: watch it trade with simulated orders for a few days.
+8. Menu **2 (go-live)**: it checks everything, then you type `LIVE`.
+9. Keep the PC on. Watch it on the dashboard (http://127.0.0.1:8765) or Telegram (`/status`).
+   `/flatten` closes everything, a confirmed `/stop` stops trading, `/startbot` starts it again.
 
 ---
 
@@ -48,8 +68,11 @@ what to do when something goes wrong. If you only read one section, read
 - Size every trade from the dollars you are willing to lose on it.
 - Place the entry, then immediately a **protective stop** and (optionally) a **profit target**.
   When one of those fills, it cancels the other.
-- Enforce Topstep's rules *and* stricter personal limits: daily loss limit, distance from the
-  Maximum Loss Limit, contract caps, trade counts, and being flat before 15:10 CT.
+- Enforce Topstep's rules *and* stricter personal limits: the Maximum Loss Limit, the optional
+  Daily Loss Limit, the Combine Consistency Target, contract caps (including the XFA Scaling Plan
+  and product caps), never holding the maximum size into news, and being flat before 15:10 CT
+  ([section 14](#14-topstep-rules-what-the-bot-enforces-and-what-is-still-on-you)).
+- Stop trading once the Combine profit target is reached, so a late loss can't undo the pass.
 - Pause automatically around high-impact economic news.
 - Run unattended 24/7 on your PC, restart itself after a crash, and recover an open position
   after a restart.
@@ -151,16 +174,21 @@ Choose **1 (setup)** in the menu, or run `topstep-bot setup`. It walks you throu
    saved in a file called `.env` in the bot folder, which only lives on your computer. The wizard
    then logs in to check them and lists your accounts.
 2. **Which account** the bot should use (if you have several). The wizard reads the account name
-   (e.g. `50KTC-...`, `XFA-150K-...`) and pre-selects the matching size and type below.
+   (e.g. `50KTC-...`, `XFA-150K-...`) and pre-selects the matching size and type below. Live
+   Funded accounts are not offered: Topstep doesn't allow API trading on them.
 3. **Account size** — 50K, 100K or 150K. This sets the Maximum Loss Limit, profit target and
    contract cap the bot works with.
 4. **Account type** — `combine` (evaluation), `express` (Express Funded Account) or `practice`.
+   Then two yes/no questions: whether you added Topstep's optional **Daily Loss Limit** at checkout
+   (it's under Risk Settings in TopstepX; the bot then stops before it), and for an Express Funded
+   Account, which **payout path** you chose.
 5. **What to trade.** Start with a **micro** contract (MNQ, MES, M2K, MYM, MGC, MCL). Micros are
    1/10th the size of the minis, so mistakes cost 10× less.
 6. **Strategy.** `adaptive` (recommended) runs every strategy all day and trades only what the bot
    has learned is working; or pick one strategy. See [section 12](#12-the-strategies).
 7. **Risk.** Dollars to risk per trade and your personal daily loss limit. The wizard suggests
-   7.5% and 25% of your Maximum Loss Limit (for a 50K account: $150 per trade, $500 per day).
+   7.5% and 25% of your Maximum Loss Limit (for a 50K account: $150 per trade, $500 per day). Your
+   daily limit must be below Topstep's limits; the wizard won't accept one that isn't.
 8. **Telegram and alerts** (optional) — control the bot from your phone and get alerts; see
    [section 15](#15-telegram-control-and-alerts-on-your-phone).
 
@@ -193,6 +221,10 @@ Double-click `start.bat` (or run `topstep-bot`):
 | 13 | autostart | Starts everything automatically when you sign in to Windows ([section 20](#20-running-247)) |
 | 14 | logs | Shows recent errors and where the log files are ([section 22](#22-logs-finding-out-what-happened)) |
 | 15 | tune | **Tuning:** tests every strategy and its settings on real data they never saw and can save what held up ([section 18](#18-tuning-test-strategy-settings-on-unseen-data)) |
+| 16 | rules | Shows Topstep's rules for **your** account (limits in dollars and contracts) and what the bot does about each one |
+
+Above the list, the menu shows a one-line summary of your setup (account, symbol, strategy, mode).
+If `config.yaml` has a mistake, that line says what and where.
 
 You can switch between paper and live later from the dashboard, without coming back to this menu.
 
@@ -605,7 +637,13 @@ The size is then reduced if needed so that a full stop-out could not:
 
 - push today's loss past `personal_daily_loss_limit`,
 - bring equity within `mll_buffer` of Topstep's Maximum Loss Limit,
-- exceed Topstep's contract cap (5/10/15 minis or 50/100/150 micros for 50K/100K/150K), or `max_contracts`.
+- exceed Topstep's position limit for today (5/10/15 minis or 50/100/150 micros for 50K/100K/150K,
+  the XFA Scaling Plan, or a product limit such as 3/6/9 for Gold and Crude), or `max_contracts`.
+
+Within 30 minutes of a scheduled high-impact release (and whenever the economic calendar can't be
+loaded) the limit is halved, because Topstep prohibits taking the maximum position size into news.
+Right before an entry order is sent, an independent check refuses it if it would still take the
+position past Topstep's limit.
 
 If even 1 contract would risk too much, the trade is skipped and the dashboard says why.
 
@@ -617,7 +655,9 @@ During the [ramp-up](#21-starting-today-preflight-ramp-up-and-news) the per-trad
 | Setting | Default | What happens |
 |---|---|---|
 | `personal_daily_loss_limit` | 500 | Includes open P&L. Hitting it flattens everything and stops trading until the next session. |
-| `daily_profit_target` | Combine: 40% of the profit target ($1,200 on 50K) | No new trades after reaching it. This protects Topstep's consistency rule (best day must be under 50% of total profit). |
+| `daily_profit_target` | Combine: 40% of the profit target ($1,200 on 50K) | No new trades after reaching it. This protects Topstep's Consistency Target (best day at most 55% of the profit target, or the target goes up). |
+| `consistency_guard` | on | Combine: if an open trade carries the day to 50% of the profit target ($1,500 on 50K), it is closed and the day is done, before the 55% line. |
+| `stop_at_profit_target` | on | Combine: once the profit target is reached, the bot closes out and stops trading so the pass can't be given back. |
 | `max_trades_per_day` | 4 | No new trades after this many. |
 | `max_consecutive_losses` | 2 | Done for the day after this many losses in a row. |
 | `cooldown_minutes_after_loss` | 10 | Pause after each loss. |
@@ -651,15 +691,24 @@ The stop only ever moves in your favor.
 
 ## 14. Topstep rules: what the bot enforces and what is still on you
 
+Run **`topstep-bot rules`** (menu 16) to see these limits in dollars and contracts for your own
+account. [TOPSTEP_RULES.md](TOPSTEP_RULES.md) explains each rule in detail, with Topstep's sources.
+The rules were checked against Topstep's Help Center in October 2026.
+
 | Topstep rule | How the bot handles it |
 |---|---|
-| **Maximum Loss Limit** — trails your highest end-of-day balance, locks at the starting balance, enforced in real time including open P&L | Tracked from end-of-day balances. Every trade is sized so a stop-out stays above the floor plus `mll_buffer`; open positions are flattened if equity gets within half the buffer. |
-| **Daily Loss Limit** — none on new TopstepX accounts | Not applied unless you set `account.topstep_daily_loss_limit` (the bot sets it automatically for accounts whose name contains "DLL"). Your `personal_daily_loss_limit` always applies. |
-| **Flat by 15:10 CT** | Flattens at `flatten_at` (15:00 default). |
-| **Contract caps** — 5/10/15 minis (micros count 1/10) | Enforced. Express accounts use a conservative Scaling Plan table — check your real limit in TopstepX Risk Settings and set `risk.max_contracts` if lower. |
-| **Combine consistency** — best day under 50% of total profit | Default daily profit cap at 40% of the target; the backtest's pass simulation checks this rule. |
-| **No VPS/VPN, no HFT** | Bars of 1 minute or more and a few trades a day — nowhere near HFT. **Running it on your own PC is your responsibility.** |
+| **Maximum Loss Limit** — $2,000 / $3,000 / $4,500, trails your highest end-of-day balance, locks at the starting balance ($0 in an XFA), enforced in real time including open P&L | Tracked from end-of-day balances. Every trade is sized so a stop-out stays above the floor plus `mll_buffer`; open positions are flattened if equity gets within half the buffer. |
+| **Daily Loss Limit** — optional, chosen at checkout: $1,000 / $2,000 / $3,000 | Set `account.topstep_daily_loss_limit: true` if you have it (setup asks). The bot stops new trades at 90% of it and closes trades at 95%. Your `personal_daily_loss_limit` always applies and must be lower. |
+| **Consistency Target (Combine)** — best day at most 55% of the profit target ($1,650 / $3,300 / $4,950), or the target rises to best day ÷ 0.55 | No new trades after 40% of the target in a day; an open trade is closed at 50%. The dashboard's target meter shows any increase. |
+| **Profit target (Combine)** — $3,000 / $6,000 / $9,000 | Once reached, the bot closes out and stops trading. |
+| **Position limits** — 5/10/15 minis (10 micros = 1 mini), XFA Scaling Plan, product caps (Gold/Crude 3/6/9, micros 30/60/90; Silver, Copper, Platinum not tradable) | Enforced when sizing and again right before every entry order. A config for a product Topstep doesn't allow is refused. |
+| **Flat by 15:10 CT** | Flattens at `flatten_at` (15:00 default); the config refuses anything later than 15:08. |
+| **News** — no maximum-size position into a scheduled major release | Entries pause around high-impact releases, sizes are halved in the 30 minutes before one, and a full-size position is closed before it. |
+| **Your own computer only** — no VPS, VPN or remote server | The preflight warns if the PC looks like a cloud server, virtual machine or Remote Desktop session. Running it on your own PC is your responsibility. |
+| **No high-frequency trading** | A few trades a day on 1-minute bars or slower. An order-rate breaker stops new entries (and halts the bot) after 30 order actions in a minute or 20 entries in a day. |
+| **No API trading on Live Funded Accounts** | The bot refuses to trade an account the API reports as real-money. |
 | **No hedging** | One position at a time on one contract. Don't run opposite strategies on several accounts. |
+| **Automation is your responsibility** — Topstep makes no exceptions for bot malfunctions | Paper trade first, watch the first live days closely, and keep Telegram set up so you can `/flatten` from anywhere. |
 
 **Keep the bot's MLL in sync.** The API doesn't report the MLL floor, so the bot calculates it. The
 preflight asks for it when it can't work it out. If the bot was off for a while or you traded
@@ -673,8 +722,9 @@ account:
 For an Express Funded Account after your first payout, Topstep sets the MLL to $0 — set
 `mll_floor_override: 0`.
 
-Topstep changes its rules from time to time. Check help.topstep.com and your dashboard, and adjust
-the config if anything differs.
+Topstep changes its rules from time to time. Check help.topstep.com and your TopstepX Risk Settings,
+and adjust the config if anything differs: a lower position limit goes in `risk.max_contracts`, a
+different Daily Loss Limit in `account.topstep_daily_loss_limit` (a dollar amount).
 
 ---
 
@@ -856,6 +906,37 @@ stopped working, it does not guarantee profits. Backtests of the adaptive strate
 it starts knowing nothing and learns as the data plays (no peeking), so the first weeks of a backtest
 show few or no trades.
 
+### Using a Combine to teach the bot
+
+If an account is for teaching the bot rather than passing, choose **"Teach the bot"** when setup asks
+what the account is for. That writes a learning configuration:
+
+| Setting | Learning | Passing (default) | Why |
+|---|---|---|---|
+| `strategy` | `adaptive` with `trade_unproven: true` | your choice | Also trades strategies the bot has no evidence on yet, so it gets real fills for them. |
+| `risk_per_trade` (50K) | $100 (5% of the MLL) | $150 | Smaller trades, so more of them fit before a daily or account limit. |
+| `max_trades_per_day` | 8 | 4 | More real outcomes per day. |
+| `max_consecutive_losses` | 4 | 2 | Doesn't stop after two losses. |
+| `cooldown_minutes_after_loss` | 5 | 10 | |
+| `daily_profit_target` | the full profit target | 40% of it | No early stop on a big day. |
+| `consistency_guard` | off | on | A big day only raises the target; that doesn't matter on a learning account. |
+
+What stays the same: **every Topstep rule** (MLL, any DLL, position limits, news, flat by 15:10) and
+your personal daily loss limit. Breaking a Topstep rule or touching the MLL ends the Combine, and
+that ends the learning until you reset it, so the bot still protects the account from that.
+
+Good to know:
+
+- The bot learns from **every** strategy's signals, traded or not. Each idea is followed to its
+  outcome and added to the knowledge base, so it learns from the whole market every day, not only
+  from the trades it takes. Real trades count twice as much (`knowledge.real_trade_weight`), because
+  they include real fills and slippage.
+- The knowledge base (`data/knowledge_<SYMBOL>_<TF>m.json`) is shared by paper and live and by
+  every account on the same symbol and timeframe. What it learns on the learning Combine carries
+  over when you later point the bot at an account you want to pass.
+- Watch what it's learning on the dashboard's **Knowledge** tab or with `/knowledge` on Telegram.
+- When you move to an account you want to pass, run setup again and choose **"Pass the Combine"**.
+
 Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
 `half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`. The file is
 `data/knowledge_<SYMBOL>_<TF>m.json`, shared by paper and live; delete it to start from scratch.
@@ -1002,7 +1083,9 @@ alone with `start.bat preflight`. The check verifies:
 - your login, the selected account and that it is allowed to trade;
 - that the account is flat;
 - the Maximum Loss Limit — it asks you for the value on your Topstep dashboard if it can't work it out;
-- any Topstep Daily Loss Limit on the account;
+- any Topstep Daily Loss Limit on the account, the Consistency Target and today's position limit;
+- that the account is not a Live Funded account (Topstep doesn't allow API trading on those) and
+  that the PC doesn't look like a VPS, virtual machine or Remote Desktop session;
 - the contract, live market data and your PC clock;
 - today's trading calendar and upcoming news;
 - your risk settings and Telegram;
@@ -1029,10 +1112,14 @@ reports, FOMC and so on. The dashboard and Telegram show the reason (`news black
 07:30 CT`), and at start-up the bot lists the blackouts in the next 24 hours.
 
 - The calendar is refreshed every 6 hours and cached in `data/news_cache.json`, so a brief outage
-  doesn't matter. If it can't be loaded at all, the bot keeps trading without news blackouts and the
-  preflight warns you — add `session.blackout_windows` for big releases by hand in that case.
-- An open trade keeps its stop and target through the release. To close it beforehand instead,
-  set `news.flatten_before: true`.
+  doesn't matter. If it can't be loaded at all, the bot keeps trading at no more than half of
+  Topstep's maximum position size and the preflight warns you — add `session.blackout_windows` for
+  big releases by hand in that case.
+- Topstep prohibits taking your maximum position size into a scheduled major release. In the 30
+  minutes before one, new trades use at most half of Topstep's limit, and a position at the full
+  limit is closed just before the release.
+- A smaller open trade keeps its stop and target through the release. To close every trade
+  beforehand instead, set `news.flatten_before: true`.
 - Change the window with `news.minutes_before` / `news.minutes_after`; include medium-impact events
   with `news.impacts: [High, Medium]`; turn it off with `news.enabled: false`.
 
@@ -1098,7 +1185,8 @@ then. Act on any alert.
 **After 15:10 CT:** confirm the position is flat. Review the day with menu **9 (journal)** and the
 Knowledge tab.
 
-**Weekly:** compare the bot's MLL floor with your Topstep dashboard; look at the Knowledge tab to see
+**Weekly:** compare the bot's MLL floor and position limit with your TopstepX dashboard and Risk
+Settings (Topstep changes product limits with market conditions); look at the Knowledge tab to see
 which strategies have stopped (or started) working.
 
 **Every month or two:** if you trade a single strategy, re-run **tune** (menu 15) on fresh data.
@@ -1127,7 +1215,8 @@ account:
   account_name: null           # alternative to account_id
   starting_balance: null       # default: plan size (combine/practice) or 0 (express)
   mll_floor_override: null     # sync with Topstep's dashboard
-  topstep_daily_loss_limit: null
+  topstep_daily_loss_limit: null  # true = your plan's optional DLL ($1,000/$2,000/$3,000), or a dollar amount
+  payout_path: standard        # Express Funded payout path: standard | consistency
 
 instrument:
   symbol: MNQ
@@ -1168,6 +1257,8 @@ risk:
   slippage_ticks: 1.0                  # used by paper trading and backtests
   ramp_up_days: 3                      # first N live trading days on an account...
   ramp_up_risk_fraction: 0.5           # ...risk this fraction of risk_per_trade
+  consistency_guard: true              # combine: close out at 50% of the profit target in a day
+  stop_at_profit_target: true          # combine: stop trading once the profit target is reached
 
 session:
   timezone: America/Chicago
@@ -1254,6 +1345,7 @@ different config file.
 | `topstep-bot setup` | Setup wizard |
 | `topstep-bot check` | Test login, list accounts, show the contract |
 | `topstep-bot strategies` | Describe strategies and parameters |
+| `topstep-bot rules` | Topstep's rules for your account and how the bot enforces each one |
 | `topstep-bot backtest [--data F] [--download] [--days N] [--strategy S] [--symbol X] [--timeframe M] [--tz TZ] [--no-open]` | Backtest and open a report |
 | `topstep-bot demo` | Backtest on synthetic data |
 | `topstep-bot train [--data F] [--days N] [--tz TZ]` | Teach the bot which strategy works at which time of day from recent real data ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
@@ -1313,6 +1405,27 @@ itself lately and the bot is right to wait. Otherwise look at the dashboard's Ac
 limit, stop too wide, 1 contract too risky, "skipped: unproven", ...). Some strategies trade rarely
 (`orb` and `orb_momentum` at most once a day; `noise_breakout` needs ~15 days of history). Check
 today isn't in `no_trade_dates`.
+
+**"... must be below your Topstep Daily Loss Limit / the Maximum Loss Limit"** (when loading the
+config) — your `risk.personal_daily_loss_limit` has to be lower than Topstep's limits, so the bot's
+own limit always fires first. Lower it in `config.yaml`.
+
+**"Topstep does not allow Live Funded Accounts to trade through the TopstepX API"** — the selected
+account is a real-money Live account. That's Topstep's rule; pick a Combine, Express Funded or
+Practice account in setup.
+
+**"Combine profit target reached - trading stopped"** — congratulations. Topstep can take up to
+30 minutes to update the account. The bot won't trade it again; point it at your next account.
+
+**"near the Consistency Target - done for the day"** — the day is up 50% of the profit target; one
+more good trade would raise the Combine target. Trading resumes the next session.
+
+**"ORDER GUARD: ... order actions in one minute"** — something sent orders far faster than any
+strategy should. The bot closed out and halted. Check `bot.log` for what happened, then restart it.
+
+**Preflight warns "this computer looks like a virtual machine or cloud server"** — Topstep only
+allows trading from your own personal computer. If this is your own PC (some laptops report a
+virtualised firmware), you can ignore it.
 
 **"Skipped: 1 contract would risk more than the allowed budget"** — The stop is too far for your
 `risk_per_trade`. Raise the risk, trade a micro, or use a tighter stop setting.

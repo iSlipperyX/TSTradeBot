@@ -19,9 +19,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from topstep_bot.broker.base import Broker
 from topstep_bot.models import Contract, Fill, Order, OrderSide, OrderStatus, OrderType, Position
+
+if TYPE_CHECKING:
+    from topstep_bot.risk.guards import OrderGuard
 
 log = logging.getLogger(__name__)
 
@@ -138,6 +142,8 @@ class OrderManager:
         self.last_price: float | None = None
         self.on_trade_closed: Callable[[ManagedTrade], Awaitable[None]] | None = None
         self.on_event: Callable[[str, str], None] | None = None
+        # Last-line Topstep guard (position cap, order-rate breaker); set by the factory.
+        self.guard: OrderGuard | None = None
         self._lock = asyncio.Lock()
         # Bumped on every change to our trade/orders/position. reconcile() fetches the broker's view
         # without holding the lock, and discards that view if anything changed while it was fetching
@@ -153,6 +159,13 @@ class OrderManager:
         getattr(log, "critical" if level == "critical" else level, log.info)(message)
         if self.on_event:
             self.on_event(level, message)
+
+    def _count_action(self) -> None:
+        """Every order action goes through the rate breaker (it never blocks exits, only reports)."""
+        if self.guard is not None:
+            tripped = self.guard.record_action(self.clock())
+            if tripped:
+                self._event("critical", f"ORDER GUARD: {tripped}")
 
     @property
     def is_flat(self) -> bool:
@@ -181,6 +194,7 @@ class OrderManager:
         if order_id is None:
             return
         try:
+            self._count_action()
             await self.broker.cancel_order(order_id)
         except Exception as exc:  # noqa: BLE001 - already filled/cancelled is fine
             log.debug("cancel %s ignored: %s", order_id, exc)
@@ -205,6 +219,12 @@ class OrderManager:
             if self.trade is not None or self.position != 0:
                 log.info("Entry ignored: already in a trade")
                 return None
+            if self.guard is not None:
+                refused = self.guard.check_entry(size, self.position, self.clock())
+                if refused:
+                    self._event("error", f"Entry refused: {refused}")
+                    return None
+                self.guard.record_entry(self.clock())
             t = ManagedTrade(
                 tag=f"tsb{uuid.uuid4().hex[:10]}",
                 side=side,
@@ -223,6 +243,7 @@ class OrderManager:
                 if target_price is not None:
                     tp_ticks = max(1, round(self.contract.ticks(target_price - ref_price)))
             try:
+                self._count_action()
                 order_id = await self.broker.place_order(
                     self.contract.id,
                     OrderType.LIMIT if limit_price is not None else OrderType.MARKET,
@@ -296,6 +317,7 @@ class OrderManager:
             return
         t.stop_seq += 1
         try:
+            self._count_action()
             t.stop_order_id = await self.broker.place_order(
                 self.contract.id,
                 OrderType.STOP,
@@ -311,6 +333,7 @@ class OrderManager:
 
     async def _place_target(self, t: ManagedTrade) -> None:
         try:
+            self._count_action()
             t.target_order_id = await self.broker.place_order(
                 self.contract.id,
                 OrderType.LIMIT,
@@ -440,6 +463,7 @@ class OrderManager:
         if t is None:
             if self.position != 0:
                 self._event("warning", f"Closing untracked position ({reason})")
+                self._count_action()
                 await self.broker.close_position(self.contract.id)
             return
         if t.state == TradeState.PENDING:
@@ -454,6 +478,7 @@ class OrderManager:
         t.exit_reason = t.exit_reason or reason
         await self._safe_cancel(t.target_order_id)
         try:
+            self._count_action()
             await self.broker.close_position(self.contract.id)
         except Exception as exc:  # noqa: BLE001 - the stop stays in place; reconcile retries
             self._event("critical", f"Close position failed ({exc}); protective stop left in place")
@@ -487,6 +512,7 @@ class OrderManager:
             if not improves:
                 return False
             try:
+                self._count_action()
                 await self.broker.modify_order(t.stop_order_id, stop_price=new_stop)
             except Exception as exc:  # noqa: BLE001
                 self._event("warning", f"Stop update failed: {exc}")
@@ -544,6 +570,7 @@ class OrderManager:
                 if t.exit_sent_at is None or self.clock() - t.exit_sent_at > EXIT_RETRY_AFTER:
                     self._event("warning", "Position still open while exiting - retrying close")
                     t.exit_sent_at = self.clock()
+                    self._count_action()
                     await self.broker.close_position(self.contract.id)
                 return
             working_ids = {o.id for o in orders}
@@ -569,6 +596,7 @@ class OrderManager:
             if oid is None or (sizes is not None and sizes.get(oid, t.filled_size) == t.filled_size):
                 continue
             try:
+                self._count_action()
                 await self.broker.modify_order(oid, size=t.filled_size)
             except Exception as exc:  # noqa: BLE001 - reconcile compares sizes again and retries
                 self._event("warning", f"Could not resize order {oid} to {t.filled_size}: {exc}")
@@ -620,6 +648,7 @@ class OrderManager:
             return
         if self.orphan_policy == "flatten":
             self._event("warning", f"Flattening position not opened by the bot ({pos.size} @ {pos.avg_price})")
+            self._count_action()
             await self.broker.close_position(self.contract.id)
             for o in orders:
                 if o.type != OrderType.MARKET:
