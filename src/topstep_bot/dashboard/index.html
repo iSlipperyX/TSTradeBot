@@ -1085,7 +1085,7 @@ function renderUpdates(u) {
   if (u.busy === "installing") html = `<div class="summary"><b>Installing the update…</b> The bot is stopped meanwhile.</div>`;
   else if (u.busy === "restarting") html = `<div class="summary"><b>Restarting with the new version…</b> This page reloads by itself.</div>`;
   else if (info && info.error) html = `<div class="blockmsg">${esc(u.headline)}</div>` +
-    (u.method === "download" && !u.token ? `<p class="hint">On the PC, run <b>start.bat update --token</b> (or menu: update) to give the bot a read-only GitHub token.</p>` : "");
+    (info.needs_token ? `<p class="hint">If the repository is private, run <b>start.bat update --token</b> on the PC (or menu: update) to give the bot a read-only GitHub token.</p>` : "");
   else if (ready) html = `<div class="summary"><b>${esc(u.headline)}</b>` +
     (info.exact ? "" : `<div class="meta" style="margin-top:4px">This copy was downloaded as a ZIP, so its exact version is unknown: installing makes it identical to the latest ${esc(u.branch)} (${plural(info.file_count, "file")} differ). The latest changes:</div>`) +
     (info.dependencies ? `<div class="warnline">It also installs new Python packages.</div>` : "") +

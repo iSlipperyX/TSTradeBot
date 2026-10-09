@@ -893,7 +893,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             return 0
         with console.status("Checking GitHub for updates..."):
             info = updater.check()
-        if info.error and updater.method == "download" and not updater.token and not args.check and sys.stdin.isatty():
+        if info.needs_token and not args.check and sys.stdin.isatty():
             console.print(f"[yellow]{info.error}.[/]")
             if Confirm.ask("Set up a GitHub token now?", default=True) and setup_github_token(env_path, cfg.updates.repo):
                 updater.close()
@@ -1090,7 +1090,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("update", help="check GitHub for a newer version of the bot and install it")
     p.add_argument("--check", action="store_true", help="only show whether an update is available")
     p.add_argument("--yes", action="store_true", help="install without asking")
-    p.add_argument("--token", action="store_true", help="set up (or replace) the GitHub token used for update checks")
+    p.add_argument("--token", action="store_true", help="set up (or replace) a GitHub token for update checks (only needed for a private repository)")
     p.add_argument("--undo", action="store_true", help="go back to the version from before the last update")
     p.set_defaults(func=cmd_update)
 

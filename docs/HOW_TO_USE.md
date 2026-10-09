@@ -138,11 +138,17 @@ Now `topstep-bot` is available as a command. Running it with no arguments opens 
 The bot checks GitHub for a newer version by itself and tells you about it. **Nothing is installed
 until you say so**, and never while a trade or order is open.
 
-#### One-time setup (only if you downloaded the bot as a ZIP)
+#### One-time setup
 
-The bot's code is in a private GitHub repository, so to look for updates the bot needs a GitHub
-token that can only **read** it. The first time you choose **18 (update)** in the menu it asks for
-one (or run `start.bat update --token`). The setup wizard offers the same step.
+**Nothing to set up.** The bot's GitHub repository is public, so the bot can look for updates
+whether you cloned it with git or downloaded it as a ZIP. It only reads from GitHub: nobody can
+send your bot an update except through the repository's `main` branch, which only its owner can change.
+
+<details>
+<summary>Only if the repository is ever made private again: give the bot a read-only GitHub token</summary>
+
+A ZIP copy of a private repository needs a GitHub token that can only **read** it. When the bot
+can't see the repository, menu **18 (update)** offers to set one up (or run `start.bat update --token`).
 
 1. Open <https://github.com/settings/personal-access-tokens/new> (signed in to GitHub).
 2. Token name: `Topstep Bot updates`. Expiration: 1 year.
@@ -152,8 +158,10 @@ one (or run `start.bat update --token`). The setup wizard offers the same step.
    tested right away and saved in `.env` as `GITHUB_TOKEN`.
 
 When the token expires, the Updates panel says "GitHub rejected the token": make a new one the same
-way. If you cloned the bot with **git** instead, there is nothing to set up: it uses your git sign-in
-(run `git pull` once in the folder if git has never signed in).
+way. A **git** clone of a private repository uses your git sign-in instead (run `git pull` once in
+the folder if git has never signed in).
+
+</details>
 
 #### How you hear about a new version
 
@@ -1623,7 +1631,7 @@ different config file.
 | `topstep-bot go-live [--days N] [--skip-backtest]` | Preflight, then start live trading (24/7 or this session) |
 | `topstep-bot autostart on\|off\|status` | Start everything when you sign in to Windows |
 | `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
-| `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up the GitHub token, `--undo` goes back to the version before the last update ([Updating](#updating)) |
+| `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
 | `topstep-bot insights [--csv FILE]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat tune --days 730`.
@@ -1741,9 +1749,14 @@ its ID). Only one program can read a bot's messages: close any other copy of the
 
 **Telegram: "the bot token was rejected"** — The token is wrong or was revoked. Run setup again.
 
-**Updates: "GitHub did not show the repository"** — The bot was downloaded as a ZIP and has no
-GitHub token yet. Run `start.bat update --token` (or menu 18) and follow the steps in
-[Updating](#updating). **"GitHub rejected the token"** means it expired or was deleted: make a new one.
+**Updates: "GitHub did not show the repository"** — The repository is private (or `updates.repo` in
+`config.yaml` is misspelled). For a private repository, run `start.bat update --token` (or menu 18)
+and follow the steps in [Updating](#updating). **"GitHub rejected the token"** means it expired or
+was deleted: make a new one, or delete the `GITHUB_TOKEN` line in `.env` if the repository is public.
+
+**Updates: "GitHub's hourly limit for update checks was reached"** — Without a token GitHub allows
+60 requests an hour from your internet connection, and a check uses a handful. It clears by itself
+within the hour; the next automatic check tries again.
 
 **Updates: "A trade is open"** — Updates only install while the bot is flat. Let the trade finish,
 or choose **Install after the close**.

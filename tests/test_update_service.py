@@ -7,7 +7,7 @@ from datetime import datetime
 import httpx
 import pytest
 
-from topstep_bot import cli
+from topstep_bot import cli, wizard
 from topstep_bot import update_service as svc_mod
 from topstep_bot.config import BotConfig, Secrets, TelegramConfig
 from topstep_bot.telegram_control import TelegramController
@@ -300,6 +300,45 @@ def test_cli_update_shows_changes_and_leaves_a_running_bot_to_the_dashboard(tmp_
     monkeypatch.setattr(cli, "_controller_running", lambda cfg: False)
     assert cli.main(["update", "--yes"]) == 0
     assert stub.installed and "Updated to bbbbbbb" in capsys.readouterr().out
+
+
+def test_cli_offers_a_github_token_only_when_the_repository_is_hidden(tmp_path, monkeypatch, capsys, restore_logging):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.yaml").write_text("mode: paper\n")
+    stub = StubUpdater(UpdateInfo(method="download", branch="main", error="could not reach GitHub (ConnectError)"))
+    stub.close = lambda: None
+    monkeypatch.setattr("topstep_bot.updater.Updater.for_config", classmethod(lambda cls, cfg, **kw: stub))
+    monkeypatch.setattr(cli.sys, "stdin", type("Tty", (), {"isatty": staticmethod(lambda: True)})())
+    asked: list = []
+    monkeypatch.setattr(cli.Confirm, "ask", lambda question, **k: asked.append(question) or False)
+    assert cli.main(["update"]) == 1
+    assert asked == [] and "could not reach GitHub" in capsys.readouterr().out  # a token wouldn't help
+    stub.info = UpdateInfo(method="download", branch="main", error="GitHub did not show the repository", needs_token=True)
+    assert cli.main(["update"]) == 1
+    assert asked == ["Set up a GitHub token now?"]
+
+
+def test_token_setup_has_nothing_to_do_for_a_public_repository(tmp_path, monkeypatch):
+    monkeypatch.setattr(wizard, "repo_is_public", lambda repo: True)
+    monkeypatch.setattr(wizard.Prompt, "ask", lambda *a, **k: pytest.fail("asked for a token"))
+    assert wizard.setup_github_token(tmp_path / ".env", "owner/bot")
+    assert not (tmp_path / ".env").exists()
+
+
+@pytest.mark.parametrize(("answer", "public"), [
+    (httpx.Response(200, json={"private": False}), True),
+    (httpx.Response(200, json={"private": True}), False),  # visible only because of a sign-in
+    (httpx.Response(404, json={"message": "Not Found"}), False),
+    (httpx.ConnectError("offline"), False),
+])
+def test_repo_is_public_reads_githubs_answer(monkeypatch, answer, public):
+    def get(url, **kw):
+        assert url == "https://api.github.com/repos/owner/bot" and "Authorization" not in kw["headers"]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    monkeypatch.setattr(httpx, "get", get)
+    assert wizard.repo_is_public("owner/bot") is public
 
 
 def test_menu_mentions_an_available_update_without_going_online(tmp_path, monkeypatch, capsys):

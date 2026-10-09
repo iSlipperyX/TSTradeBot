@@ -71,6 +71,10 @@ class UpdateError(Exception):
     """An update could not be checked or installed. The message is written for the user."""
 
 
+class TokenNeeded(UpdateError):
+    """GitHub didn't show the repository to a request without a token: it is private (or doesn't exist)."""
+
+
 # ------------------------------------------------------------------------------ results
 
 @dataclass
@@ -107,6 +111,7 @@ class UpdateInfo:
     new_version: str | None = None
     problem: str | None = None  # why it can't be installed automatically (until you fix it)
     error: str | None = None  # the check itself failed
+    needs_token: bool = False  # it failed because the repository is private and there is no GitHub token
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -336,7 +341,7 @@ class Updater:
             else:
                 self._check_download(info)
         except UpdateError as exc:
-            info.error = str(exc)
+            info.error, info.needs_token = str(exc), isinstance(exc, TokenNeeded)
         except (httpx.HTTPError, OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
             log.warning("Update check failed", exc_info=True)
             info.error = f"{type(exc).__name__}: {exc}"
@@ -424,7 +429,7 @@ class Updater:
             raise UpdateError("GitHub's hourly limit for update checks was reached - it is tried again later")
         if r.status_code in (403, 404):
             if not self.token:
-                raise UpdateError(f"GitHub did not show the repository {self.repo}. It is private, so the bot needs a "
+                raise TokenNeeded(f"GitHub did not show the repository {self.repo}. If it is private, the bot needs a "
                                   "read-only GitHub token: run 'topstep-bot update --token' (menu: update) on the PC")
             raise UpdateError(f"the GitHub token can't read {self.repo} (or '{self.branch}' doesn't exist). Give the "
                               "token read access to the repository's Contents: topstep-bot update --token")

@@ -375,7 +375,7 @@ class Secrets(BaseModel):
     discord_webhook_url: str | None = None
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
-    github_token: str | None = None  # read-only token for update checks (the repository is private)
+    github_token: str | None = None  # read-only token for update checks (only needed for a private repository)
 
     @property
     def has_credentials(self) -> bool:

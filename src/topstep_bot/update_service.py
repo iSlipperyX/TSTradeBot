@@ -92,7 +92,6 @@ class UpdateService:
             "repo": self.cfg.repo,
             "branch": self.cfg.branch,
             "version": __version__,
-            "token": bool(self.updater and self.updater.token),
             "busy": self.busy,
             "message": self.message,
             "info": info.to_dict() if info else None,

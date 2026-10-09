@@ -215,6 +215,17 @@ def setup_telegram(env_path: Path) -> bool:
     return True
 
 
+def repo_is_public(repo: str) -> bool:
+    """True if anyone can read the GitHub repository, so update checks need no token."""
+    import httpx
+
+    try:
+        r = httpx.get(f"https://api.github.com/repos/{repo}", timeout=20, headers={"Accept": "application/vnd.github+json"})
+        return r.status_code == 200 and r.json().get("private") is False
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
 def check_github_token(token: str, repo: str) -> str | None:
     """None if the token can read the repository, otherwise what is wrong (in plain words)."""
     import httpx
@@ -232,10 +243,18 @@ def check_github_token(token: str, repo: str) -> str | None:
 
 
 def setup_github_token(env_path: Path, repo: str) -> bool:
-    """Store a read-only GitHub token in .env, so the bot can check for updates in its private repository."""
+    """Store a read-only GitHub token in .env, so the bot can check a private repository for updates.
+
+    A public repository needs no token: that is said, and nothing is asked.
+    """
+    with console.status("Checking the GitHub repository..."):
+        public = repo_is_public(repo)
+    if public:
+        console.print(f"[green]{repo} is public, so the bot checks it for updates without a token.[/] Nothing to set up.")
+        return True
     console.print(
-        f"The bot's code lives in the private GitHub repository [bold]{repo}[/]. To check it for updates, the bot needs\n"
-        "a GitHub token that can only [bold]read[/] it (it can't change anything):\n"
+        f"GitHub doesn't show [bold]{repo}[/] without signing in, so it is private (or the internet is down).\n"
+        "To check it for updates, the bot needs a GitHub token that can only [bold]read[/] it (it can't change anything):\n"
         "  1. Open [bold]https://github.com/settings/personal-access-tokens/new[/] (signed in to GitHub).\n"
         "  2. Token name: [bold]Topstep Bot updates[/]. Expiration: 1 year (you'll be reminded to renew it).\n"
         f"  3. Repository access: [bold]Only select repositories[/] -> {repo.split('/')[-1]}.\n"
@@ -387,16 +406,17 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         if url:
             update_env_file(env_path, {"DISCORD_WEBHOOK_URL": url})
 
-    # ---- updates (a git folder uses your git login instead; a ZIP download needs a token)
+    # ---- updates (a git folder uses your git login, and a public repository needs nothing; a ZIP
+    # download of a private repository needs a token)
+    from topstep_bot.config import UpdatesConfig
     from topstep_bot.updater import project_root
 
     root = project_root()
-    if root is not None and not (root / ".git").exists() and not os.environ.get("GITHUB_TOKEN"):
+    if (root is not None and not (root / ".git").exists() and not os.environ.get("GITHUB_TOKEN")
+            and not repo_is_public(UpdatesConfig().repo)):
         console.print("\n[bold cyan]8. Updates (optional)[/]\nThe bot can check GitHub for new versions and tell you "
                       "(it only installs when you confirm).")
         if Confirm.ask("Set up update checks now? (You can do it later from the menu: update)", default=True):
-            from topstep_bot.config import UpdatesConfig
-
             setup_github_token(env_path, UpdatesConfig().repo)
 
     config_path.write_text(

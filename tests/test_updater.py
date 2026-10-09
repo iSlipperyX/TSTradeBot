@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from topstep_bot import updater as updater_mod
-from topstep_bot.updater import UpdateError, Updater, blob_sha, commit_title, describe, load_state, save_state
+from topstep_bot.updater import UpdateError, UpdateInfo, Updater, blob_sha, commit_title, describe, load_state, save_state
 
 REPO = "owner/bot"
 PYPROJECT = '[project]\nname = "topstep-bot"\ndependencies = ["httpx>=0.27"]\n'
@@ -200,6 +200,7 @@ class FakeGitHub:
         self.commits: dict[str, dict] = {}
         self.order: list[str] = []  # oldest first
         self.requests: list[str] = []
+        self.signed_in: list[bool] = []  # whether each request carried a token
 
     def push(self, files: dict, message: str, parents: list[str] | None = None) -> str:
         parents = parents if parents is not None else self.order[-1:]
@@ -222,6 +223,7 @@ class FakeGitHub:
         path, q = request.url.path, request.url.params
         self.requests.append(path)
         auth = request.headers.get("authorization")
+        self.signed_in.append(bool(auth))
         if auth and auth != f"Bearer {self.token}":
             return httpx.Response(401, json={"message": "Bad credentials"})
         if self.private and not auth:
@@ -337,9 +339,24 @@ def test_private_repository_needs_a_working_token(tmp_path):
     gh.push(V1, "Initial version")
     _, up, _ = downloaded(tmp_path, gh, V1, token=None)
     info = up.check()
-    assert info.error and "update --token" in info.error and "private" in info.error
+    assert info.needs_token and "update --token" in info.error and "private" in info.error
+    assert UpdateInfo.from_dict(info.to_dict()).needs_token  # the dashboard and menu see it too
     _, up, _ = downloaded(tmp_path, gh, V1, token="expired")
-    assert "rejected the token" in up.check().error
+    info = up.check()
+    assert "rejected the token" in info.error and not info.needs_token
+
+
+def test_public_repository_is_checked_and_updated_without_a_token(tmp_path):
+    gh = FakeGitHub(private=False)
+    v1 = gh.push(V1, "Initial version")
+    v2 = gh.push({"src/topstep_bot/engine.py": "ENGINE = 2\n"}, "Merge pull request #7 from me/x\n\nUpdate checks")
+    root, up, _ = downloaded(tmp_path, gh, V1, token=None, installed=v1)
+    info = up.check()
+    assert info.error is None and not info.needs_token and info.available and info.latest == v2
+    assert [c.title for c in info.changes] == ["Update checks (#7)"]
+    up.install(info)
+    assert read_tree(root)["src/topstep_bot/engine.py"] == "ENGINE = 2\n"
+    assert gh.signed_in and not any(gh.signed_in)  # nothing was sent but plain requests
 
 
 def test_download_with_an_unsafe_file_name_is_refused_before_anything_changes(tmp_path):
