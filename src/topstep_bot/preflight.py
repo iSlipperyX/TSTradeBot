@@ -144,7 +144,7 @@ async def run_preflight(
         rep.add(WARN, "Ramp-up", "off - the bot trades full size from its first live trade")
 
     if not secrets.has_credentials:
-        rep.add(FAIL, "TopstepX credentials", "missing - run setup")
+        rep.add(FAIL, "TopstepX credentials", "missing - add your TopstepX login on the dashboard's Setup tab")
         return rep
 
     own_client = client is None
