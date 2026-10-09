@@ -156,7 +156,7 @@ def test_telegram_commands_never_close_the_bot(workdir, caplog):
                 # Everything a user can type or tap that isn't a confirmed stop/restart.
                 for text, expected in [("/start", "Balance"), ("/status", "Balance"), ("hello", "/help"),
                                        ("/help", "/startbot"), ("/pause", "Paused"), ("/resume", "Resumed"),
-                                       ("/ideas", "ecommendations"), ("/trades", "trades"), ("/log", "activity"),
+                                       ("/ideas", "ecommend"), ("/trades", "trades"), ("/log", "activity"),
                                        ("/settings", "risk_per_trade"), ("/knowledge", "nowledge"),
                                        ("/STATUS@test_bot", "Balance"), ("/nonsense", "/flatten")]:
                     await still_up(await tg.text(text), expected)

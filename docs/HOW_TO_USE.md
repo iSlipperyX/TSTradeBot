@@ -1210,8 +1210,8 @@ Observations come from four places and are kept apart:
 
 | Source | What it is | When |
 |---|---|---|
-| **training** | Every strategy replayed over the last `knowledge.history_days` (60) days of real data — exactly the way the running bot follows ideas, so it measures the same thing | Menu **5 (train)**, `topstep-bot train`, the dashboard's **Retrain now**, Telegram `/train`, and automatically at startup when the last training is older than `retrain_hours` (20) — so normally once a day after the 16:05 CT restart |
-| **live ideas** | Hypothetical outcomes of signals the bot saw while running but did not trade (shadow strategies, skipped signals) | Continuously while the bot runs |
+| **training** | Every strategy replayed over the last `knowledge.history_days` (60) days of real data — exactly the way the running bot follows ideas, so it measures the same thing | Menu **5 (train)**, `topstep-bot train`, the dashboard's **Retrain now**, Telegram `/train`, and automatically after every finished session (see [Starting up](#starting-up-a-clean-warm-start)) |
+| **live ideas** | Hypothetical outcomes of signals the bot saw while running but did not trade (shadow strategies, skipped signals), around the clock: the overnight session too | Continuously while the bot runs |
 | **real trades** | The bot's own closed trades (count double) | Continuously while the bot runs |
 | **manual trades** | Trades you opened from the dashboard's Trade tab (count double, shown as *Your manual trades*; they never switch a strategy on or off) | When each one closes |
 
@@ -1219,6 +1219,49 @@ Because every signal is followed whether it was traded or not, **the bot never h
 to learn it is bad.** Older observations fade out (half their weight after `half_life_days`, 20), so
 the base follows the market as it changes. Retraining replaces the training layer and drops live ideas
 the new training already covers, so nothing is counted twice; real and manual trades are never dropped.
+
+### Starting up: a clean warm-start
+
+Every time the bot starts (including the daily 16:05 CT restart) it gets its knowledge ready before it
+trades:
+
+1. **Loads the knowledge base** and checks it (see [Keeping it safe](#keeping-what-it-learned-safe)).
+2. **Retrains when the training is behind.** That is: a trading session has finished since the last
+   training, the training is older than `retrain_hours` (20), or the strategy code changed since (an
+   update). The history comes from the market library on your PC; only what it doesn't have yet is
+   downloaded, so this takes seconds, and if TopstepX doesn't answer the bot still trains on the
+   history it already saved.
+3. **Catches up on today.** If it starts in the middle of a session (after a crash, an update or a
+   restart you asked for), it replays today's bars so far through every strategy. The ideas they gave
+   before the start are followed to their outcome and learned from, and ideas still running are
+   followed on live. Nothing is traded in the replay, no alerts are sent for these past ideas, and an
+   idea the bot already learned from before the restart is not counted again.
+4. **Says what it knows** in the Activity log, for example: *Knowledge ready: 1,240 observations;
+   training covers 42 days to 2026-10-09 (saved history + 288 new bars); 37 live ideas, 6 real trades,
+   2 manual trades.*
+
+If the bot runs for days without restarting (`service.daily_restart_time: off`), it retrains the same
+way after each session closes, outside your entry window and only while flat, so trading never waits
+on it. `/knowledge` also shows what it learned today.
+
+### Keeping what it learned safe
+
+Training can always be rebuilt from price history, but what the bot sees live (its real trades, your
+manual trades, the ideas it followed) can never be recorded again. So it is saved three ways, all in
+`data/`:
+
+- **The knowledge file** (`knowledge_<SYMBOL>_<TF>m.json`), saved after every observation. It is
+  written to a temporary file first and swapped in, so a crash or power cut never leaves half a file.
+- **The ledger** (`knowledge_<SYMBOL>_<TF>m.ledger.jsonl`): every live observation is also added here
+  as one line and never removed, even when the knowledge base trims its oldest ideas.
+- **Daily backups** in `data/knowledge_backups/`: a copy of the knowledge file once a day; the last
+  `knowledge.backups_kept` (14) are kept.
+
+If the knowledge file is ever damaged, the bot sets it aside as `….json.damaged-<time>` (so you can
+look at it), loads the newest good backup, adds back everything from the ledger the backup is missing,
+and tells you in the Activity log. If you run `topstep-bot train` while the bot is running, the bot keeps
+the new training instead of saving over it. Your PC is still the only copy: copy the `data` folder
+somewhere else now and then if you want to be safe from a disk failure.
 
 ### How the adaptive strategy uses it
 
@@ -1383,8 +1426,9 @@ Good to know:
   save. Your other settings stay as they are.
 
 Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
-`half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`, `deep_learning`, `deep_history_days`. The file is
-`data/knowledge_<SYMBOL>_<TF>m.json`, shared by paper and live; delete it to start from scratch.
+`half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`, `backups_kept`, `deep_learning`, `deep_history_days`.
+The file is `data/knowledge_<SYMBOL>_<TF>m.json`, shared by paper and live. To start from scratch, stop the bot and
+delete it together with its `.ledger.jsonl` (otherwise the ledger puts your real and manual trades back).
 
 ---
 
@@ -1679,13 +1723,14 @@ strategy:
 
 knowledge:                     # what the bot learns while it runs (drives the adaptive strategy)
   enabled: true
-  auto_train: true             # retrain from history at startup when the last training is older than retrain_hours
+  auto_train: true             # retrain after every finished session, after an update, or when older than retrain_hours
   history_days: 60             # 10-120
   retrain_hours: 20
   half_life_days: 20           # observations lose half their weight after this many days
   min_samples: 8               # weighted observations needed before a strategy may trade in a slot
   min_edge_r: 0.05             # minimum (shrunk) expectancy in R to keep trading a strategy
   real_trade_weight: 2.0       # a real trade counts this many times an idea
+  backups_kept: 14             # daily copies of the knowledge base in data/knowledge_backups (0 = none)
   deep_learning: true          # long-run memory: keep every bar, backfill and replay it all daily (reports only)
   deep_history_days: 365       # 30-3650: how far back the long-run memory reaches
 
@@ -1842,7 +1887,9 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `reports/*.html` | Backtest and tuning reports (tuning also writes a `.json` with every detail) |
 | `logs/` | Log files — see [section 22](#22-logs-finding-out-what-happened) |
 | `data/remote_settings.json` | Settings changed from the dashboard/Telegram (delete it, or `/reset`, to undo) |
-| `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when, with each observation's market snapshot, price path and costs (delete it to start learning from scratch) |
+| `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when, with each observation's market snapshot, price path and costs |
+| `data/knowledge_<SYMBOL>_<TF>m.ledger.jsonl` | Every live observation (real, manual, ideas), one per line, never trimmed: used to repair the knowledge base ([Keeping it safe](#keeping-what-it-learned-safe)). To start learning from scratch, stop the bot and delete this and the file above |
+| `data/knowledge_backups/` | A daily copy of the knowledge base (the last `knowledge.backups_kept`) |
 | `data/market_library.sqlite` | The long-run memory's market library: every price bar the bot has downloaded or imported |
 | `data/knowledge_<SYMBOL>_<TF>m_longrun.json` | What every strategy did on the whole library (reports only; rebuilt daily, safe to delete) |
 | `data/news_cache.json` | This week's economic calendar |

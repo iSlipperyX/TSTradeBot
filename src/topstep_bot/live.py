@@ -121,7 +121,9 @@ class LiveRunner:
         self._checked_in: date | None = None
         self._training = False
         self._learn_after: datetime | None = None  # after a failed long-run learning run: wait before trying again
+        self._train_after: datetime | None = None  # after a failed daily retrain: wait before trying again
         self._warmup_bars: tuple[list, tuple[datetime, datetime]] | None = None  # kept until the long-run memory opens
+        self._catchup_bars: list = []  # today's bars so far: replayed once the knowledge base is ready
 
     @staticmethod
     def now() -> datetime:
@@ -203,6 +205,7 @@ class LiveRunner:
             log.info("Re-applied remote setting: %s", change)
         self._setup_memory()
         await self._setup_knowledge()
+        self._catch_up()
         await self._setup_news()
         self._apply_ramp_up()
         return core
@@ -219,7 +222,12 @@ class LiveRunner:
         return best
 
     async def _setup_knowledge(self) -> None:
-        """Attach the knowledge base the bot learns into; retrain it from history when stale."""
+        """Load the knowledge base the bot learns into and make sure its training covers every finished session.
+
+        Training replays recent history through every strategy. It is refreshed at startup when a
+        session has finished since the last training, when it is older than ``retrain_hours``, or
+        when the strategy code changed (after an update). The history comes from the market library
+        on disk first; only what it is missing is downloaded."""
         cfg, core = self.cfg, self.core
         if not cfg.knowledge.enabled or core is None:
             return
@@ -227,15 +235,56 @@ class LiveRunner:
 
         kb = KnowledgeBase.from_config(cfg, cfg.knowledge_path)
         core.attach_knowledge(kb)
+        if kb.recovery:  # a damaged file was repaired: worth an alert
+            core.event("warning", "Knowledge base repaired at startup: " + "; ".join(kb.recovery) + ".", "error")
         c = kb.counts()
-        log.info("Knowledge base %s: %d observations (train %d, live ideas %d, real trades %d)%s", cfg.knowledge_path.name,
-                 len(kb.obs), c["train"], c["shadow"], c["real"], f", trained {kb.trained['at'][:16]}" if kb.trained else ", untrained")
-        if cfg.knowledge.auto_train and kb.training_due(self.now(), cfg.knowledge.retrain_hours):
+        log.info("Knowledge base %s: %d observations (train %d, live ideas %d, real trades %d, manual %d)%s",
+                 cfg.knowledge_path.name, len(kb.obs), c["train"], c["shadow"], c["real"], c["manual"],
+                 f", trained {kb.trained['at'][:16]}" if kb.trained else ", untrained")
+        now = self.now()
+        why = kb.training_due_reason(now, cfg.knowledge.retrain_hours, session_end=core.schedule.last_session_end(now))
+        if cfg.knowledge.auto_train and why:
+            log.info("Retraining the knowledge base: %s", why)
             try:
                 await self.retrain("startup")
             except Exception as exc:  # noqa: BLE001 - trading can go on with the knowledge we have
                 log.warning("Training failed: %s", exc)
                 core.event("warning", f"Could not retrain the knowledge base: {exc}")
+        core.event("info", self._knowledge_ready_text(kb))
+
+    @staticmethod
+    def _knowledge_ready_text(kb) -> str:
+        c = kb.counts()
+        parts = [f"Knowledge ready: {len(kb.obs):,} observations"]
+        if kb.trained:
+            t = kb.trained
+            parts.append(f"training covers {t['days']} days to {t['to']}" + (f" ({t['origin']})" if t.get("origin") else ""))
+        else:
+            parts.append("not trained yet")
+        parts.append(f"{c['shadow']} live ideas, {c['real']} real trades, {c['manual']} manual trades")
+        return "; ".join(parts) + "."
+
+    def _catch_up(self) -> None:
+        """Replay today's bars from before this start, so today's ideas are learned from and followed on."""
+        core, bars = self.core, self._catchup_bars
+        self._catchup_bars = []
+        if core is None or not bars:
+            return
+        book = core.recommender
+        before = len(book.items) if book else 0
+        learned = core.knowledge.updated if core.knowledge else 0
+        for bar in bars:
+            core.catch_up_bar(bar)
+        if book is None:
+            return
+        ideas = list(book.items)[: len(book.items) - before]
+        still_open = sum(1 for r in ideas if r.is_open)
+        added = (core.knowledge.updated - learned) if core.knowledge else 0
+        log.info("Caught up on %d bars from earlier today: %d idea(s), %d new observation(s), %d still followed live",
+                 len(bars), len(ideas), added, still_open)
+        if ideas:
+            core.event("info", f"Caught up on today so far: {len(ideas)} idea(s) from before the start, "
+                               f"{added} new for the knowledge base, {still_open} still being followed.")
 
     def _setup_memory(self) -> None:
         """Open the long-run memory (memory.py): the bars downloaded so far go straight into its library."""
@@ -274,23 +323,41 @@ class LiveRunner:
         return message
 
     async def _learn_loop(self) -> None:
-        """Once a day, outside the bot's entry window and while flat, grow the long-run memory."""
+        """Outside the bot's entry window and while flat: retrain the knowledge base once each session has
+        finished (so a bot that runs for days keeps its training current), and grow the long-run memory daily."""
         while True:
             await asyncio.sleep(LEARN_CHECK_SECONDS)
             core, now = self.core, self.now()
-            memory = core.memory if core else None
+            if core is None or not core.orders.is_flat or core.schedule.entry_block_reason(now) is None:
+                continue  # inside the entry window or in a trade: learn later, so trading never waits on it
+            await self._retrain_if_due(now)
+            memory = core.memory
             if memory is None or memory.running or (self._learn_after and now < self._learn_after):
                 continue
-            if not memory.due(now, self.cfg.knowledge.retrain_hours) or not core.orders.is_flat:
+            if not memory.due(now, self.cfg.knowledge.retrain_hours):
                 continue
-            if core.schedule.entry_block_reason(now) is None:
-                continue  # inside the entry window: learn later, so trading never waits on it
             try:
                 await self.learn("daily")
             except Exception as exc:  # noqa: BLE001 - keep trading; try again later
                 self._learn_after = now + timedelta(hours=2)
                 log.warning("Long-run learning failed: %s", exc)
                 core.event("warning", f"Could not update the long-run memory: {exc} (will try again later)")
+
+    async def _retrain_if_due(self, now: datetime) -> None:
+        core = self.core
+        kb = core.knowledge if core else None
+        if kb is None or not self.cfg.knowledge.auto_train or self._training or (self._train_after and now < self._train_after):
+            return
+        why = kb.training_due_reason(now, self.cfg.knowledge.retrain_hours, session_end=core.schedule.last_session_end(now))
+        if why is None:
+            return
+        log.info("Retraining the knowledge base: %s", why)
+        try:
+            await self.retrain("daily")
+        except Exception as exc:  # noqa: BLE001 - keep trading on the knowledge it has; try again later
+            self._train_after = now + timedelta(hours=1)
+            log.warning("Daily training failed: %s", exc)
+            core.event("warning", f"Could not retrain the knowledge base: {exc} (will try again later)")
 
     async def retrain(self, source: str) -> str:
         """Download recent history and rebuild the knowledge base's training layer."""
@@ -304,21 +371,47 @@ class LiveRunner:
         self._training = True
         try:
             days = self.cfg.knowledge.history_days
-            tf = self.cfg.instrument.timeframe_minutes
             end = self.now()
             core.event("info", f"Training the knowledge base on the last {days} days ({source})...")
-            bars = await self.client.retrieve_bars_range(self.contract.id, end - timedelta(days=days), end, BarUnit.MINUTE, tf,
-                                                         live=self.cfg.data.live_market_data)
-            bars = [b for b in bars if b.ts + timedelta(minutes=tf) <= end]
-            self._remember(bars, (end - timedelta(days=days), end - timedelta(minutes=tf)))
-            result = await train_from_bars(self.cfg, self.contract, bars, core.knowledge, at=end)
+            bars, origin = await self._training_bars(days, end)
+            result = await train_from_bars(self.cfg, self.contract, bars, core.knowledge, at=end, origin=origin)
             per = ", ".join(f"{k} {v}" for k, v in result["per_strategy"].items())
-            message = (f"Knowledge base trained on {result['days']} days ({result['from']} to {result['to']}): "
+            message = (f"Knowledge base trained on {result['days']} days ({result['from']} to {result['to']}, {origin}): "
                        f"{result['observations']} observations ({per})")
             core.event("info", message)
             return message
         finally:
             self._training = False
+
+    async def _training_bars(self, days: int, end: datetime) -> tuple[list, str]:
+        """The last ``days`` of closed bars to train on, and where they came from.
+
+        With the long-run memory on, the market library on disk is the source: only the ranges it
+        doesn't have yet are downloaded, so a restart retrains in seconds, and a failed download
+        still trains on the history already saved. Without it, the whole range is downloaded."""
+        minutes = self.cfg.instrument.timeframe_minutes
+        tf = timedelta(minutes=minutes)
+        start = end - timedelta(days=days)
+        memory = self.core.memory if self.core else None
+        if memory is not None:
+            problem = None
+            try:
+                new = await memory.backfill(self.client, self.contract, days, end, live=self.cfg.data.live_market_data)
+            except Exception as exc:  # noqa: BLE001 - fall back to the history already saved
+                problem, new = exc, 0
+                log.warning("Could not download the missing history for training: %s", exc)
+            bars = [b for b in memory.library.bars(memory.symbol, memory.tf, start, end) if b.ts + tf <= end]
+            if bars:
+                if problem is not None:
+                    return bars, "saved history only: the download failed"
+                return bars, (f"saved history + {new:,} new bars" if new else "saved history")
+            if problem is not None:
+                raise problem
+        bars = await self.client.retrieve_bars_range(self.contract.id, start, end, BarUnit.MINUTE, minutes,
+                                                     live=self.cfg.data.live_market_data)
+        bars = [b for b in bars if b.ts + tf <= end]
+        self._remember(bars, (start, end - tf))
+        return bars, "downloaded"
 
     async def _warmup(self) -> None:
         assert self.core and self.contract
@@ -329,12 +422,18 @@ class LiveRunner:
             self.contract.id, start, end, BarUnit.MINUTE, tf, live=self.cfg.data.live_market_data
         )
         closed = [b for b in bars if b.ts + timedelta(minutes=tf) <= end]
-        for bar in closed:
+        today = self.core.schedule.trading_day(end)
+        earlier = [b for b in closed if self.core.schedule.trading_day(b.ts) < today]
+        for bar in earlier:
             self.core.warmup_bar(bar)
+        # Today's bars so far are replayed once the knowledge base is ready (_catch_up), so the ideas
+        # they gave are learned from rather than skipped.
+        self._catchup_bars = closed[len(earlier):]
         if closed:
             self._last_bar_ts = closed[-1].ts
         self._warmup_bars = (closed, (start, end - timedelta(minutes=tf)))  # stored once the long-run memory is open
-        log.info("Warmed up on %d %d-minute bars", len(closed), tf)
+        log.info("Warmed up on %d %d-minute bars (%d from today replayed once the knowledge base is ready)",
+                 len(closed), tf, len(self._catchup_bars))
 
     # -------------------------------------------------------------------- run
 

@@ -105,6 +105,7 @@ class RecommendationBook:
                  quiet: bool = False):
         self.core = core
         self.quiet = quiet  # backtests/training: no logging, alerts or journal writes
+        self.catching_up = False  # replaying earlier bars after a (re)start: no alerts for ideas already past
         self.items: deque[Recommendation] = deque(maxlen=max_items)
         self._ids = itertools.count(1)
         self._day: date | None = None
@@ -142,6 +143,18 @@ class RecommendationBook:
         self._new_day_check(bar)
         for strat in self.shadows:
             strat.on_bar(bar, self._context(bar, strat.name, warmup=True))
+
+    def catch_up_bar(self, bar: Bar) -> None:
+        """A bar from earlier today, replayed after a (re)start (see TradingCore.catch_up_bar).
+
+        The shadow strategies give the ideas they gave the first time; each is followed to its
+        outcome and learned from (the knowledge base ignores ones it already has), and ideas still
+        open afterwards are followed on live from there. No alerts: these ideas are in the past."""
+        self.catching_up = True
+        try:
+            self.on_bar(bar)
+        finally:
+            self.catching_up = False
 
     def on_bar(self, bar: Bar) -> list[tuple[str, str, Any]]:
         """Advance outcomes with this bar, then collect fresh ideas from the shadow strategies.
@@ -343,7 +356,9 @@ class RecommendationBook:
         if self.quiet:
             return
         data = self.to_dict(rec)
-        if new:
+        if self.catching_up:
+            log.debug("Caught up: %s %s %s @ %s %s", rec.title, rec.side.label, rec.entry, rec.created, rec.result or rec.status)
+        elif new:
             log.info(
                 "%s %s %s %s @ %s stop %s%s (%s)%s", "Trade" if rec.active else "Idea", rec.title, rec.side.label,
                 rec.size or "-", rec.entry, rec.stop, f" target {rec.target}" if rec.target else "", rec.reason,
@@ -359,7 +374,10 @@ class RecommendationBook:
                      f" ({rec.note})" if rec.note else "",
                      extra={"event": "recommendation_result", "data": data})
         if self.core.journal:
-            self.core.journal.record_recommendation(data)
+            # Keyed by the signal, not the R-number (which restarts at R1 every run): a restart neither
+            # overwrites earlier rows nor adds the morning's ideas a second time when it replays them.
+            key = f"{rec.created:%Y%m%d-%H%M}-{rec.strategy}-{rec.side.label}"
+            self.core.journal.record_recommendation({**data, "id": key})
 
     def to_dict(self, rec: Recommendation) -> dict[str, Any]:
         local = self.core.schedule.local(rec.created)

@@ -236,13 +236,22 @@ class KnowledgeConfig(_Section):
     """What the bot learns about its strategies while it runs (drives the 'adaptive' strategy)."""
 
     enabled: bool = True
-    auto_train: bool = Field(default=True, description="Retrain from recent history at startup when the base is stale.")
+    auto_train: bool = Field(
+        default=True,
+        description="Retrain from recent history when the training is behind: after every finished session, after an "
+        "update that changes the strategies, or when older than retrain_hours. At startup and while running.",
+    )
     history_days: int = Field(default=60, ge=10, le=120, description="Days of history to train on.")
-    retrain_hours: float = Field(default=20, ge=1, description="Training older than this is refreshed at startup.")
+    retrain_hours: float = Field(default=20, ge=1, description="Training older than this is refreshed.")
     half_life_days: int = Field(default=20, ge=1, description="Observations lose half their weight after this many days.")
     min_samples: int = Field(default=8, ge=1, description="Evidence needed before a strategy may trade in a slot.")
     min_edge_r: float = Field(default=0.05, description="Minimum shrunk expectancy (in R) to keep trading a strategy.")
     real_trade_weight: float = Field(default=2.0, ge=1.0, description="How much more a real trade counts than an idea.")
+    backups_kept: int = Field(
+        default=14, ge=0, le=365,
+        description="Daily copies of the knowledge file kept in data/knowledge_backups (0 = none). The ledger next "
+        "to it keeps every live observation either way.",
+    )
     deep_learning: bool = Field(
         default=True,
         description="Long-run memory: keep every bar the bot sees, backfill up to deep_history_days of history and replay "
