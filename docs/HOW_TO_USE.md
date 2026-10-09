@@ -314,6 +314,7 @@ Double-click `start.bat` (or run `topstep-bot`):
 | 16 | rules | Shows Topstep's rules for **your** account (limits in dollars and contracts) and what the bot does about each one |
 | 17 | insights | **What the bot has learned:** each strategy's results after costs, real fills against simulated ones, and the market conditions it did best and worst in ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 | 18 | update | **Updates:** checks GitHub for a newer version, lists what changed and installs it when you say so ([Updating](#updating)) |
+| 19 | learn | **Feeds the bot more history:** downloads up to a year it doesn't have yet and replays all of it through every strategy ([long-run memory](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 
 Above the list, the menu shows a one-line summary of your setup (account, symbol, strategy, mode).
 If `config.yaml` has a mistake, that line says what and where. When a newer version of the bot is
@@ -988,6 +989,9 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/restart` | Restarts the bot (flattens first) — e.g. after an error. Asks for confirmation. |
 | `/startbot` | Starts the bot if it's stopped or crashed. Asks for confirmation. |
 | `/ideas` | Recommended trades with **Take** and **½ size** buttons ([section 16](#16-recommended-trades)) |
+| `/brief` | **What the bot knows**, in plain sentences: how much it has seen, what it would and wouldn't trade right now and why, what has worked after costs, lessons worth testing, and when it expects its next trade ([section 17](#what-the-bot-knows-and-when-it-trades-next)) |
+| `/next` | **When the next trade is likely**, and what that estimate is based on (also a button under every message) |
+| `/learn` | Grow the long-run memory now: download the history it's missing and replay all of it ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 | `/knowledge` | What the bot has learned: per strategy and time of day, ✅ trades now / ❌ switched off / ❔ unproven, then results after costs, real fill slippage and conditions worth testing ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
 | `/train` | Retrain the knowledge base on recent history now (the bot keeps trading meanwhile) |
 | `/settings` | Every setting you can change, with current values and limits |
@@ -1154,6 +1158,70 @@ stay honest.
 Knowledge files and journals from older versions keep working; their older observations simply
 have no snapshot, path or costs (and count before costs).
 
+### What the bot knows, and when it trades next
+
+Ask the bot directly:
+
+- **Dashboard → Knowledge tab → What the bot knows** (or `/brief` in Telegram) answers in plain
+  sentences: how many signal outcomes it knows and where they came from, how big its long-run memory
+  is, what it would trade *right now* and what it is staying out of (and why), which strategies have
+  worked after fees and slippage (recent next to the long run), the lessons worth testing, and its
+  next-trade estimate.
+- **Next trade** — a countdown tile in the market clock at the top of the dashboard, a **Next trade**
+  panel on the Overview tab, `/next` in Telegram, and a line at the end of `/status`.
+
+How the next-trade estimate works, so you know how far to trust it:
+
+1. **The rules first.** It walks the same rules the bot trades by (entry window, trading days and
+   holidays, blackout windows and news, the daily trade count, losing streak and cooldown, profit and
+   loss locks) to the first moment an entry is allowed. If the bot is paused, halted or done until
+   you act, it says so instead of guessing.
+2. **Then history.** On each of the last 90 days in the knowledge base, it finds the first signal
+   the bot would have taken *with what it knows today* (for the adaptive strategy: only strategies the
+   knowledge base allows at that time of day and regime). Starting from the first allowed moment, those
+   days give the **most likely time** (half of past days had their signal sooner), the **usual range**
+   (the middle half of days) and the **chance of a trade today**. Days with nothing left today carry
+   the wait over to the next trading days.
+3. **Then the setups forming now.** It names the auto-traded setup closest to firing, what it still
+   waits for and when it can fire (a checkpoint or decision time, or the next bar close).
+
+It needs at least 10 trading days of history. It is an estimate, not a promise: a signal can still be
+skipped by a risk check, markets change, and some days have no trade at all.
+
+### The long-run memory: a much bigger knowledge base
+
+The knowledge base the bot trades with looks at the last two months on purpose: markets change, and
+old evidence fades out. Next to it, the bot keeps a far bigger **long-run memory**, and it is hungry:
+
+- **Every price bar it ever sees is kept** in `data/market_library.sqlite` on your PC: warm-up bars,
+  training downloads, every live bar and everything it backfills. Nothing is thrown away.
+- **Every day it backfills** what it is still missing, up to `knowledge.deep_history_days` back
+  (365 by default, up to 3650; the "Teach the bot" setup uses 730). It only asks TopstepX for ranges it
+  has never downloaded, so after the first time it is a small top-up.
+- **Every day it replays all of it** through every strategy, the same way training replays the last
+  60 days, into `data/knowledge_<SYMBOL>_<TF>m_longrun.json`: every signal every strategy would have
+  given on every day in the library, with its outcome, costs, price path and market snapshot. A year
+  of 5-minute bars takes about a minute.
+- It runs once a day **outside the bot's entry window and only while flat**, so trading never waits on
+  it (normally right after the 16:05 CT restart). Run it any time with **Learn from history now** on the
+  Knowledge tab, `/learn`, menu **19** or `topstep-bot learn`.
+- Have older data? `topstep-bot learn --import mydata.csv` adds a CSV of bars (1-minute or your
+  bot's timeframe) to the library, then replays. `--offline` replays without downloading; `--days 730`
+  reaches further back for that run.
+
+**What it changes:** what the bot can tell you. The Knowledge tab's **What the bot has learned** has a
+**Recent / Long run** switch, the briefing compares each strategy's recent results with the long run
+(a strategy that is hot lately but weak over a year deserves suspicion), and conditions worth testing
+get far more data. `topstep-bot insights --longrun` prints the long-run report.
+
+**What it doesn't change:** how the bot trades. The adaptive strategy still decides from the recent
+knowledge base, and every risk rule, limit and position size stays exactly as configured. Using the
+long run in decisions is a later, separately tested step (the roadmap's "decide on evidence" phase).
+
+How far back TopstepX serves history depends on the contract; the library simply keeps whatever it
+gets and grows every day the bot runs. Prices jump when the front-month contract rolls; the strategies
+reset every day, so that only touches a measurement or two on the first day after a roll.
+
 ### Honest expectations
 
 Training on the last two months of M2K showed most strategies **losing** in most slots, with a thin
@@ -1199,7 +1267,7 @@ Good to know:
 - When you move to an account you want to pass, run setup again and choose **"Pass the Combine"**.
 
 Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
-`half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`. The file is
+`half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`, `deep_learning`, `deep_history_days`. The file is
 `data/knowledge_<SYMBOL>_<TF>m.json`, shared by paper and live; delete it to start from scratch.
 
 ---
@@ -1501,6 +1569,8 @@ knowledge:                     # what the bot learns while it runs (drives the a
   min_samples: 8               # weighted observations needed before a strategy may trade in a slot
   min_edge_r: 0.05             # minimum (shrunk) expectancy in R to keep trading a strategy
   real_trade_weight: 2.0       # a real trade counts this many times an idea
+  deep_learning: true          # long-run memory: keep every bar, backfill and replay it all daily (reports only)
+  deep_history_days: 365       # 30-3650: how far back the long-run memory reaches
 
 risk:
   risk_per_trade: 150
@@ -1632,7 +1702,8 @@ different config file.
 | `topstep-bot autostart on\|off\|status` | Start everything when you sign in to Windows |
 | `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
 | `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
-| `topstep-bot insights [--csv FILE]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
+| `topstep-bot learn [--days N] [--import CSV] [--offline]` | Grow the long-run memory: download the history it's missing, add a CSV, then replay all of it through every strategy ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
+| `topstep-bot insights [--csv FILE] [--longrun]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat tune --days 730`.
 
@@ -1650,6 +1721,8 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat tune
 | `logs/` | Log files — see [section 22](#22-logs-finding-out-what-happened) |
 | `data/remote_settings.json` | Settings changed from the dashboard/Telegram (delete it, or `/reset`, to undo) |
 | `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when, with each observation's market snapshot, price path and costs (delete it to start learning from scratch) |
+| `data/market_library.sqlite` | The long-run memory's market library: every price bar the bot has downloaded or imported |
+| `data/knowledge_<SYMBOL>_<TF>m_longrun.json` | What every strategy did on the whole library (reports only; rebuilt daily, safe to delete) |
 | `data/news_cache.json` | This week's economic calendar |
 | `data/controller.json` | The mode you chose last (Paper/Live) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |

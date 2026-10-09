@@ -153,7 +153,26 @@ async def _download(cfg: BotConfig, days: int, tf: int) -> Path:
     path = cfg.data_path / f"{cfg.instrument.symbol}_{tf}m.csv"
     save_csv(bars, path)
     console.print(f"[green]Saved {len(bars):,} bars to {path}[/]")
+    _keep_in_library(cfg, bars, tf, contract.id)
     return path
+
+
+def _keep_in_library(cfg: BotConfig, bars: list, tf: int, contract: str) -> None:
+    """Downloads also go into the bot's market library (memory.py), so nothing it has fetched is lost."""
+    import sqlite3
+
+    from topstep_bot.memory import MarketLibrary
+
+    if not (cfg.knowledge.enabled and cfg.knowledge.deep_learning) or not bars:
+        return
+    try:
+        lib = MarketLibrary(cfg.library_path)
+        try:
+            lib.add(cfg.instrument.symbol, tf, bars, contract)
+        finally:
+            lib.close()
+    except (OSError, sqlite3.Error) as exc:
+        console.print(f"[dim]Could not add the bars to the market library: {exc}[/]")
 
 
 def cmd_download(args: argparse.Namespace) -> int:
@@ -313,6 +332,61 @@ def print_knowledge_table(summary: dict, what: str) -> None:
                   "calm/vola = volatility regime. Chicago time: open 08:30-10:00, midday 10:00-13:00, close 13:00-15:10.[/]")
 
 
+def cmd_learn(args: argparse.Namespace) -> int:
+    """Grow the long-run memory: import / download history, then replay all of it through every strategy."""
+    from topstep_bot.insights import build_report
+    from topstep_bot.instruments import offline_contract
+    from topstep_bot.memory import LongRunMemory, import_csv
+    from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
+
+    cfg = _load(args)
+    if args.days:
+        cfg.knowledge.deep_history_days = max(30, min(3650, args.days))
+    if args.import_csv:
+        try:
+            read, added = import_csv(cfg, args.import_csv, args.tz)
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Could not import {args.import_csv}:[/] {exc}")
+            return 1
+        console.print(f"[green]Imported {args.import_csv}: {read:,} bars read, {added:,} new in the market library.[/]")
+    memory = LongRunMemory.open(cfg)
+    offline = args.offline or not load_secrets().has_credentials
+
+    async def go():
+        from topstep_bot.live import resolve_contract
+
+        now = datetime.now(UTC)
+        if offline:
+            return await memory.learn(cfg, offline_contract(cfg.instrument.symbol), None, now)
+        async with _client(cfg) as client:
+            contract = await resolve_contract(client, cfg)
+            return await memory.learn(cfg, contract, client, now)
+
+    days = cfg.knowledge.deep_history_days
+    what = "Replaying the market library" if offline else f"Downloading what's missing of the last {days} days, then replaying"
+    try:
+        with console.status(f"{what} through every strategy (a year takes about a minute)..."):
+            result = asyncio.run(go())
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]Could not learn:[/] {exc}")
+        if offline:
+            console.print("[dim]Offline, the bot can only replay what is already in its library: import a CSV with --import, "
+                          "or run setup so it can download history.[/]")
+        return 1
+    finally:
+        memory.close()
+    console.print(f"[green]{result.text()}[/]")
+    rep = build_report(memory.knowledge, [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES], slippage_ticks=cfg.risk.slippage_ticks)
+    rows = sorted((r for r in rep["strategies"] if r["n"] >= rep["min_row"]), key=lambda r: r["net_r"] or 0, reverse=True)
+    if rows:
+        console.print("[bold]Over the long run[/] (average signal after costs, in R):")
+        for r in rows:
+            console.print(f"  {r['title']}: {r['net_r']:+.2f}R over {r['n']:,} signals ({(r['win_rate'] or 0):.0%} won)")
+    console.print("[dim]The full long-run report: topstep-bot insights --longrun. This memory feeds the reports only; "
+                  "the bot still trades from its recent knowledge base, with every risk rule unchanged.[/]")
+    return 0
+
+
 def cmd_insights(args: argparse.Namespace) -> int:
     """What the bot has learned: results after costs, real fills against simulated ones, market conditions."""
     from topstep_bot.insights import build_report, execution_line, export_csv, hint_line
@@ -320,9 +394,12 @@ def cmd_insights(args: argparse.Namespace) -> int:
     from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
 
     cfg = _load(args)
-    path = cfg.knowledge_path
+    path = cfg.longrun_knowledge_path if args.longrun else cfg.knowledge_path
     if not path.exists():
-        console.print(f"[yellow]No knowledge base yet ({path}). Run train (menu 5) first, or let the bot run.[/]")
+        if args.longrun:
+            console.print(f"[yellow]No long-run memory yet ({path}). Run 'topstep-bot learn' (menu 19), or let the bot run.[/]")
+        else:
+            console.print(f"[yellow]No knowledge base yet ({path}). Run train (menu 5) first, or let the bot run.[/]")
         return 1
     kb = KnowledgeBase.from_config(cfg, path)
     if args.csv:
@@ -332,7 +409,7 @@ def cmd_insights(args: argparse.Namespace) -> int:
         return 0
     rep = build_report(kb, [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES], slippage_ticks=cfg.risk.slippage_ticks)
     cov = rep["coverage"]
-    console.print(f"[bold]What the bot learned[/] on {cfg.instrument.symbol} {cfg.instrument.timeframe_minutes}m: "
+    console.print(f"[bold]What the bot learned{' over the long run' if args.longrun else ''}[/] on {cfg.instrument.symbol} {cfg.instrument.timeframe_minutes}m: "
                   f"{cov['total']:,} observations ({cov['first_day']} to {cov['last_day']}), {cov['with_context']:,} with "
                   f"market context, {cov['with_path']:,} with their price path.")
 
@@ -405,7 +482,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         from topstep_bot.control import BotActions
         from topstep_bot.worker_api import start_worker_api
 
-        server = await start_worker_api(BotActions(core, controls, retrain=runner.retrain), core.snapshot)
+        server = await start_worker_api(BotActions(core, controls, retrain=runner.retrain, learn=runner.learn), core.snapshot)
         if server:
             servers.append(server)
 
@@ -950,6 +1027,7 @@ MENU = [
     ("rules", "Show Topstep's rules for your account and how the bot stays inside them"),
     ("insights", "What the bot has LEARNED: results after costs, real fills, market conditions"),
     ("update", "UPDATE: check GitHub for a newer version of the bot and install it"),
+    ("learn", "FEED the bot more history: download up to a year and replay all of it (long-run memory)"),
 ]
 
 
@@ -1085,7 +1163,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("insights", help="what the bot has learned: results after costs, real fills, market conditions")
     p.add_argument("--csv", metavar="FILE", help="save every observation to a CSV file (opens in Excel) instead")
-    p.set_defaults(func=cmd_insights, csv=None)
+    p.add_argument("--longrun", action="store_true", help="report on the long-run memory instead of the recent knowledge base")
+    p.set_defaults(func=cmd_insights, csv=None, longrun=False)
+
+    p = sub.add_parser("learn", help="grow the long-run memory: download/import history and replay all of it through every strategy")
+    p.add_argument("--days", type=int, default=None, help="how far back to reach (default: knowledge.deep_history_days)")
+    p.add_argument("--import", dest="import_csv", metavar="CSV", help="add a CSV of bars to the market library first")
+    p.add_argument("--tz", default="UTC", help="timezone for CSV times without one")
+    p.add_argument("--offline", action="store_true", help="don't download: replay only what is already in the library")
+    p.set_defaults(func=cmd_learn, import_csv=None)
 
     p = sub.add_parser("update", help="check GitHub for a newer version of the bot and install it")
     p.add_argument("--check", action="store_true", help="only show whether an update is available")

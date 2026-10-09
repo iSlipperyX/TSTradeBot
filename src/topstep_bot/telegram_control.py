@@ -39,8 +39,11 @@ COMMANDS = [
     ("startbot", "Start the bot if it is stopped"),
     ("stop", "Stop the bot (Telegram and the dashboard stay online)"),
     ("ideas", "Recommended trades - tap Take to trade one"),
+    ("brief", "What the bot knows right now, in plain words"),
+    ("next", "When the bot expects its next trade, and why"),
     ("knowledge", "What the bot has learned: which strategy works when"),
     ("train", "Retrain the knowledge base on recent history now"),
+    ("learn", "Feed the bot more history: backfill and replay all of it"),
     ("settings", "Show the settings you can change"),
     ("set", "Change a setting, e.g. /set risk 150"),
     ("reset", "Undo all setting changes made remotely"),
@@ -59,6 +62,7 @@ KEYBOARD = {
          {"text": "▶️ Resume", "callback_data": "cmd:resume"}],
         [{"text": "💡 Ideas", "callback_data": "cmd:ideas"}, {"text": "📜 Trades", "callback_data": "cmd:trades"},
          {"text": "🧠 Knowledge", "callback_data": "cmd:knowledge"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
+        [{"text": "💬 What I know", "callback_data": "cmd:brief"}, {"text": "⏳ Next trade", "callback_data": "cmd:next"}],
         [{"text": "🛑 Flatten & halt", "callback_data": "cmd:flatten"}, {"text": "🔄 Restart bot", "callback_data": "cmd:restart"},
          {"text": "▶️ Start bot", "callback_data": "cmd:startbot"}],
     ]
@@ -355,14 +359,15 @@ class TelegramController:
         "startbot": "▶️ Start the bot? It will trade automatically in its current mode.",
     }
 
-    async def _train(self, source: str) -> None:
+    async def _slow(self, name: str, source: str, failed: str) -> None:
+        """Answer a slow command (/train, /learn) once it finishes; runs in the background."""
         try:
-            await self.send(await self._do("train", source))
+            await self.send(await self._do(name, source))
         except (ValueError, RuntimeError) as exc:
             await self.send(f"❌ {exc}")
         except Exception:  # noqa: BLE001 - runs outside the polling loop's own error handling
-            log.exception("Telegram /train failed")
-            await self.send("❌ Training failed - see the Logs tab.")
+            log.exception("Telegram /%s failed", name)
+            await self.send(f"❌ {failed} - see the Logs tab.")
 
     async def dispatch(self, command: str, source: str, args: list[str] | None = None) -> None:
         args = args or []
@@ -391,7 +396,15 @@ class TelegramController:
             await self.send(await self._do("knowledge_text"))
         elif command == "train":
             await self.send("🧠 Training on recent history - this takes a few seconds...")
-            self._in_background(self._train(source))
+            self._in_background(self._slow("train", source, "Training failed"))
+        elif command == "brief":
+            await self.send(await self._do("brief_text"))
+        elif command == "next":
+            await self.send(await self._do("next_text"))
+        elif command == "learn":
+            await self.send("📚 Learning from the long-run memory: downloading missing history and replaying all of it. "
+                            "This can take a minute; the bot keeps trading meanwhile...")
+            self._in_background(self._slow("learn", source, "Learning failed"))
         elif command == "set":
             if len(args) < 2:
                 await self.send("Usage: /set <setting> <value>, e.g. /set risk 150. Send /settings for the list.")
