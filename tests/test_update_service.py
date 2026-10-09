@@ -113,7 +113,8 @@ def test_install_stops_the_bot_then_restarts_into_the_new_version(tmp_path):
         await until(lambda: ctl._exit.is_set())
         assert ctl.exit_code == UPDATE_EXIT_CODE
         plan = load_state(tmp_path / "data")["restart"]
-        assert plan["mode"] == "paper" and plan["bot"] is True and "updated" in plan["announce"]
+        assert plan["mode"] == "paper" and plan["bot"] is True
+        assert plan["announce"] == "✅ Topstep Bot updated to bbbbbbb: Dashboard: market clock (#4)."
     scenario(tmp_path, body)
 
 
@@ -125,8 +126,8 @@ def test_failed_install_restarts_the_old_version_and_explains(tmp_path):
         await until(lambda: ctl.bot.state == "running")
         with pytest.raises(ValueError, match="previous version was restored"):
             await service.install("test")
-        assert ctl.bot.running and ctl.exit_code == 0 and service.busy is None
-        assert "Update failed" in service.status()["message"]
+        assert ctl.exit_code == 0 and service.busy is None and "Update failed" in service.status()["message"]
+        await until(lambda: ctl.bot.state == "running")  # the old version runs again
     scenario(tmp_path, body)
 
 

@@ -353,7 +353,7 @@ def test_download_with_an_unsafe_file_name_is_refused_before_anything_changes(tm
         zf.writestr("owner-bot-1/../../evil.py", "x")
     real = gh.handler
     gh.handler = lambda r: httpx.Response(200, content=buf.getvalue()) if "zipball" in r.url.path else real(r)
-    up._http._transport = httpx.MockTransport(gh.handler)
+    up.transport = httpx.MockTransport(gh.handler)
     with pytest.raises(UpdateError, match="unsafe"):
         up.install(up.check())
     assert read_tree(root) == before and not (tmp_path / "evil.py").exists()

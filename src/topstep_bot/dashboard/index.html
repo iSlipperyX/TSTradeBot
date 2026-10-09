@@ -1110,7 +1110,9 @@ function renderUpdates(u) {
   if (UPDATING) { bn.hidden = false; bn.innerHTML = `<b>${u.busy === "installing" ? "Installing the update…" : "Restarting with the new version…"}</b><span class="meta">The dashboard reloads by itself when it is back.</span>`; }
   else if (ready && !u.scheduled && store.get("tsb-upd-later") !== info.latest) {
     bn.hidden = false;
-    bn.innerHTML = `<b>⬆ Update available</b><span class="meta">${esc(u.headline)}</span><span class="spacer"></span>
+    const first = info.changes[0], others = (info.exact ? info.change_count : info.changes.length) - 1;
+    const what = first ? `${first.title}${others > 0 ? ` and ${plural(others, "more change")}` : ""}` : u.headline;
+    bn.innerHTML = `<b>⬆ Update available</b><span class="meta">${esc(what)}. Nothing installs until you choose.</span><span class="spacer"></span>
       <button class="small primary" id="upd-see">See what's new</button><button class="small" id="upd-later">Later</button>`;
     $("upd-see").onclick = () => { openTab("settings"); $("updates").scrollIntoView({behavior: "smooth"}); };
     $("upd-later").onclick = () => { store.set("tsb-upd-later", info.latest); bn.hidden = true; };

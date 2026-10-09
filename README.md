@@ -84,7 +84,11 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   owner-only, confirmations for dangerous actions; the setup wizard finds your chat ID for you.
 - **Journal** (SQLite) and Telegram/Discord alerts.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
-- 240+ automated tests, including end-to-end runs against a simulated TopstepX server and a test for every Topstep rule.
+- **Updates from GitHub** — the bot checks for a newer version every few hours and tells you on the
+  dashboard and Telegram what changed. It installs only when you confirm, only while no trade or order
+  is open (or after the close), test-starts the new version, restarts itself, and puts the previous
+  version back if anything fails. Your settings and data are kept ([how](docs/HOW_TO_USE.md#updating)).
+- 300+ automated tests, including end-to-end runs against a simulated TopstepX server and a test for every Topstep rule.
 
 ## Commands
 
@@ -109,6 +113,7 @@ topstep-bot demo            demo backtest on synthetic data
 topstep-bot telegram-test   send a test message to your Telegram bot
 topstep-bot logs            recent errors and crash reports  (--open, --bundle for support)
 topstep-bot insights        what the bot has learned: results after costs, real fills, conditions (--csv FILE)
+topstep-bot update          check GitHub for a newer version and install it (--check, --token, --undo)
 ```
 
 ## Project layout
@@ -137,6 +142,7 @@ src/topstep_bot/
   manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
   setups.py       the trades each strategy is building toward (dashboard's Getting ready to trade)
   telegram_control.py  Telegram bot remote control
+  updater.py      updates from GitHub (git or download), install and undo;  update_service.py  when, and the restart
   cli.py, wizard.py
 tests/            pytest suite (run: pytest)
 docs/HOW_TO_USE.md

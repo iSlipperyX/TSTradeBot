@@ -22,6 +22,7 @@ Your own files are never touched: config.yaml, .env, data/, logs/, reports/ and 
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import io
 import json
@@ -31,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import tomllib
 import zipfile
 from collections.abc import Callable
@@ -276,12 +278,10 @@ class Updater:
         self.method = method or ("git" if (self.root / ".git").exists() and shutil.which("git") else "download")
         self.python = python
         self._verify = verify
-        self._http = httpx.Client(
-            base_url=api, timeout=30, follow_redirects=True, transport=transport,
-            headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
-                     "User-Agent": f"topstep-bot/{__version__}",
-                     **({"Authorization": f"Bearer {token}"} if token else {})},
-        )
+        self._mutex = threading.RLock()  # one git/GitHub operation at a time (a manual check can meet the automatic one)
+        self.api = api
+        self.transport = transport
+        self._client: httpx.Client | None = None  # opened when needed, closed after each check/install
 
     @classmethod
     def for_config(cls, cfg: Any, token: str | None = None, **kw: Any) -> Updater | None:
@@ -290,8 +290,21 @@ class Updater:
             return None
         return cls(root, cfg.updates.repo, cfg.updates.branch, Path(cfg.data_dir), token=token, **kw)
 
+    @property
+    def _http(self) -> httpx.Client:
+        if self._client is None:
+            self._client = httpx.Client(
+                base_url=self.api, timeout=30, follow_redirects=True, transport=self.transport,
+                headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+                         "User-Agent": f"topstep-bot/{__version__}",
+                         **({"Authorization": f"Bearer {self.token}"} if self.token else {})},
+            )
+        return self._client
+
     def close(self) -> None:
-        self._http.close()
+        if self._client is not None:
+            self._client.close()
+            self._client = None
 
     # ---------------------------------------------------------------- state
 
@@ -308,6 +321,13 @@ class Updater:
 
     def check(self) -> UpdateInfo:
         """Ask GitHub whether there is newer code. Never raises: problems end up in ``info.error``."""
+        with self._mutex:
+            try:
+                return self._check()
+            finally:
+                self.close()
+
+    def _check(self) -> UpdateInfo:
         info = UpdateInfo(method=self.method, branch=self.branch, checked_at=_now(),
                           version=version_of(self._read(VERSION_FILE)) or __version__)
         try:
@@ -481,6 +501,13 @@ class Updater:
     def install(self, info: UpdateInfo, config_path: str | None = None, progress: Callable[[str], None] | None = None) -> dict:
         """Install the version ``info`` found. On any failure the previous version is restored and
         UpdateError explains what happened. Returns the install record."""
+        with self._mutex:
+            try:
+                return self._install(info, config_path, progress)
+            finally:
+                self.close()
+
+    def _install(self, info: UpdateInfo, config_path: str | None, progress: Callable[[str], None] | None) -> dict:
         say = progress or (lambda _: None)
         if not info.available or not info.latest:
             raise UpdateError("Already up to date - nothing to install.")
@@ -488,7 +515,10 @@ class Updater:
             raise UpdateError(f"Can't install: {info.problem}.")
         old_pyproject = self._read("pyproject.toml")
         say("Downloading the new version...")
-        record = self._apply_git(info) if self.method == "git" else self._apply_download(info)
+        try:
+            record = self._apply_git(info) if self.method == "git" else self._apply_download(info)
+        except OSError as exc:  # e.g. the disk is full while backing up: nothing was replaced yet
+            raise UpdateError(f"the update could not be prepared ({exc})") from None
         try:
             if dependencies_of(old_pyproject) != dependencies_of(self._read("pyproject.toml")):
                 say("Installing new Python packages...")
@@ -500,7 +530,7 @@ class Updater:
             self.rollback(record)
             raise UpdateError(f"{exc}. Nothing changed: the previous version was restored.") from None
         record.update(status="installed", at=_now())
-        self._save(last_install=record)
+        self._save(last_install=record, check=None)  # the last check described the old version
         log.info("Update installed: %s -> %s (%s)", (record.get("from") or "unknown")[:7], record["to"][:7], self.method)
         return record
 
@@ -591,6 +621,9 @@ class Updater:
             for rel in delete:
                 (self.root / rel).unlink(missing_ok=True)
         except OSError as exc:
+            for rel in write:  # a half-written temporary file
+                with contextlib.suppress(OSError):
+                    (self.root / rel).with_name(PurePosixPath(rel).name + ".tsb-new").unlink(missing_ok=True)
             self.rollback(record)
             raise UpdateError(f"a file could not be replaced ({exc}) - is it open in another program? "
                               "Nothing changed: the previous version was restored") from None
@@ -640,6 +673,10 @@ class Updater:
 
     def rollback(self, record: dict | None = None) -> dict:
         """Put back the version from before the last install."""
+        with self._mutex:
+            return self._rollback(record)
+
+    def _rollback(self, record: dict | None) -> dict:
         rec = dict(record or self.state().get("last_install") or {})
         if not rec:
             raise UpdateError("There is no update to undo.")

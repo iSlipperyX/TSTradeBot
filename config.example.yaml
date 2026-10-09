@@ -54,6 +54,10 @@ telegram:                       # control the bot from Telegram (token + chat ID
   confirm_dangerous: true       # /flatten and /stop need a confirmation tap
   allowed_user_ids: []          # optionally restrict to specific Telegram user IDs
 
+updates:                        # the bot checks GitHub for new versions; it installs only when you confirm
+  enabled: true
+  check_every_hours: 6
+
 dashboard:
   enabled: true
   port: 8765

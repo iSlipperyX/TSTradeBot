@@ -205,7 +205,9 @@ class UpdateService:
                 await bot.stop(f"update ({source})")
             try:
                 record = await asyncio.to_thread(updater.install, info, self.ctl.config_path)
-            except UpdateError as exc:
+            except Exception as exc:  # noqa: BLE001 - whatever went wrong, the old version must run again
+                if not isinstance(exc, UpdateError):
+                    log.exception("Update failed unexpectedly")
                 self.message = f"Update failed: {exc}"
                 bot._event("error", self.message, alert=True)
                 if restart_bot:
@@ -215,15 +217,14 @@ class UpdateService:
             self.busy = None
             raise
         self._unschedule()
-        self._save(restart={"mode": mode, "bot": restart_bot, "at": time.time(),
-                            "announce": f"✅ Topstep Bot updated: {info.headline().removeprefix('Update available for Topstep Bot: ')}"
-                                        f" Now on {record['to'][:7]}."})
+        self._save(restart={"mode": mode, "bot": restart_bot, "at": time.time(), "announce": updated_text(info, record["to"])})
         self.busy, self.message = "restarting", "Update installed - restarting with the new version."
         bot._event("info", f"Update installed ({label}); restarting the controller with the new version")
         asyncio.get_running_loop().call_later(RESTART_DELAY, lambda: spawn(self._restart(), name="update-restart"))
         parts = [*(["the bot"] if restart_bot else []), "the dashboard", *(["Telegram"] if self.ctl.telegram else [])]
         what = ", ".join(parts[:-1]) + " and " + parts[-1] if len(parts) > 1 else parts[0]
-        return f"Update installed. {what[0].upper()}{what[1:]} restart with the new version now - back in about 30 seconds."
+        verb = "restart" if len(parts) > 1 else "restarts"
+        return f"Update installed. {what[0].upper()}{what[1:]} {verb} with the new version now - back in about 30 seconds."
 
     async def _ensure_flat(self, source: str) -> None:
         """Pause new entries, then make sure no trade or order is open. Raises ValueError (and resumes) if one is."""
@@ -290,6 +291,7 @@ class UpdateService:
         restart = load_state(self.state_dir).get("restart")
         if restart:
             self._save(restart=None)
+            self.info, self.first_check_delay = None, min(self.first_check_delay, 5.0)  # confirm the new version soon
             text = restart.get("announce")
             if text:
                 self.message = text.removeprefix("✅ ")
@@ -307,13 +309,16 @@ class UpdateService:
     async def run(self) -> None:
         await asyncio.sleep(self.first_check_delay)
         while True:
-            if self.cfg.enabled and not self.busy and (self.next_check is None or self.clock() >= self.next_check):
-                self.next_check = self.clock() + timedelta(hours=self.cfg.check_every_hours)
-                info = await self.check("automatic check")
-                if info.available:
-                    await self._announce(info)
-            if self.scheduled and not self.busy and self.quiet():
-                await self._install_scheduled()
+            try:
+                if self.cfg.enabled and not self.busy and (self.next_check is None or self.clock() >= self.next_check):
+                    self.next_check = self.clock() + timedelta(hours=self.cfg.check_every_hours)
+                    info = await self.check("automatic check")
+                    if info.available:
+                        await self._announce(info)
+                if self.scheduled and not self.busy and self.quiet():
+                    await self._install_scheduled()
+            except Exception:  # noqa: BLE001 - a failed round must not end the checks for good
+                log.exception("Update check round failed")
             await asyncio.sleep(self.poll_seconds)
 
     async def _announce(self, info: UpdateInfo) -> None:
@@ -337,6 +342,17 @@ class UpdateService:
             return
         self._waiting_reason = None
         log.info("Scheduled update: %s", message)
+
+
+def updated_text(info: UpdateInfo, sha: str) -> str:
+    """The message after a restart into a new version: what you now have."""
+    titles = [c.title for c in info.changes[:3]]
+    more = (info.change_count if info.exact else len(info.changes)) - len(titles)
+    version = f" (version {info.new_version})" if info.new_version and info.new_version != info.version else ""
+    text = f"✅ Topstep Bot updated to {sha[:7]}{version}"
+    if titles:
+        text += ": " + "; ".join(titles) + (f"; and {more} more" if more > 0 else "")
+    return text + "."
 
 
 # ------------------------------------------------------------------------------ restart after an update
