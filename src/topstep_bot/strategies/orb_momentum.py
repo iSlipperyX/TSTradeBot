@@ -4,7 +4,7 @@ from collections import deque
 from datetime import date, datetime, timedelta
 
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Setup, Strategy, StrategyContext
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext, parse_hhmm
 
 
 class OpeningRangeMomentum(Strategy):
@@ -149,7 +149,7 @@ class OpeningRangeMomentum(Strategy):
             if stop is not None and ref is not None and self.p["target_r"] > 0:
                 risk = abs(ref - stop)
                 target = ref + self.p["target_r"] * risk if long else ref - self.p["target_r"] * risk
-            out.append(Setup(side, conds, None, stop, target, f"decides at the {decide_at} CT close"))
+            out.append(Setup(side, conds, None, stop, target, f"decides at the {decide_at} CT close", at=parse_hhmm(decide_at)))
         return out
 
     def state(self) -> dict:

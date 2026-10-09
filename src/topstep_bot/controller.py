@@ -56,7 +56,7 @@ BACKOFF = (10, 30, 60, 120, 300)
 HEALTHY_AFTER = 600  # seconds of uptime that reset the crash backoff
 STOP_TIMEOUT = 45  # seconds to wait for a graceful stop (it flattens first)
 ACTION_TIMEOUT = 8  # seconds to wait for the bot to answer a request
-SLOW_ACTIONS = {"train": 600}  # training downloads and replays weeks of history
+SLOW_ACTIONS = {"train": 600, "learn": 3600}  # training replays weeks of history; learning backfills and replays up to a year
 STATE_FILE = "controller.json"
 
 
@@ -398,6 +398,15 @@ class ProxyActions:
 
     async def install_update(self, source: str, when: str = "now") -> str:
         return await self.ctl.updates.install(source, when)
+
+    async def brief_text(self) -> str:
+        return await self._text("brief_text")
+
+    async def next_text(self) -> str:
+        return await self._text("next_text")
+
+    async def learn(self, source: str) -> str:
+        return await self._msg("learn", source)
 
     async def preview_setting(self, key: str, value: Any) -> dict:
         return await self.bot.action("preview_setting", {"key": key, "value": value})

@@ -21,10 +21,12 @@ def _money(v: float | None) -> str:
 
 
 class BotActions:
-    def __init__(self, core: TradingCore, controls: Controls, retrain: Callable[[str], Awaitable[str]] | None = None):
+    def __init__(self, core: TradingCore, controls: Controls, retrain: Callable[[str], Awaitable[str]] | None = None,
+                 learn: Callable[[str], Awaitable[str]] | None = None):
         self.core = core
         self.controls = controls
         self._retrain = retrain  # LiveRunner.retrain: downloads history and rebuilds the knowledge base
+        self._learn = learn  # LiveRunner.learn: backfills the market library and replays all of it (memory.py)
 
     def pause(self, source: str) -> str:
         if self.core.risk.paused:
@@ -91,6 +93,8 @@ class BotActions:
         if s["profit_target"]:
             lines.append(f"Combine progress: {_money(s['total_profit'])} of {_money(s['profit_target'])}")
         lines.append(f"Time: {s['time']}")
+        if s.get("forecast"):
+            lines.append(f"⏳ {s['forecast']['headline']}")
         return "\n".join(lines)
 
     def trades_text(self, limit: int = 5) -> str:
@@ -183,15 +187,41 @@ class BotActions:
     def knowledge_text(self) -> str:
         return self.core.knowledge_text()
 
-    def insights(self) -> dict:
-        """The "What the bot learned" report for the dashboard's Knowledge tab."""
-        return {"report": self.core.insights()}
+    def insights(self, scope: str = "recent") -> dict:
+        """The "What the bot learned" report for the dashboard's Knowledge tab (``scope`` recent or longrun)."""
+        return {"report": self.core.insights(longrun=scope == "longrun"), "scope": scope}
 
-    def insights_csv(self) -> dict:
-        """Every observation as CSV (the Knowledge tab's Download button)."""
+    def brief(self) -> dict:
+        """What the bot knows, in plain sentences, ending with its next-trade forecast (the Knowledge tab)."""
+        return {"brief": self.core.brief()}
+
+    def brief_text(self) -> str:
+        from topstep_bot.briefing import brief_text
+
+        return brief_text(self.core.brief())
+
+    def next_text(self) -> str:
+        from topstep_bot.forecast import forecast_text
+
+        f = self.core.forecast()
+        return forecast_text(f) if f else "The next-trade forecast isn't available right now - see the logs."
+
+    async def learn(self, source: str) -> str:
+        """Backfill the long-run memory and replay all of it through every strategy (the bot keeps trading meanwhile)."""
+        if self._learn is None:
+            raise RuntimeError("Learning from long-run history is only available while the bot is connected to TopstepX")
+        return await self._learn(source)
+
+    def insights_csv(self, scope: str = "recent") -> dict:
+        """Every observation as CSV (the Knowledge tab's Download button), recent or from the long-run memory."""
         from topstep_bot.insights import csv_text
 
-        kb = self.core.knowledge
+        if scope == "longrun":
+            if self.core.memory is None:
+                raise RuntimeError("The long-run memory is turned off (knowledge.deep_learning: false)")
+            kb = self.core.memory.knowledge
+        else:
+            kb = self.core.knowledge
         if kb is None:
             raise RuntimeError("The knowledge base is turned off (knowledge.enabled: false)")
         name = kb.path.stem if kb.path else "knowledge"
@@ -213,6 +243,8 @@ class BotActions:
             return simple[name](source)
         if name == "train":
             return await self.train(source)
+        if name == "learn":
+            return await self.learn(source)
         if name == "preview_setting":
             return self.preview_setting(payload.get("key", ""), payload.get("value"))
         if name == "set_setting":
@@ -231,13 +263,16 @@ class BotActions:
             size = payload.get("size")
             return await self.take_idea(str(payload.get("id", "")), source, int(size) if size else None)
         texts = {"status_text": self.status_text, "ideas_text": self.ideas_text, "trades_text": self.trades_text,
-                 "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text}
+                 "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text,
+                 "brief_text": self.brief_text, "next_text": self.next_text}
         if name in texts:
             return {"text": texts[name]()}
         if name == "insights":
-            return self.insights()
+            return self.insights(str(payload.get("scope") or "recent"))
+        if name == "brief":
+            return self.brief()
         if name == "insights_csv":
-            return self.insights_csv()
+            return self.insights_csv(str(payload.get("scope") or "recent"))
         if name == "open_ideas":
             return {"items": self.open_ideas()}
         if name == "find_idea":
