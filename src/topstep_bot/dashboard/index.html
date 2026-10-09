@@ -223,6 +223,25 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
 .changes time { color:var(--muted); font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .changes code { color:var(--muted); font-size:11.5px; margin-left:auto; padding-left:8px; }
 .changes .more { color:var(--muted); }
+/* phone access (Telegram) */
+.phonestate { display:grid; grid-template-columns:auto 1fr; gap:3px 8px; align-items:baseline; margin-top:8px; font-size:13px; }
+.phonestate .meta { grid-column:2; }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:flex-end; justify-content:center; z-index:20; padding:12px; }
+.modal .box { background:var(--surface); color:var(--text); border-radius:14px; padding:16px; width:100%; max-width:460px; max-height:80vh; overflow:auto;
+  margin-bottom:max(12px, env(safe-area-inset-bottom)); }
+.modal p { white-space:pre-wrap; margin:0 0 14px; font-size:14.5px; } .modal button { padding:9px 16px; }
+.ended { max-width:420px; margin:18vh auto 0; text-align:center; }
+/* phones: roomier tap targets, the top bar wraps into rows, wide tables scroll inside their panel */
+@media (max-width:560px) {
+  main { padding:10px 10px 40px; padding-left:max(10px, env(safe-area-inset-left)); padding-right:max(10px, env(safe-area-inset-right)); }
+  .top { gap:8px 10px; padding:10px 12px; } .top .spacer { display:none; } .top .meta { flex-basis:100%; order:9; }
+  .brand { font-size:16px; }
+  button.small { padding:7px 12px; font-size:13px; }
+  .tabs button { padding:9px 12px; }
+  .panel { padding:12px; }
+  .cards { grid-template-columns:1fr 1fr; } .value { font-size:19px; }
+  .clock { grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; } .clock .c { padding:6px 9px; } .clock .cv { font-size:15px; }
+}
 /* setup */
 .stepnum { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; background:var(--accent);
   color:#fff; font-size:12px; font-weight:700; margin-right:8px; flex:none; }
@@ -271,6 +290,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
       <button class="small" id="b-stop">Stop</button>
     </span>
     <span class="spacer"></span>
+    <button class="pill" id="phonepill" hidden title="Phone access through Telegram - open Settings"></button>
     <button class="pill" id="logpill" title="Warnings and errors from the bot - open the Logs tab">log</button>
     <span class="meta" id="meta"></span>
     <button class="small" id="theme" title="Light / dark / follow your system">◐</button>
@@ -485,6 +505,16 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
         config.yaml is not rewritten here — “Undo all changes” goes back to it. Your account, market, strategy and the risk the
         bot starts with are on the <button class="link" onclick="openTab('setup')">Setup tab</button>; Topstep's own rules never change.</p>
     </div>
+    <div class="panel" style="margin-top:12px" id="phone">
+      <div class="row"><h2 style="margin:0">Phone access (Telegram)</h2><span class="spacer"></span>
+        <button class="small primary" id="ph-on">Turn on</button><button class="small danger" id="ph-off" hidden>Turn off</button></div>
+      <div class="phonestate" id="ph-state"></div>
+      <div class="blockmsg" id="ph-problem" hidden></div>
+      <p class="hint" id="ph-hint">Opens this dashboard inside Telegram on your phone when you're away from the PC. Only your own Telegram
+        account can open it: Telegram signs you in and everyone else is refused. The bot keeps running and trading on this PC from your own
+        internet connection; a secure Cloudflare link carries only the dashboard to your phone, with no router changes. On the phone you can
+        do everything you can here except switch to LIVE and turn phone access on. In Telegram, /dashboard opens it and /dashboard off turns it off.</p>
+    </div>
     <div class="panel" style="margin-top:12px" id="updates">
       <div class="row"><h2 style="margin:0">Updates</h2><span class="spacer"></span><button class="small" id="upd-check">Check now</button></div>
       <div id="upd-meta" class="meta" style="margin:6px 0 0"></div>
@@ -648,9 +678,20 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
   </section>
 </main>
 <div class="toast" id="toast"></div>
+<div class="modal" id="modal" hidden><div class="box" role="dialog" aria-modal="true"><p id="modal-text"></p>
+  <div class="row"><span class="spacer"></span><button id="modal-no">Cancel</button><button class="primary" id="modal-yes">OK</button></div></div></div>
 
 <script>
 const TOKEN = "__TOKEN__";
+const PHONE = "__VIEW__" === "phone";  // opened on the phone through Telegram (phone_access.py)
+// Every request carries the token: the phone link checks it on reads too. A phone session that ended
+// (12 hours, or phone access restarted) signs in again through Telegram by reloading.
+const fetchBase = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  const r = await fetchBase(url, {...opts, headers: {"X-Token": TOKEN, ...(opts.headers || {})}});
+  if (PHONE && r.status === 401) location.reload();
+  return r;
+};
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const money = v => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
@@ -673,8 +714,18 @@ async function post(path, body) {
   if (!r.ok && !data.message) data = {ok: false, message: `The controller refused that request (${r.status}). Reload this page and try again.`};
   return data;
 }
+// Confirmations: the browser's own box on the PC; on the phone an in-page one (Telegram's browser may not show the native box)
+function ask(text) {
+  if (!PHONE) return Promise.resolve(window.confirm(text));
+  return new Promise(done => {
+    $("modal-text").textContent = text; $("modal").hidden = false;
+    const finish = ok => { $("modal").hidden = true; done(ok); };
+    $("modal-yes").onclick = () => finish(true); $("modal-no").onclick = () => finish(false);
+    $("modal").onclick = e => { if (e.target === $("modal")) finish(false); };
+  });
+}
 async function run(path, body, confirmText) {
-  if (confirmText && !confirm(confirmText)) return;
+  if (confirmText && !await ask(confirmText)) return;
   const d = await post(path, body); if (d.message) toast(d.message, d.ok === false); refresh();
   return d;
 }
@@ -691,9 +742,9 @@ $("theme").onclick = () => { const cur = store.get("tsb-theme"); const next = cu
   store.set("tsb-theme", next); applyTheme(next); };
 
 // ---- tabs (the open tab is kept in the address, so a reload stays put)
-const tabOpen = name => $("tab-" + name).classList.contains("on");
+const tabOpen = name => !!$("tab-" + name)?.classList.contains("on");
 function showTab(name) {
-  if (!$("tab-" + name)) name = "overview";
+  if (!$("tab-" + name) || (PHONE && name === "setup")) name = "overview";  // keys and accounts are set up on the PC only
   document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x.dataset.tab === name));
   document.querySelectorAll("section.tab").forEach(x => x.classList.toggle("on", x.id === "tab-" + name));
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
@@ -713,6 +764,7 @@ $("b-stop").onclick = () => run("bot/stop", {}, "Stop the bot? Any open position
 $("m-paper").onclick = () => { if (S && S.controller.mode !== "paper") run("mode", {mode:"paper"}, "Switch to PAPER mode? The bot restarts with simulated orders."); };
 $("m-live").onclick = async () => {
   if (!S || S.controller.mode === "live") return;
+  if (PHONE) { toast("Switching to LIVE (real orders) can only be done on the PC.", true); return; }
   const typed = prompt("Switch to LIVE trading with REAL orders on your TopstepX account?\n\nType LIVE to confirm:");
   if (typed === null) return;
   run("mode", {mode:"live", confirm:typed});
@@ -729,6 +781,21 @@ $("upd-now").onclick = () => run("updates/install", {when: "now"}, S && S.update
 $("upd-tonight").onclick = () => run("updates/install", {when: "tonight"});
 $("upd-cancel").onclick = () => run("updates/cancel", {}, "Cancel the update scheduled for after the close?");
 $("reloadlogs").onclick = loadLogs;
+$("phonepill").onclick = () => { openTab("settings"); $("phone").scrollIntoView({behavior: "smooth"}); };
+$("ph-on").onclick = () => run("phone/on", {}, "Turn on phone access?\n\nThe dashboard can then be opened inside Telegram on your phone, by your Telegram account only. The bot keeps running on this PC.");
+$("ph-off").onclick = async () => {
+  if (!await ask(PHONE ? "Turn off phone access? This page closes, and it can only be turned on again on the PC or with /dashboard in Telegram."
+                     : "Turn off phone access? The dashboard can't be opened from your phone until you turn it on again.")) return;
+  const d = await post("phone/off");
+  if (PHONE && d.ok !== false) { phoneEnded(d.message); return; }
+  if (d.message) toast(d.message, d.ok === false); refresh();
+};
+function phoneEnded(message) {
+  clearInterval(REFRESH);
+  document.querySelector("main").innerHTML = `<div class="panel ended"><div class="brand">Topstep Bot</div>
+    <p>${esc(message || "Phone access is off.")}</p><p class="hint">Turn it on again on the PC (Settings tab) or send /dashboard to your bot in Telegram.</p></div>`;
+  const tg = window.Telegram && window.Telegram.WebApp; if (tg) setTimeout(() => tg.close(), 2500);
+}
 $("upd-token-save").onclick = async () => {
   const d = await run("setup/github_token", {token: $("upd-token").value.trim()});
   if (d && d.ok !== false) $("upd-token").value = "";
@@ -743,7 +810,7 @@ $("ins-csv").onclick = async () => {
 };
 $("ins-feature").onchange = () => { store.set("tsb-ins-feature", $("ins-feature").value); renderConditions(); };
 $("train").onclick = async () => {
-  if (!confirm("Retrain the knowledge base on recent history now? The bot keeps trading meanwhile; it takes a few seconds.")) return;
+  if (!await ask("Retrain the knowledge base on recent history now? The bot keeps trading meanwhile; it takes a few seconds.")) return;
   $("train").disabled = true; toast("Training…"); await run("action/train"); $("train").disabled = false;
 };
 
@@ -1119,7 +1186,7 @@ async function placeTrade() {
     `${buy ? "BUY" : "SELL"} ${p.size} ${d.contract} at the market (~${px(d.price)}${p.limit != null ? `, no worse than ${px(p.limit)}` : ""})\n` +
     `Stop ${px(p.stop)}: risk ${money(p.risk_usd)}\n` + (p.target != null ? `Target ${px(p.target)}: reward ${money(p.reward_usd)} (${p.rr}R)\n` : "No target\n") +
     `\nThe bot manages it like its own trades: stop, target, your loss limits, news and the 15:10 CT flatten.`;
-  if (!confirm(text)) return;
+  if (!await ask(text)) return;
   T.busy = true; tk("place").disabled = true; tk("place").textContent = "Placing…";
   const r = await post("action/manual_trade", {side: T.side, stop: p.stop, target: p.target ?? "none", size: p.size, note: tk("note").value});
   T.busy = false;
@@ -1129,7 +1196,7 @@ async function placeTrade() {
 }
 
 async function takeIdea(id, size, summary) {
-  if (!confirm(`Take ${summary}?\n\nIt is re-priced at the current market and protected by its stop. The size never exceeds what your risk rules allow.`)) return;
+  if (!await ask(`Take ${summary}?\n\nIt is re-priced at the current market and protected by its stop. The size never exceeds what your risk rules allow.`)) return;
   run("action/take_idea", {id, size});
 }
 function renderIdeas(b) {
@@ -1337,7 +1404,7 @@ async function saveSetting(key, el) {
   const p = await post("action/preview_setting", {key, value});
   if (p.ok === false) { toast(p.message, true); return; }
   if (!p.changed) { toast(`${p.label} is already ${p.new ?? "off"}`); return; }
-  if (!confirm(`Change ${p.label}: ${p.old ?? "off"} → ${p.new ?? "off"}?${p.riskier ? "\n\n⚠ This increases your risk." : ""}`)) {
+  if (!await ask(`Change ${p.label}: ${p.old ?? "off"} → ${p.new ?? "off"}?${p.riskier ? "\n\n⚠ This increases your risk." : ""}`)) {
     el.dataset.dirty = ""; settingsBuilt = false; refresh(); return; }
   el.dataset.dirty = ""; run("action/set_setting", {key, value});
 }
@@ -1363,7 +1430,8 @@ function renderSettings(b) {
 
 // ---- updates from GitHub (Settings tab, plus a banner while one is waiting)
 let INSTANCE = null, UPDATING = false;
-const OFFLINE_TEXT = $("offline").textContent;
+const OFFLINE_TEXT = PHONE ? "Lost contact with your PC. Is it on, with the Topstep Bot window open? Send /dashboard in Telegram for a fresh link."
+  : $("offline").textContent;
 const when = iso => { const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}); };
 function renderUpdates(u) {
   if (!u) return;
@@ -1388,7 +1456,7 @@ function renderUpdates(u) {
   else if (info) html = `<div class="summary">✅ Up to date.</div>`;
   if (u.message && !UPDATING) html += `<p class="hint">${esc(u.message)}</p>`;
   $("upd-state").innerHTML = html;
-  $("upd-token-box").hidden = !(info && info.needs_token) || !!u.busy;
+  $("upd-token-box").hidden = PHONE || !(info && info.needs_token) || !!u.busy;  // a GitHub token is entered on the PC
   const shown = ready ? info.changes.slice(0, 15) : [];
   const more = ready && info.exact ? info.change_count - shown.length : 0;
   $("upd-changes").innerHTML = shown.map(c => `<li><time>${esc((c.date || "").slice(0, 10))}</time><span>${esc(c.title)}</span><code>${esc(c.short)}</code></li>`).join("")
@@ -1415,6 +1483,25 @@ function renderUpdates(u) {
   } else bn.hidden = true;
 }
 
+// ---- phone access (Settings tab, plus a pill in the top bar while it is on)
+function renderPhone(p, viewer) {
+  if (!p) return;
+  const on = p.state === "on", pill = $("phonepill");
+  pill.hidden = !(p.enabled || PHONE);
+  pill.textContent = PHONE ? "📱 On your phone" : on ? "📱 Phone link on" : p.state === "error" ? "📱 Phone link: trouble" : "📱 Phone link starting…";
+  pill.style.color = p.state === "error" ? css("--warn") : "";
+  const [color, text] = on ? ["--good", `On. Open it from the Dashboard button in your Telegram chat with the bot.${p.in_use && !PHONE ? " Open on your phone right now." : ""}`]
+    : p.state === "starting" ? ["--warn", p.detail || "Starting…"]
+    : p.state === "error" ? ["--crit", `${p.error || "Not working"}. ${p.detail || ""}`]
+    : p.enabled ? ["--warn", "Waiting to start."] : ["--muted", "Off. Turn it on, then open the dashboard from the Dashboard button in your Telegram chat with the bot."];
+  $("ph-state").innerHTML = `<span class="dot" style="background:${css(color)}"></span><span>${esc(text)}</span>` +
+    (on && p.url && !PHONE ? `<span class="meta">Link: ${esc(p.url.replace("https://", ""))} (changes each time it starts)</span>` : "") +
+    (PHONE ? `<span class="meta">You're on your phone now. Turning this off closes this page.</span>` : "");
+  const problem = p.problem ? p.problem : p.enabled && !p.telegram && !PHONE ? "Telegram control isn't connected right now, so the bot can't send you the Dashboard button." : "";
+  $("ph-problem").hidden = !problem; $("ph-problem").textContent = problem;
+  $("ph-on").hidden = p.enabled || PHONE; $("ph-on").disabled = !!p.problem;
+  $("ph-off").hidden = !p.enabled;
+}
 // ---- Setup tab: everything the console setup wizard used to ask (setup_service.py on the server)
 let SU = null, SU_DIRTY = false, SU_SUG = null, SU_BUSY = false;
 const F = {account_id: null, account_name: null, goal: "pass"};
@@ -1632,9 +1719,9 @@ async function loadLogs() {
 function render(s) {
   const first = S === null;
   S = s;
+  renderTop(s); renderUpdates(s.updates); renderPhone(s.phone, s.viewer); renderClock(s.clock); renderOverview(s.bot); renderNext(s.bot); renderSetups(s.bot); renderMemory(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
   if (s.setup) $("setupflag").hidden = s.setup.configured && !s.setup.error;
-  if (first && s.setup && !s.setup.configured && !ASKED_TAB) showTab("setup");  // first run: straight to setup
-  renderTop(s); renderUpdates(s.updates); renderClock(s.clock); renderOverview(s.bot); renderNext(s.bot); renderSetups(s.bot); renderMemory(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
+  if (first && s.setup && !s.setup.configured && !ASKED_TAB && !PHONE) showTab("setup");  // first run: straight to setup
   if (tabOpen("knowledge")) { loadInsights(false); loadBrief(false); }
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
 }
@@ -1652,7 +1739,9 @@ async function refresh() {
 const ASKED_TAB = location.hash.slice(1);  // a link to a tab wins over the first-run jump to Setup
 showTab(ASKED_TAB || store.get("tsb-tab") || "overview");
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => store.set("tsb-tab", b.dataset.tab)));
-refresh(); setInterval(refresh, 2000);
+if (PHONE) { $("m-live").title = "LIVE can only be switched on at the PC";
+  document.querySelector('.tabs [data-tab="setup"]').hidden = true; }
+refresh(); const REFRESH = setInterval(refresh, 2000);
 setInterval(() => { if (tabOpen("logs")) loadLogs(); }, 10000);
 </script>
 </body>

@@ -1,9 +1,11 @@
 """A tiny local-only HTTP server (no dependencies), shared by the dashboard and the bot's API.
 
-Security model (both servers bind to 127.0.0.1 only):
+Security model (every server binds to 127.0.0.1 only):
   * The Host header must be 127.0.0.1/localhost - blocks DNS-rebinding attacks.
   * State-changing requests (and, for the bot API, every request) need a random per-run token in
     the X-Token header. Other websites in your browser can't read the token or send the header.
+  * The phone link (phone_access.py) is a third server that only its secure tunnel reaches. It
+    replaces the token check with its own: every request needs a Telegram-signed sign-in.
 """
 
 from __future__ import annotations
@@ -21,7 +23,8 @@ log = logging.getLogger(__name__)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
 MAX_BODY = 64_000
-REASONS = {200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 500: "Server Error", 503: "Unavailable"}
+REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 429: "Too Many Requests",
+           500: "Server Error", 503: "Unavailable"}
 
 
 class HttpError(Exception):
@@ -38,6 +41,7 @@ class Request:
     headers: dict[str, str]
     body: bytes = b""
     param: str = ""  # the part of the path matched by a trailing "*" in the route
+    remote: bool = False  # came through the phone link, not from a browser on this PC
 
     def json(self) -> dict:
         if not self.body:
@@ -68,6 +72,7 @@ def html_response(text: str) -> Response:
 
 
 Handler = Callable[[Request], Awaitable[Response | dict | str] | Response | dict | str]
+Authorizer = Callable[[Request], Response | None]  # None = let the request through
 
 
 class HttpServer:
@@ -80,14 +85,27 @@ class HttpServer:
         token: str | None = None,
         token_for_reads: bool = False,
         name: str = "http",
+        allowed_hosts: Callable[[], tuple[str, ...]] | None = None,
+        authorize: Authorizer | None = None,
+        remote: bool = False,
+        headers: dict[str, str] | None = None,
     ):
-        """routes: (method, path, handler); a path ending in "*" matches any suffix (in request.param)."""
+        """routes: (method, path, handler); a path ending in "*" matches any suffix (in request.param).
+
+        allowed_hosts / authorize / remote / headers are for the phone link: the Host names it answers
+        to, a check that replaces the token check, marking its requests as remote, and extra headers
+        (it is shown inside Telegram, so it can't send X-Frame-Options: DENY).
+        """
         self.host = host
         self.port = port
         self.routes = routes
         self.token = token
         self.token_for_reads = token_for_reads
         self.name = name
+        self.allowed_hosts = allowed_hosts or (lambda: ALLOWED_HOSTS)
+        self.authorize = authorize
+        self.remote = remote
+        self.headers = headers if headers is not None else {"X-Frame-Options": "DENY"}
         self._server: asyncio.base_events.Server | None = None
 
     @property
@@ -126,7 +144,7 @@ class HttpServer:
                     k, v = line.split(":", 1)
                     headers[k.strip().lower()] = v.strip()
             url = urlsplit(target)
-            req = Request(method, url.path, {k: v[-1] for k, v in parse_qs(url.query).items()}, headers)
+            req = Request(method, url.path, {k: v[-1] for k, v in parse_qs(url.query).items()}, headers, remote=self.remote)
             response = await self._dispatch(req, reader)
         except (TimeoutError, asyncio.IncompleteReadError, ConnectionError, ValueError):
             writer.close()
@@ -139,9 +157,13 @@ class HttpServer:
             writer.close()
 
     async def _dispatch(self, req: Request, reader: asyncio.StreamReader) -> Response:
-        if req.headers.get("host", "").rsplit(":", 1)[0] not in ALLOWED_HOSTS:
+        if req.headers.get("host", "").rsplit(":", 1)[0].lower() not in self.allowed_hosts():
             return json_response({"ok": False, "message": "forbidden host"}, 403)
-        if self.token and (req.method != "GET" or self.token_for_reads) and req.headers.get("x-token") != self.token:
+        if self.authorize is not None:
+            refused = self.authorize(req)
+            if refused is not None:
+                return refused
+        elif self.token and (req.method != "GET" or self.token_for_reads) and req.headers.get("x-token") != self.token:
             return json_response({"ok": False, "message": "bad token"}, 403)
         found = self._route(req.method, req.path)
         if found is None:
@@ -167,12 +189,11 @@ class HttpServer:
             return json_response({"ok": True, "message": result})
         return json_response({"ok": True, **result})
 
-    @staticmethod
-    async def _write(writer: asyncio.StreamWriter, r: Response) -> None:
-        extra = "".join(f"{k}: {v}\r\n" for k, v in r.headers.items())
+    async def _write(self, writer: asyncio.StreamWriter, r: Response) -> None:
+        extra = "".join(f"{k}: {v}\r\n" for k, v in {**self.headers, **r.headers}.items())
         head = (
             f"HTTP/1.1 {r.status} {REASONS.get(r.status, 'OK')}\r\nContent-Type: {r.content_type}\r\n"
-            f"Content-Length: {len(r.body)}\r\nCache-Control: no-store\r\nX-Frame-Options: DENY\r\n"
+            f"Content-Length: {len(r.body)}\r\nCache-Control: no-store\r\n"
             f"X-Content-Type-Options: nosniff\r\n{extra}Connection: close\r\n\r\n"
         )
         writer.write(head.encode("latin-1") + r.body)
