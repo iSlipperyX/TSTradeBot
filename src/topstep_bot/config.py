@@ -430,18 +430,26 @@ def load_config(path: Path | str | None = None) -> BotConfig:
         if path:
             raise FileNotFoundError(f"Config file not found: {cfg_path}")
         return BotConfig()
+    return anchor_folders(config_from_text(cfg_path.read_text(encoding="utf-8"), cfg_path), cfg_path)
+
+
+def config_from_text(text: str, name: Path | str = DEFAULT_CONFIG_PATH) -> BotConfig:
+    """Parse and check config.yaml's contents (folders are left relative). Raises ConfigError."""
     try:
-        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        raw = yaml.safe_load(text) or {}
     except yaml.YAMLError as exc:
-        raise ConfigError(f"{cfg_path} is not valid YAML (check indentation and quotes):\n  {exc}") from None
+        raise ConfigError(f"{name} is not valid YAML (check indentation and quotes):\n  {exc}") from None
     if not isinstance(raw, dict):
-        raise ConfigError(f"{cfg_path} should contain settings like 'mode: paper', one per line")
+        raise ConfigError(f"{name} should contain settings like 'mode: paper', one per line")
     try:
-        cfg = BotConfig.model_validate(raw)
+        return BotConfig.model_validate(raw)
     except ValidationError as exc:
-        raise ConfigError(f"{cfg_path} has {exc.error_count()} problem(s):\n{_describe(exc)}") from None
-    # Relative folders live next to config.yaml, wherever the bot is started from.
-    base = cfg_path.resolve().parent
+        raise ConfigError(f"{name} has {exc.error_count()} problem(s):\n{_describe(exc)}") from None
+
+
+def anchor_folders(cfg: BotConfig, config_path: Path | str) -> BotConfig:
+    """Relative folders (data, logs, reports) live next to config.yaml, wherever the bot is started from."""
+    base = Path(config_path).resolve().parent
     for owner, attr in ((cfg, "data_dir"), (cfg, "log_dir"), (cfg.backtest, "report_dir")):
         value = Path(getattr(owner, attr))
         if not value.is_absolute():

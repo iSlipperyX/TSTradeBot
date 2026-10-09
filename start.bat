@@ -1,5 +1,10 @@
 @echo off
-REM Double-click to open the Topstep Bot menu. First run installs everything automatically.
+REM Double-click to start Topstep Bot: it starts the server and opens the dashboard in your browser,
+REM where you set everything up and start or stop the bot. First run installs everything automatically.
+REM   start.bat menu      the text menu from earlier versions
+REM   start.bat setup     the setup wizard in this window (the dashboard's Setup tab does the same)
+REM   start.bat update    check GitHub for a newer version
+title Topstep Bot
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (

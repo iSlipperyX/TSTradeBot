@@ -1,4 +1,8 @@
-"""Command-line interface. Run with no arguments for an interactive menu."""
+"""Command-line interface.
+
+With no arguments (double-clicking start.bat) it starts the server: the dashboard opens in your
+browser and everything else - setup, paper or live, start and stop - happens there. The text
+menu from earlier versions is still here: ``topstep-bot menu`` (start.bat menu)."""
 
 from __future__ import annotations
 
@@ -53,7 +57,8 @@ def _client(cfg: BotConfig):
 
     secrets = load_secrets()
     if not secrets.has_credentials:
-        console.print("[red]No TopstepX credentials found.[/] Run [bold]topstep-bot setup[/] first.")
+        console.print("[red]No TopstepX credentials found.[/] Add them on the dashboard's Setup tab "
+                      "(double-click start.bat), or run [bold]start.bat setup[/].")
         raise SystemExit(2)
     return ProjectXClient(secrets.username, secrets.api_key, cfg.api.base_url, cfg.api.timeout_seconds)
 
@@ -393,8 +398,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             console.print("Cancelled.")
             return 1
     if not secrets.has_credentials:
-        console.print("[red]No TopstepX credentials found.[/] Run [bold]topstep-bot setup[/] first.")
-        write_exit_note(2, "no TopstepX credentials - run setup")
+        console.print("[red]No TopstepX credentials found.[/] Add them on the dashboard's Setup tab first.")
+        write_exit_note(2, "no TopstepX login yet - add it on the Setup tab")
         return 2
 
     controls = Controls()
@@ -456,16 +461,36 @@ def _confirm_live(cfg: BotConfig, args: argparse.Namespace, what: str) -> bool:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    """Start the controller: dashboard + Telegram, which run and supervise the trading bot 24/7."""
-    from topstep_bot.controller import resolve_mode, run_controller
+    """Start the controller: dashboard + Telegram, which run and supervise the trading bot 24/7.
 
-    cfg = _load(args)
+    It opens even when config.yaml is missing or has a problem: the dashboard's Setup tab shows
+    what is wrong and fixes it. If it is already running, the dashboard is just opened again."""
+    from topstep_bot.controller import resolve_mode, run_controller
+    from topstep_bot.setup_service import load_for_server
+
+    cfg, problem = load_for_server(args.config)
+    if _controller_running(cfg):
+        url = f"http://127.0.0.1:{cfg.dashboard.port}/"
+        console.print(f"Topstep Bot is already running (or something else uses port {cfg.dashboard.port}). "
+                      f"Opening the dashboard: [bold]{url}[/]")
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
     cfg.mode = resolve_mode(cfg, args.mode)
-    if not _confirm_live(cfg, args, "the bot"):
+    start_bot = not args.no_bot
+    if start_bot and not _confirm_live(cfg, args, "the bot"):
         console.print("Cancelled.")
         return 1
     return run_controller(cfg, load_secrets(), config_path=args.config, mode=cfg.mode,
-                          start_bot=not args.no_bot, open_browser=not args.no_browser)
+                          start_bot=start_bot, open_browser=not args.no_browser, config_error=problem)
+
+
+def cmd_server(args: argparse.Namespace) -> int:
+    """What double-clicking start.bat does: start the server and open the dashboard. The bot itself
+    is started from the dashboard (Paper or Live), so nothing is asked here."""
+    args.mode, args.yes, args.no_bot = None, True, True
+    args.no_browser = getattr(args, "no_browser", False)
+    return cmd_start(args)
 
 
 def cmd_autostart(args: argparse.Namespace) -> int:
@@ -889,7 +914,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 return 0
             rec = updater.rollback()
             console.print(f"[green]Done - back to {(rec.get('from') or 'the previous files')[:7]}.[/] "
-                          "Start the bot again from the menu.")
+                          "Double-click start.bat to open the dashboard again.")
             return 0
         with console.status("Checking GitHub for updates..."):
             info = updater.check()
@@ -919,7 +944,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         console.print(Panel(
             f"[green bold]Updated to {record['to'][:7]}.[/]\n"
             "Your settings, API keys, trades and what the bot has learned were kept.\n"
-            "Start the bot again: option 6 (paper) or 7 (live). Changed your mind? topstep-bot update --undo",
+            "Double-click start.bat to open the dashboard again. Changed your mind? start.bat update --undo",
             border_style="green"))
         return 0
     except UpdateError as exc:
@@ -964,7 +989,9 @@ def _menu_update_line(cfg: BotConfig) -> None:
 
 
 def interactive_menu(parser: argparse.ArgumentParser) -> int:
-    console.print(Panel.fit(f"[bold]Topstep Bot[/] v{__version__}", border_style="cyan"))
+    console.print(Panel.fit(f"[bold]Topstep Bot[/] v{__version__} - text menu\n"
+                            "[dim]Double-click start.bat instead to use the dashboard: setup, paper/live, start and stop "
+                            "are all there.[/]", border_style="cyan"))
     if not Path("config.yaml").exists():
         demo = next(i for i, (name, _) in enumerate(MENU, start=1) if name == "demo")
         console.print(f"[yellow]No config.yaml yet - start with option 1 (setup), or {demo} for a demo.[/]")
@@ -996,7 +1023,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-c", "--config", default=None, help="config file (default: config.yaml)")
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("setup", help="interactive setup wizard").set_defaults(func=cmd_setup)
+    p = sub.add_parser("server", help="start the server and open the dashboard (what start.bat does with no arguments)")
+    p.add_argument("--no-browser", action="store_true", help="don't open the dashboard in a browser")
+    p.set_defaults(func=cmd_server)
+    sub.add_parser("menu", help="the text menu from earlier versions").set_defaults(
+        func=lambda args: interactive_menu(parser))
+    sub.add_parser("setup", help="setup wizard in this window (the dashboard's Setup tab does the same)").set_defaults(
+        func=cmd_setup)
     sub.add_parser("check", help="test credentials, list accounts, resolve the contract").set_defaults(func=cmd_check)
     sub.add_parser("strategies", help="list strategies and their parameters").set_defaults(func=cmd_strategies)
     sub.add_parser("rules", help="Topstep's rules for your account and how the bot enforces them").set_defaults(func=cmd_rules)
@@ -1107,7 +1140,7 @@ def dispatch(args: argparse.Namespace) -> int:
     # The bot and the controller set up their own logging (bot.log / controller.log). Other commands log to
     # commands.log, so they never rotate bot.log while the bot is writing it (Windows can't do that).
     log_dir = LOG_DIR
-    if args.command not in ("run", "logs", "service", "start", "go-live"):
+    if args.command not in ("run", "logs", "service", "start", "server", "go-live", "menu"):
         try:
             log_dir = setup_logging(_load(args), args.command, console_level="WARNING", file_prefix="commands")
         except Exception:  # noqa: BLE001 - never block a command because logging failed (e.g. bad config)
@@ -1120,7 +1153,7 @@ def dispatch(args: argparse.Namespace) -> int:
         console.print(f"[red]{exc}[/]")
         return 2
     except ConfigError as exc:
-        console.print(f"[red]Configuration problem:[/] {exc}\nFix it in config.yaml (Notepad is fine), or re-run setup.")
+        console.print(f"[red]Configuration problem:[/] {exc}\nFix it on the dashboard's Setup tab (double-click start.bat), or in config.yaml with Notepad.")
         return 2
     except ValueError as exc:  # a problem the user can fix (unknown symbol, not enough data, ...)
         log.warning("%s failed: %s", args.command, exc, exc_info=True)
@@ -1140,6 +1173,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
+        args = parser.parse_args([*(["-c", args.config] if args.config else []), "server"])
+    if args.command == "menu":
         try:
             return interactive_menu(parser)
         except KeyboardInterrupt:

@@ -211,7 +211,7 @@ def report_text(rep: dict[str, Any], *, compact: bool = False) -> str:
     """Plain text for Telegram (``compact``) and the command line."""
     cov = rep["coverage"]
     if not cov["total"]:
-        return "The knowledge base is empty - train it first (menu 5, 'topstep-bot train' or /train)."
+        return "The knowledge base is empty - press Retrain now on the dashboard's Knowledge tab (or /train in Telegram)."
     lines = [f"What the bot learned ({cov['total']} observations, {cov['with_context']} with market context, "
              f"{cov['with_path']} with their price path):"]
     rows = [r for r in rep["strategies"] if r["n"] >= rep["min_row"]]

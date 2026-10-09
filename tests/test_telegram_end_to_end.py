@@ -131,7 +131,7 @@ def test_telegram_commands_never_close_the_bot(workdir, caplog):
                 "service": {"daily_restart_time": "off", "check_in_time": "off"},
                 "dashboard": {"open_browser": False},
             }))
-            ctl = Controller(load_config(cfg_path), Secrets(telegram_bot_token=TOKEN, telegram_chat_id=str(CHAT)),
+            ctl = Controller(load_config(cfg_path), Secrets(username="u", api_key="k", telegram_bot_token=TOKEN, telegram_chat_id=str(CHAT)),
                              mode="paper", config_path=str(cfg_path), port=0, poll_seconds=0.2)
             ctl.telegram_api = f"http://127.0.0.1:{telegram.port}"
             controller = asyncio.create_task(ctl.run(open_browser=False))

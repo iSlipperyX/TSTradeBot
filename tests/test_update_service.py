@@ -108,7 +108,7 @@ def test_install_stops_the_bot_then_restarts_into_the_new_version(tmp_path):
         await until(lambda: ctl.bot.state == "running")
         r = (await http.post("/api/updates/install", json={"when": "now"})).json()
         assert r["ok"] and "Update installed. The bot and the dashboard restart" in r["message"]
-        assert stub.installed == [("b" * 40, None)] and not ctl.bot.running
+        assert stub.installed == [("b" * 40, ctl.config_path)] and not ctl.bot.running
         assert (await http.get("/api/status")).json()["updates"]["busy"] == "restarting"
         await until(lambda: ctl._exit.is_set())
         assert ctl.exit_code == UPDATE_EXIT_CODE
@@ -346,7 +346,7 @@ def test_menu_mentions_an_available_update_without_going_online(tmp_path, monkey
     (tmp_path / "config.yaml").write_text("mode: paper\n")
     save_state(tmp_path / "data", {"check": available().to_dict()})
     monkeypatch.setattr(cli.Prompt, "ask", lambda *a, **k: "0")
-    assert cli.main([]) == 0
+    assert cli.main(["menu"]) == 0
     out = capsys.readouterr().out
     number = [name for name, _ in cli.MENU].index("update") + 1
     assert f"Choose {number} to see what changed" in out and "Update available" in out

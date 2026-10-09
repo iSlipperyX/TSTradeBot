@@ -430,7 +430,8 @@ class Updater:
         if r.status_code in (403, 404):
             if not self.token:
                 raise TokenNeeded(f"GitHub did not show the repository {self.repo}. If it is private, the bot needs a "
-                                  "read-only GitHub token: run 'topstep-bot update --token' (menu: update) on the PC")
+                                  "read-only GitHub token: paste one on the dashboard (Settings tab, Updates) "
+                                  "or run 'start.bat update --token'")
             raise UpdateError(f"the GitHub token can't read {self.repo} (or '{self.branch}' doesn't exist). Give the "
                               "token read access to the repository's Contents: topstep-bot update --token")
         if r.status_code >= 400:
