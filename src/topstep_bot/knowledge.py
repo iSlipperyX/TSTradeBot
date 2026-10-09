@@ -22,6 +22,11 @@ training already covers, so nothing is counted twice. Real and manual trades are
 
 Time slots (Chicago time): open 08:30-10:00, midday 10:00-13:00, close 13:00-15:10.
 Regime: "volatile" when the 14-bar ATR (regular hours) is 20% or more above its multi-day average, else "calm".
+
+Each observation also keeps what the decisions don't use yet: a market snapshot at signal time
+(``ctx``, market_context.py), how far it went for and against it (MFE / MAE in R), how long it
+lasted, its costs in R and, for real fills, the slippage. insights.py turns these into the
+"What the bot learned" report. Files from before these fields existed still load.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ import json
 import logging
 import os
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -111,6 +116,27 @@ class Observation:
     usd: float | None
     source: str  # train | shadow | real | manual
     why: str = ""  # how it ended (stop hit, target hit, session end, ...)
+    ctx: dict | None = None  # market snapshot at signal time (market_context.FEATURES)
+    mfe_r: float | None = None  # furthest it went in its favour, in R (>= 0)
+    mae_r: float | None = None  # furthest it went against it, in R (<= 0)
+    bars: int | None = None  # bars it lasted
+    cost_r: float | None = None  # costs not already in ``r``, in R: fees (+ assumed slippage for ideas)
+    slip_in: float | None = None  # real fills: entry slippage in ticks (positive = worse than expected)
+    slip_out: float | None = None  # real fills: exit slippage in ticks
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Observation:
+        """Build from a saved record, ignoring fields this version doesn't know (a newer file)."""
+        return cls(**{k: v for k, v in d.items() if k in _OBS_FIELDS})
+
+    @property
+    def net_r(self) -> float:
+        """Result after the costs not already in ``r``."""
+        return self.r - (self.cost_r or 0.0)
+
+
+_OBS_FIELDS = frozenset(f.name for f in fields(Observation))
+_OPTIONAL = frozenset({"ctx", "mfe_r", "mae_r", "bars", "cost_r", "slip_in", "slip_out"})
 
 
 @dataclass
@@ -194,16 +220,16 @@ class KnowledgeBase:
         except (OSError, ValueError):
             return
         try:
-            self.obs = [Observation(**o) for o in raw.get("observations", [])]
+            self.obs = [Observation.from_dict(o) for o in raw.get("observations", [])]
             self.trained = raw.get("trained")
-        except TypeError:
+        except (TypeError, AttributeError):
             log.warning("Knowledge file %s has an unexpected format - starting fresh", self.path)
             self.obs, self.trained = [], None
 
     def save(self) -> None:
         if not self.path:
             return
-        data = {"version": 1, "trained": self.trained, "observations": [asdict(o) for o in self.obs]}
+        data = {"version": 2, "trained": self.trained, "observations": [_compact(o) for o in self.obs]}
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
@@ -356,6 +382,11 @@ class KnowledgeBase:
             lines.append(f"Your manual trades: {m['n']}, {m['wins']} won, {m['mean_r']:+.2f}R avg.")
         lines.append("c = calm, v = volatile. ✅ trades now, ❌ switched off (losing), ❔ not enough evidence yet.")
         return "\n".join(lines)
+
+
+def _compact(o: Observation) -> dict[str, Any]:
+    """An observation as saved: the optional learning fields are left out while empty (smaller file)."""
+    return {k: v for k, v in asdict(o).items() if v is not None or k not in _OPTIONAL}
 
 
 # --------------------------------------------------------------------------- training

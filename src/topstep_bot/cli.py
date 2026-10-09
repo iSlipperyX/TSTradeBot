@@ -313,6 +313,61 @@ def print_knowledge_table(summary: dict, what: str) -> None:
                   "calm/vola = volatility regime. Chicago time: open 08:30-10:00, midday 10:00-13:00, close 13:00-15:10.[/]")
 
 
+def cmd_insights(args: argparse.Namespace) -> int:
+    """What the bot has learned: results after costs, real fills against simulated ones, market conditions."""
+    from topstep_bot.insights import build_report, execution_line, export_csv, hint_line
+    from topstep_bot.knowledge import KnowledgeBase
+    from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
+
+    cfg = _load(args)
+    path = cfg.knowledge_path
+    if not path.exists():
+        console.print(f"[yellow]No knowledge base yet ({path}). Run train (menu 5) first, or let the bot run.[/]")
+        return 1
+    kb = KnowledgeBase.from_config(cfg, path)
+    if args.csv:
+        out = Path(args.csv)
+        n = export_csv(kb, out)
+        console.print(f"[green]Saved {n:,} observations to {out.resolve()}[/] - opens in Excel, one row per signal or trade.")
+        return 0
+    rep = build_report(kb, [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES], slippage_ticks=cfg.risk.slippage_ticks)
+    cov = rep["coverage"]
+    console.print(f"[bold]What the bot learned[/] on {cfg.instrument.symbol} {cfg.instrument.timeframe_minutes}m: "
+                  f"{cov['total']:,} observations ({cov['first_day']} to {cov['last_day']}), {cov['with_context']:,} with "
+                  f"market context, {cov['with_path']:,} with their price path.")
+
+    def r(v: float | None) -> str:
+        return "-" if v is None else f"[{'green' if v > 0 else 'red' if v < 0 else 'white'}]{v:+.2f}[/]"
+
+    table = Table(title="Average signal, in R (1R = what the trade risked)", show_lines=False)
+    for col, just in (("Strategy", "left"), ("Signals", "right"), ("Won", "right"), ("Before costs", "right"),
+                      ("Costs", "right"), ("After costs", "right"), ("Best point", "right"), ("Worst point", "right"),
+                      ("Losers up 1R first", "right"), ("Real trades", "right")):
+        table.add_column(col, justify=just, no_wrap=True)
+    rows = sorted([*rep["strategies"], *([rep["manual"]] if rep["manual"] else [])], key=lambda x: x["net_r"] or -9, reverse=True)
+    for row in rows:
+        gave = "-" if row["gave_back"] is None else f"{row['gave_back']:.0%} of {row['n_losers']}"
+        real = f"{r(row['real_net_r'])} ({row['real_n']})" if row["real_n"] else "-"
+        table.add_row(row["title"], str(row["n"]), f"{row['win_rate']:.0%}" if row["win_rate"] is not None else "-",
+                      r(row["gross_r"]), "-" if row["cost_r"] is None else f"{row['cost_r']:.2f}", r(row["net_r"]),
+                      r(row["mfe_r"]), r(row["mae_r"]), gave, real)
+    console.print(table)
+    console.print("[dim]Best / worst point: how far a signal went for and against it on average before it ended. "
+                  "Costs are fees plus the assumed slippage for ideas, fees for real fills (their slippage is in the prices). "
+                  "Observations recorded before costs were measured count before costs.[/]")
+    ex = execution_line(rep["execution"])
+    console.print(ex or "[dim]No real fills with slippage data yet - they appear after the bot's first trades.[/]")
+    if rep["hints"]:
+        console.print("\n[bold]Conditions worth testing[/] [dim](hints, not proven: with this many comparisons some are luck)[/]")
+        for h in rep["hints"]:
+            console.print(f"  - {hint_line(h)}")
+    else:
+        console.print("[dim]Not enough observations with market context yet to compare conditions - they build up as the bot runs "
+                      "and with each retraining.[/]")
+    console.print("[dim]Export everything to Excel: topstep-bot insights --csv knowledge.csv[/]")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """The trading bot itself, without a dashboard. Normally launched by the controller ('start')."""
     import os
@@ -785,6 +840,7 @@ MENU = [
     ("logs", "Show recent errors and where the log files are"),
     ("tune", "TUNE: test every strategy on unseen real data and pick the settings that held up"),
     ("rules", "Show Topstep's rules for your account and how the bot stays inside them"),
+    ("insights", "What the bot has LEARNED: results after costs, real fills, market conditions"),
 ]
 
 
@@ -905,6 +961,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--open", action="store_true", help="open the log folder")
     p.add_argument("--bundle", action="store_true", help="zip the logs (and config.yaml, never .env) for support")
     p.set_defaults(func=cmd_logs)
+
+    p = sub.add_parser("insights", help="what the bot has learned: results after costs, real fills, market conditions")
+    p.add_argument("--csv", metavar="FILE", help="save every observation to a CSV file (opens in Excel) instead")
+    p.set_defaults(func=cmd_insights, csv=None)
 
     p = sub.add_parser("journal", help="show recent trades and daily results")
     p.add_argument("--mode", choices=["paper", "live"])

@@ -8,7 +8,9 @@
   session end), so you can see how good each strategy's ideas really are on live data.
   Results for ideas that weren't traded are hypothetical (stop-first if a bar hits both).
 * Each result is also handed to the knowledge base (knowledge.py): this is how the bot learns
-  which strategy works at which time of day, whether it traded the signal or not.
+  which strategy works at which time of day, whether it traded the signal or not. With it go the
+  market snapshot at signal time, how far the idea went for and against it on the way (MFE / MAE)
+  and its costs, so the bot can later find out *when* a strategy works, not only *whether*.
 """
 
 from __future__ import annotations
@@ -59,10 +61,27 @@ class Recommendation:
     closed_at: datetime | None = None
     hypothetical: bool = True
     initial_stop: float | None = field(default=None)
+    context: dict = field(default_factory=dict)  # market snapshot at signal time (market_context.py)
+    mfe_r: float | None = None  # furthest it went in its favour so far, in R
+    mae_r: float | None = None  # furthest it went against it so far, in R
+    bars: int = 0  # bars followed
+    facts: dict = field(default_factory=dict)  # a real trade's TradingCore.trade_facts, once it closes
 
     def __post_init__(self) -> None:
         if self.initial_stop is None:
             self.initial_stop = self.stop
+
+    def note_path(self, favourable: float | None, adverse: float | None) -> None:
+        """Extend the MFE / MAE with prices the idea reached (a hypothetical outcome's path)."""
+        risk = abs(self.entry - self.initial_stop) if self.initial_stop is not None else 0.0
+        if not risk:
+            return
+        mfe, mae = self.mfe_r or 0.0, self.mae_r or 0.0  # both start at the entry price
+        if favourable is not None:
+            mfe = max(mfe, (favourable - self.entry) * self.side.sign / risk)
+        if adverse is not None:
+            mae = min(mae, (adverse - self.entry) * self.side.sign / risk)
+        self.mfe_r, self.mae_r = round(mfe, 2), round(mae, 2)
 
     @property
     def is_open(self) -> bool:
@@ -191,6 +210,7 @@ class RecommendationBook:
             id=f"R{next(self._ids)}", created=close_time, strategy=strat.name, title=strat.title, active=False,
             side=sig.side, entry=entry, stop=stop, target=target, size=size, risk_usd=risk,
             reason=sig.reason, status="idea", note=note, slot=core.slot(close_time), regime=core.regime.value,
+            context=core.market_snapshot(entry, close_time),
         )
         self._store(rec, new=True)
 
@@ -215,6 +235,7 @@ class RecommendationBook:
             size=plan.size if plan else 0, risk_usd=plan.planned_risk if plan else None,
             reason=sig.reason, status=status, note=note, trade_tag=tag, hypothetical=status != "taken",
             slot=sig.meta.get("slot") or self.core.slot(ctx.bar_close), regime=sig.meta.get("regime") or self.core.regime.value,
+            context=self.core.market_snapshot(entry_ref, ctx.bar_close),
         )
         self._store(rec, new=True)
 
@@ -225,6 +246,8 @@ class RecommendationBook:
                 rec.size = t.filled_size or rec.size
                 if t.entry_price:
                     rec.entry = t.entry_price
+                rec.facts = self.core.trade_facts(t)
+                rec.mfe_r, rec.mae_r = rec.facts["mfe_r"], rec.facts["mae_r"]
                 self._close(rec, t.exit_price or rec.entry, t.exit_reason, outcome=t.net_pnl)
                 return
 
@@ -250,12 +273,20 @@ class RecommendationBook:
             if rec.status == "idea":
                 rec.status = "tracking"
             long = rec.side == OrderSide.BUY
+            favourable, adverse = (bar.high, bar.low) if long else (bar.low, bar.high)
+            rec.bars += 1
+            # Stop first when a bar touches both (as the outcome itself): the path then never
+            # counts the favourable extreme of a bar that stopped the idea out.
             if rec.stop is not None and ((long and bar.low <= rec.stop) or (not long and bar.high >= rec.stop)):
+                rec.note_path(None, rec.stop)
                 self._close(rec, rec.stop, "stop hit")
             elif rec.target is not None and ((long and bar.high >= rec.target) or (not long and bar.low <= rec.target)):
+                rec.note_path(rec.target, adverse)
                 self._close(rec, rec.target, "target hit")
-            elif session_over:
-                self._close(rec, bar.close, "session end")
+            else:
+                rec.note_path(favourable, adverse)
+                if session_over:
+                    self._close(rec, bar.close, "session end")
 
     def _close(self, rec: Recommendation, price: float, why: str, outcome: float | None = None) -> None:
         c = self.core.contract
@@ -283,12 +314,26 @@ class RecommendationBook:
         if kb is None or rec.outcome_r is None or any(k in why for k in UNINFORMATIVE_EXITS):
             return
         local = self.core.schedule.local(rec.created)
+        if rec.hypothetical:
+            facts = {"ctx": rec.context or None, "mfe_r": rec.mfe_r, "mae_r": rec.mae_r, "bars": rec.bars,
+                     "cost_r": self._idea_cost_r(rec)}
+        else:
+            facts = {**rec.facts, "ctx": rec.context or rec.facts.get("ctx")}
         kb.record(Observation(
             day=self.core.schedule.trading_day(rec.created).isoformat(), time=local.strftime("%H:%M"),
             strategy=rec.strategy, side=rec.side.label, slot=rec.slot or self.core.slot(rec.created),
             regime=rec.regime or "calm", r=rec.outcome_r, usd=rec.outcome_usd,
-            source="shadow" if rec.hypothetical else "real", why=why,
+            source="shadow" if rec.hypothetical else "real", why=why, **facts,
         ), save=not self.quiet)
+
+    def _idea_cost_r(self, rec: Recommendation) -> float | None:
+        """What an idea would have cost in R if traded: fees plus the assumed slippage on both fills."""
+        c = self.core.contract
+        risk = abs(rec.entry - rec.initial_stop) if rec.initial_stop is not None else 0.0
+        if not risk or not c.point_value:
+            return None
+        points = self.core.orders.fees_round_turn / c.point_value + 2 * self.core.cfg.risk.slippage_ticks * c.tick_size
+        return round(points / risk, 3)
 
     # ------------------------------------------------------------- output
 

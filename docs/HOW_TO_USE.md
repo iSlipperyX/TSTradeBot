@@ -222,6 +222,7 @@ Double-click `start.bat` (or run `topstep-bot`):
 | 14 | logs | Shows recent errors and where the log files are ([section 22](#22-logs-finding-out-what-happened)) |
 | 15 | tune | **Tuning:** tests every strategy and its settings on real data they never saw and can save what held up ([section 18](#18-tuning-test-strategy-settings-on-unseen-data)) |
 | 16 | rules | Shows Topstep's rules for **your** account (limits in dollars and contracts) and what the bot does about each one |
+| 17 | insights | **What the bot has learned:** each strategy's results after costs, real fills against simulated ones, and the market conditions it did best and worst in ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 Above the list, the menu shows a one-line summary of your setup (account, symbol, strategy, mode).
 If `config.yaml` has a mistake, that line says what and where.
@@ -895,7 +896,7 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/restart` | Restarts the bot (flattens first) — e.g. after an error. Asks for confirmation. |
 | `/startbot` | Starts the bot if it's stopped or crashed. Asks for confirmation. |
 | `/ideas` | Recommended trades with **Take** and **½ size** buttons ([section 16](#16-recommended-trades)) |
-| `/knowledge` | What the bot has learned: per strategy and time of day, ✅ trades now / ❌ switched off / ❔ unproven ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
+| `/knowledge` | What the bot has learned: per strategy and time of day, ✅ trades now / ❌ switched off / ❔ unproven, then results after costs, real fill slippage and conditions worth testing ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
 | `/train` | Retrain the knowledge base on recent history now (the bot keeps trading meanwhile) |
 | `/settings` | Every setting you can change, with current values and limits |
 | `/set <name> <value>` | Change a setting, e.g. `/set risk 150`, `/set dailyloss 400`, `/set strategy noise_breakout`, `/set news off` ([section 19](#19-changing-settings-from-the-dashboard-or-telegram)) |
@@ -1025,6 +1026,40 @@ Everything is visible:
   strategy took or skipped and why.
 - The Overview's Strategy panel shows the slot, the regime, the sub-strategy managing an open trade,
   and the last signal decision.
+
+### What the bot learned: results after costs, real fills and conditions
+
+Besides its result, every observation keeps what the bot may want to know later. None of this
+changes a trading decision yet; it is recorded now because a real fill can never be recorded again.
+
+| Recorded | What it is |
+|---|---|
+| **Market snapshot** | At the moment of the signal: volatility, minutes since the open, the opening gap, the move since the open, how much of a normal day's range is used, the place in today's range, the distance from VWAP, the trend, volume and the day of the week. Distances are in *average day ranges* (the last 10 days' regular-hours high-low), so they compare across quiet and busy days. |
+| **Price path** | How far it went in its favour (best point, *MFE*) and against it (worst point, *MAE*) before it ended, in R, and how many bars it lasted |
+| **Costs** | Fees in R, plus for ideas that weren't traded the slippage your backtests assume (`risk.slippage_ticks` per fill). Real fills already include their slippage. |
+| **Fill quality** | For real and manual trades: how many ticks the entry and the exit slipped against the price the bot expected (positive = a worse price) |
+
+The report built from it:
+
+- **Dashboard → Knowledge tab → What the bot has learned:** each strategy's average result before
+  and after costs, its best and worst points, the share of losers that were 1R in profit first (a
+  sign a breakeven stop or target might help), and real trades against simulated ones. Below that,
+  real fill slippage against what backtests assume, *conditions worth testing*, and a **Compare by**
+  table that splits every strategy's results by one measurement (low / middle / high, or by weekday).
+  **Download CSV** saves every observation for Excel.
+- **Telegram:** `/knowledge` ends with a short version.
+- **Menu 17** or **`topstep-bot insights`** prints it; `topstep-bot insights --csv knowledge.csv` exports.
+
+Read the conditions as **hints, not rules.** The bot compares 7 strategies on 10 measurements, so
+some differences are luck. A hint is only listed when both sides have at least 15 observations and
+the result flips from losing to winning. A condition earns a place in the bot's decisions only after
+it holds up on data it never saw, which is the planned next step.
+Directional measurements are turned around for shorts, so "high" always means "further in the
+trade's direction". If real fills slip more than `risk.slippage_ticks`, raise it so backtests
+stay honest.
+
+Knowledge files and journals from older versions keep working; their older observations simply
+have no snapshot, path or costs (and count before costs).
 
 ### Honest expectations
 
@@ -1316,7 +1351,7 @@ your phone; if it doesn't arrive, look at the PC.
 then. Act on any alert.
 
 **After 15:10 CT:** confirm the position is flat. Review the day with menu **9 (journal)** and the
-Knowledge tab.
+Knowledge tab (or menu **17**, insights).
 
 **Weekly:** compare the bot's MLL floor and position limit with your TopstepX dashboard and Risk
 Settings (Topstep changes product limits with market conditions); look at the Knowledge tab to see
@@ -1493,6 +1528,7 @@ different config file.
 | `topstep-bot go-live [--days N] [--skip-backtest]` | Preflight, then start live trading (24/7 or this session) |
 | `topstep-bot autostart on\|off\|status` | Start everything when you sign in to Windows |
 | `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
+| `topstep-bot insights [--csv FILE]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat tune --days 730`.
 
@@ -1509,7 +1545,7 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat tune
 | `reports/*.html` | Backtest and tuning reports (tuning also writes a `.json` with every detail) |
 | `logs/` | Log files — see [section 22](#22-logs-finding-out-what-happened) |
 | `data/remote_settings.json` | Settings changed from the dashboard/Telegram (delete it, or `/reset`, to undo) |
-| `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when (delete it to start learning from scratch) |
+| `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when, with each observation's market snapshot, price path and costs (delete it to start learning from scratch) |
 | `data/news_cache.json` | This week's economic calendar |
 | `data/controller.json` | The mode you chose last (Paper/Live) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |

@@ -24,6 +24,7 @@ from topstep_bot.indicators import ATR
 from topstep_bot.journal import Journal
 from topstep_bot.knowledge import MANUAL, RegimeTracker, slot_for
 from topstep_bot.manual import ManualTrading
+from topstep_bot.market_context import MarketContext
 from topstep_bot.models import Account, Bar, Contract, OrderSide, Signal
 from topstep_bot.notify import Notifier
 from topstep_bot.risk.manager import RiskManager
@@ -118,11 +119,13 @@ class TradingCore:
         self._skip_note: tuple[date | None, str] | None = None
         self.atr = ATR(14)
         self.regime = RegimeTracker()  # calm / volatile, for the knowledge base
+        self.market = MarketContext()  # the market snapshot saved with every observation
         self.recommender: RecommendationBook | None = None  # trade ideas for the dashboard (+ what the bot learns from)
         self.knowledge: KnowledgeBase | None = None  # what has worked when; drives the adaptive strategy
         self.remote: RemoteControl | None = None  # settings/trades from the dashboard and Telegram
         self.manual = ManualTrading(self)  # trades you open yourself from the dashboard's trade ticket
         self.setups = SetupTracker(self)  # the trades every strategy is building toward (dashboard)
+        self._insights: tuple[tuple, dict] | None = None  # cached "What the bot learned" report
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
@@ -142,6 +145,32 @@ class TradingCore:
     def slot(self, ts: datetime | None = None) -> str:
         """Time-of-day slot (open / midday / close / off) of ``ts`` or now."""
         return slot_for(self.schedule.local(ts or self.clock()).time())
+
+    def market_snapshot(self, price: float | None = None, ts: datetime | None = None) -> dict[str, float]:
+        """What the market looks like at ``price`` (default: the last price) and ``ts`` (default: now)."""
+        if price is None:
+            price = self.last_price if self.last_price is not None else (self.last_bar.close if self.last_bar else None)
+        if price is None:
+            return {}
+        return self.market.snapshot(price, self.schedule.local(ts or self.clock()), self.regime.ratio,
+                                    self.strategy.rth_open)
+
+    def trade_facts(self, t: ManagedTrade) -> dict:
+        """What a closed trade teaches beyond its result: price path, costs and fill quality.
+
+        Keys match the knowledge base's Observation fields. ``cost_r`` is the fees in R: the
+        slippage of a real fill is already in its prices (and in ``slip_in`` / ``slip_out``).
+        """
+        mfe, mae = t.excursion_r()
+        slip_in, slip_out = t.slippage_ticks(self.contract.tick_size)
+        bars = None
+        if t.opened_at and t.closed_at:
+            bars = max(0, round((t.closed_at - t.opened_at) / self.tf))
+        cost_r = None
+        if t.risk_points and t.filled_size:
+            cost_r = round(t.fees / t.filled_size / self.contract.point_value / t.risk_points, 3)
+        return {"ctx": dict(t.context) or None, "mfe_r": mfe, "mae_r": mae, "bars": bars, "cost_r": cost_r,
+                "slip_in": slip_in, "slip_out": slip_out}
 
     # ------------------------------------------------------------------ events
 
@@ -228,6 +257,10 @@ class TradingCore:
         self.atr.update(bar.high, bar.low, bar.close)
         rth = self.schedule.is_rth(bar.ts, self.strategy.rth_open, self.strategy.rth_close)
         self.regime.update(bar.high, bar.low, bar.close, rth=rth)
+        self.market.update(bar, self.schedule.trading_day(bar.ts), rth)
+        t = self.orders.trade
+        if t is not None and t.opened_at is not None and bar.ts >= t.opened_at:
+            t.note_prices(bar.high, bar.low)
 
     def warmup_bar(self, bar: Bar) -> None:
         """Feed history to the strategy so indicators are ready; never trades."""
@@ -321,6 +354,8 @@ class TradingCore:
             return
         trade = await self.orders.enter(side, plan.size, plan.stop, plan.target, sig.reason, ref_price=entry_ref,
                                         limit_price=plan.limit, planned_risk=plan.planned_risk)
+        if trade is not None:
+            trade.context = self.market_snapshot(entry_ref, ctx.bar_close)
         if self.recommender:
             self.recommender.record_active(sig, ctx, entry_ref, plan, "taken" if trade else "skipped",
                                            "" if trade else "order could not be placed", tag=trade.tag if trade else None)
@@ -400,6 +435,8 @@ class TradingCore:
         self.orders.last_price = price
         if self.orders.is_flat:
             return
+        if self.orders.trade is not None:
+            self.orders.trade.note_prices(price, price)
         open_pnl = self.orders.open_pnl(price)
         self._day_min_equity = min(self._day_min_equity, self.balance + open_pnl)
         reason = self.risk.check_open_risk(self.balance, open_pnl)
@@ -456,7 +493,7 @@ class TradingCore:
             self.manual.trade_closed(t)
         self.closed_trades.append(t)
         if self.journal and self.current_day:
-            self.journal.record_trade(t, self.current_day, self.account_label, self.contract.name)
+            self.journal.record_trade(t, self.current_day, self.account_label, self.contract.name, self.trade_facts(t))
         r = t.r_multiple()
         self.event(
             "info",
@@ -477,11 +514,27 @@ class TradingCore:
     def knowledge_text(self) -> str:
         if self.knowledge is None:
             return "The knowledge base is turned off (knowledge.enabled: false)."
+        from topstep_bot.insights import report_text
         from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
 
         names = [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES]
-        return self.knowledge.text(names, today=self.schedule.trading_day(self.clock()), slot=self.slot(),
-                                   regime=self.regime.value)
+        table = self.knowledge.text(names, today=self.schedule.trading_day(self.clock()), slot=self.slot(),
+                                    regime=self.regime.value)
+        report = self.insights()
+        return table if not report or not report["coverage"]["total"] else table + "\n\n" + report_text(report, compact=True)
+
+    def insights(self) -> dict | None:
+        """The "What the bot learned" report (insights.py), rebuilt only when the knowledge base changes."""
+        if self.knowledge is None:
+            return None
+        key = (id(self.knowledge), self.knowledge.updated, len(self.knowledge.obs))
+        if self._insights is None or self._insights[0] != key:
+            from topstep_bot.insights import build_report
+            from topstep_bot.strategies import BASE_STRATEGIES, STRATEGIES
+
+            names = [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES]
+            self._insights = (key, build_report(self.knowledge, names, slippage_ticks=self.cfg.risk.slippage_ticks))
+        return self._insights[1]
 
     def _trade_view(self, t: ManagedTrade) -> dict:
         """The open trade plus where it stands now (open P&L in dollars and R)."""
