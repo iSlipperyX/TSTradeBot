@@ -17,7 +17,9 @@ Security
     Mini App (initData). It is signed with your bot's token, so the PC can check that Telegram issued
     it, for your bot, recently, and for your own Telegram account (TELEGRAM_CHAT_ID, or
     telegram.allowed_user_ids). Anyone else - including someone who learns the address - is refused.
-  * A sign-in gives a short-lived session token that this page sends with every request.
+  * A sign-in gives a short-lived session token. The sign-in page hands it to the dashboard page
+    (/app) in the address fragment, which never leaves the phone, and the dashboard sends it with
+    every request. The dashboard page itself holds no token or data, so anyone may load it.
   * The phone link serves only the dashboard's own routes (an allowlist), and it can't switch the
     bot to LIVE mode or turn phone access on: those stay on the PC. It can turn phone access off.
   * Cloudflare carries the traffic (its HTTPS ends at Cloudflare), like any website behind it.
@@ -86,8 +88,10 @@ REMOTE_ROUTES = {
     ("POST", "/api/updates/install"),
     ("POST", "/api/updates/cancel"),
     ("POST", "/api/phone/off"),
+    ("POST", "/api/page-error"),  # the page tells the PC's log when its own script fails
 }
-OPEN_ROUTES = {("GET", "/"), ("POST", "/auth")}  # the sign-in page and the sign-in itself
+# The sign-in page, the sign-in itself, and the dashboard page (it holds no token or data: its every request signs in)
+OPEN_ROUTES = {("GET", "/"), ("POST", "/auth"), ("GET", "/app")}
 # Telegram Web shows Mini Apps in a frame; the phone apps use their own browser view.
 HEADERS = {
     "Content-Security-Policy": "frame-ancestors https://web.telegram.org https://*.telegram.org",
@@ -332,7 +336,8 @@ class PhoneAccess:
         routes = [r for r in ctl.server.routes if (r[0], r[1]) in REMOTE_ROUTES]
         self.server = HttpServer(
             "127.0.0.1", 0,
-            [("GET", "/", lambda r: html_response(SIGN_IN_PAGE)), ("POST", "/auth", self._sign_in), *routes],
+            [("GET", "/", lambda r: html_response(SIGN_IN_PAGE)), ("POST", "/auth", self._sign_in),
+             ("GET", "/app", lambda r: html_response(self.ctl.page("", view="phone"))), *routes],
             name="phone link", allowed_hosts=self._hosts, authorize=self._authorize, remote=True, headers=HEADERS,
         )
         self._serving = False
@@ -404,7 +409,7 @@ class PhoneAccess:
         while len(self.sessions) > MAX_SESSIONS:
             del self.sessions[next(iter(self.sessions))]
         log.info("Phone link: dashboard opened by Telegram user %s", user["id"])
-        return {"token": token, "page": self.ctl.page(token, view="phone")}
+        return {"token": token}
 
     # ---------------------------------------------------------------- switching it on and off
 
@@ -579,7 +584,7 @@ SIGN_IN_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Topstep Bot</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="icon" href="data:,">
 <style>
 :root { color-scheme: light dark; --bg:#f5f5f3; --text:#111110; --muted:#6f6e69; --surface:#fff; --border:#e4e3df; --crit:#d03b3b; }
 @media (prefers-color-scheme: dark) { :root { --bg:#111110; --text:#f5f5f3; --muted:#a3a29a; --surface:#1a1a19; --border:#2e2e2b; --crit:#ff8a8a; } }
@@ -590,26 +595,56 @@ body { margin:0; min-height:100vh; display:grid; place-items:center; background:
 .msg { color:var(--muted); margin:0; } .msg.bad { color:var(--crit); }
 .spin { width:22px; height:22px; margin:14px auto 0; border:3px solid var(--border); border-top-color:var(--muted);
   border-radius:50%; animation:s 0.8s linear infinite; } @keyframes s { to { transform:rotate(360deg); } }
+button { margin-top:14px; font:inherit; font-weight:600; padding:8px 16px; border-radius:9px; border:1px solid var(--border);
+  background:var(--surface); color:var(--text); }
 </style>
 </head>
 <body>
-<div class="card"><div class="brand">Topstep Bot</div><p class="msg" id="msg">Signing you in through Telegram…</p><div class="spin" id="spin"></div></div>
+<div class="card"><div class="brand">Topstep Bot</div><p class="msg" id="msg">Signing you in through Telegram…</p>
+<div class="spin" id="spin"></div><button id="again" hidden onclick="location.reload()">Try again</button></div>
 <script>
-function fail(text) { const m = document.getElementById("msg"); m.textContent = text; m.className = "msg bad";
-  document.getElementById("spin").hidden = true; }
+// Signs in with the data Telegram gives a Mini App, then opens the dashboard (/app) with the session token
+// in the address fragment, which never leaves the phone. Telegram puts its signed sign-in data in the address
+// too; it is kept for this visit so that a reload (or an ended session) signs in again by itself.
+function fail(text, retry) {
+  const m = document.getElementById("msg"); m.textContent = text; m.className = "msg bad";
+  document.getElementById("spin").hidden = true; document.getElementById("again").hidden = !retry;
+}
+function kept(key, value) {
+  try { if (value) sessionStorage.setItem(key, value); else value = sessionStorage.getItem(key); } catch (e) { /* no storage */ }
+  return value || "";
+}
+// Telegram's helper script only makes the page full height (and lets it close itself): never wait on it for long
+function telegram(wait) {
+  return new Promise(done => {
+    if (window.Telegram && window.Telegram.WebApp) { done(window.Telegram.WebApp); return; }
+    const s = document.createElement("script");
+    s.src = "https://telegram.org/js/telegram-web-app.js";
+    s.onload = () => done((window.Telegram && window.Telegram.WebApp) || null);
+    s.onerror = () => done(null);
+    setTimeout(() => done(null), wait);
+    document.head.appendChild(s);
+  });
+}
 (async () => {
-  const tg = window.Telegram && window.Telegram.WebApp;
-  let initData = tg && tg.initData;
-  if (!initData) initData = new URLSearchParams(location.hash.slice(1)).get("tgWebAppData") || "";
+  const tg = telegram(3000);
+  let initData = kept("tsb-init", new URLSearchParams(location.hash.slice(1)).get("tgWebAppData"));
+  if (!initData) { const app = await tg; initData = (app && app.initData) || ""; }
   if (!initData) { fail("For your safety this dashboard only opens inside Telegram. Send /dashboard to your Topstep bot and tap Open dashboard."); return; }
-  if (tg) { tg.ready(); tg.expand(); }
-  let d;
+  tg.then(app => { if (app) { app.ready(); app.expand(); } });
+  const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 20000);
+  let d, status;
   try {
-    const r = await fetch("/auth", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({init_data:initData})});
-    d = await r.json();
-  } catch (e) { fail("Can't reach the bot. Is the PC on and the Topstep Bot window open? Send /dashboard in Telegram for a fresh link."); return; }
-  if (!d.ok) { fail(d.message || "Sign-in refused."); return; }
-  document.open(); document.write(d.page); document.close();
+    const r = await fetch("/auth", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({init_data:initData}), signal:stop.signal});
+    status = r.status; d = await r.json();
+  } catch (e) {
+    fail("Can't reach the bot. Is the PC on and the Topstep Bot window open? Send /dashboard in Telegram for a fresh link.", true);
+    return;
+  } finally { clearTimeout(timer); }
+  if (!d.ok) { fail(d.message || "Sign-in refused.", status === 429); return; }
+  kept("tsb-token", d.token);
+  location.replace("/app#k=" + encodeURIComponent(d.token));
 })();
 </script>
 </body>

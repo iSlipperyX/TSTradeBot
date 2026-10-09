@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Topstep Bot</title>
+<link rel="icon" href="data:,">
 <style>
 :root { color-scheme: light; --bg:#f5f5f3; --surface:#ffffff; --surface2:#f3f2ef; --border:#e4e3df; --text:#111110; --text2:#55544f;
   --muted:#8a8984; --track:#ecebe7; --accent:#2a78d6; --good:#0ca30c; --warn:#d99a00; --crit:#d03b3b;
@@ -199,6 +200,8 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
 .clock .holiday { grid-column:1 / -1; font-size:12px; color:var(--warn); padding:2px 2px 0; }
 .offline { display:none; margin-top:12px; background:var(--crit); color:#fff; padding:10px 14px; border-radius:10px; font-weight:600; }
 .offline.updating { background:var(--accent); }
+.pageerror { margin-top:12px; background:var(--warnbg); border:1px solid var(--warn); padding:10px 14px; border-radius:10px; font-size:13.5px; }
+.pageerror button { margin-left:6px; }
 /* updates */
 .changes { list-style:none; margin:10px 0 0; padding:0; font-size:13px; }
 .changes li { padding:6px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:baseline; }
@@ -278,6 +281,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
     <button class="small" id="theme" title="Light / dark / follow your system">◐</button>
   </div>
   <div class="offline" id="offline">The dashboard lost contact with the controller. Is the Topstep Bot window still open on your PC?</div>
+  <div class="pageerror" id="pageerror" hidden><span id="pageerror-text"></span> <button class="small" onclick="location.reload()">Reload</button></div>
   <div class="clock" id="clock" aria-label="Market clock"></div>
   <div class="banner" id="banner" hidden></div>
   <div class="banner ok" id="updbanner" hidden></div>
@@ -644,14 +648,68 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
   <div class="row"><span class="spacer"></span><button id="modal-no">Cancel</button><button class="primary" id="modal-yes">OK</button></div></div></div>
 
 <script>
-const TOKEN = "__TOKEN__";
+// If the page's own script fails, say so on the page and in the PC's log (Logs tab) instead of leaving it empty:
+// a phone has no console to look in. A separate script, so it works even when the main one can't run at all.
+const PAGE_ERRORS = new Set(), reportFetch = window.fetch.bind(window);  // not the main script's fetch: no sign-in redirects
+function pageError(what) {
+  const text = String(what || "unknown problem").slice(0, 300);
+  const box = document.getElementById("pageerror");
+  if (box) {
+    document.getElementById("pageerror-text").textContent = `Part of the dashboard could not be shown (${text}). ` +
+      "The bot itself is not affected. Reload; if it keeps happening, the Logs tab has the details.";
+    box.hidden = false;
+  }
+  if (PAGE_ERRORS.has(text) || PAGE_ERRORS.size >= 5) return;
+  PAGE_ERRORS.add(text);
+  let token = "__TOKEN__";  // the PC's; on the phone the session token, once the main script has it
+  try { token = token || TOKEN; } catch (e) { /* the main script didn't get that far */ }
+  try { token = token || sessionStorage.getItem("tsb-token") || ""; } catch (e) { /* no storage */ }
+  reportFetch("/api/page-error", {method: "POST", headers: {"X-Token": token, "Content-Type": "application/json"},
+    body: JSON.stringify({message: text, browser: navigator.userAgent})}).catch(() => {});
+}
+window.addEventListener("error", e => {
+  if (!e.lineno || e.message === "Script error.") return;  // another site's script (Telegram's): nothing to go on
+  pageError(`${e.message} - line ${e.lineno}`);
+});
+window.addEventListener("unhandledrejection", e => {
+  const r = e.reason || {};
+  if (r.name === "AbortError" || (r.name === "TypeError" && /fetch|load failed|network/i.test(r.message))) return;  // offline: its own banner
+  pageError(r.message || String(e.reason));
+});
+</script>
+<script>
 const PHONE = "__VIEW__" === "phone";  // opened on the phone through Telegram (phone_access.py)
-// Every request carries the token: the phone link checks it on reads too. A phone session that ended
-// (12 hours, or phone access restarted) signs in again through Telegram by reloading.
+// The PC's page comes with its token. The phone's page (/app) holds none: the phone sign-in page hands the
+// session token over in the address fragment, which is never sent anywhere, and it is kept for this visit.
+const TOKEN = PHONE ? phoneToken() : "__TOKEN__";
+let LEAVING = false, REFRESH = null;
+function phoneToken() {
+  const m = /^#k=([\w-]+)/.exec(location.hash);
+  let t = m ? m[1] : "";
+  try { if (t) sessionStorage.setItem("tsb-token", t); else t = sessionStorage.getItem("tsb-token") || ""; } catch (e) { /* no storage */ }
+  if (m) history.replaceState(null, "", location.pathname);
+  return t;
+}
+// A phone session that ended (12 hours, or the PC restarted) signs in again through Telegram by itself. If that
+// keeps happening within moments, something is wrong with signing in: say so instead of going round in circles.
+function signInAgain() {
+  if (LEAVING) return;
+  LEAVING = true;
+  let again = true;
+  try {
+    const recent = JSON.parse(sessionStorage.getItem("tsb-signins") || "[]").filter(t => Date.now() - t < 120000);
+    again = recent.length < 3;
+    sessionStorage.setItem("tsb-signins", JSON.stringify([...recent, Date.now()]));
+    sessionStorage.removeItem("tsb-token");
+  } catch (e) { again = !!TOKEN; }  // no storage: only a page that had a token goes back to sign in
+  if (again) location.replace("/");
+  else phoneEnded("Signing in from your phone didn't work just now.", "Close this and tap Open dashboard in Telegram again. If it keeps happening, restart the Topstep Bot window on the PC.");
+}
+// Every request carries the token: the phone link checks it on reads too
 const fetchBase = window.fetch.bind(window);
 window.fetch = async (url, opts = {}) => {
   const r = await fetchBase(url, {...opts, headers: {"X-Token": TOKEN, ...(opts.headers || {})}});
-  if (PHONE && r.status === 401) location.reload();
+  if (PHONE && r.status === 401) signInAgain();
   return r;
 };
 const $ = id => document.getElementById(id);
@@ -752,11 +810,12 @@ $("ph-off").onclick = async () => {
   if (PHONE && d.ok !== false) { phoneEnded(d.message); return; }
   if (d.message) toast(d.message, d.ok === false); refresh();
 };
-function phoneEnded(message) {
-  clearInterval(REFRESH);
+function phoneEnded(message, hint) {
+  LEAVING = true; clearInterval(REFRESH);
   document.querySelector("main").innerHTML = `<div class="panel ended"><div class="brand">Topstep Bot</div>
-    <p>${esc(message || "Phone access is off.")}</p><p class="hint">Turn it on again on the PC (Settings tab) or send /dashboard to your bot in Telegram.</p></div>`;
-  const tg = window.Telegram && window.Telegram.WebApp; if (tg) setTimeout(() => tg.close(), 2500);
+    <p>${esc(message || "Phone access is off.")}</p><p class="hint">${esc(hint || "Turn it on again on the PC (Settings tab) or send /dashboard to your bot in Telegram.")}</p></div>`;
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg && !hint) setTimeout(() => tg.close(), 2500);  // phone access off: nothing more to do here
 }
 $("upd-token-save").onclick = async () => {
   const d = await run("setup/github_token", {token: $("upd-token").value.trim()});
@@ -843,6 +902,7 @@ function fmtLeft(ms) {
 }
 function renderClock(c) { if (!c) return; CLOCK = c; CLOCK_OFFSET = Date.parse(c.now) - Date.now(); tickClock(); }
 function tickClock() {
+  if (LEAVING) return;  // off to sign in again, or the page was replaced by a message
   const c = CLOCK; if (!c) return;
   const now = Date.now() + CLOCK_OFFSET;
   const state = `<div class="c" title="Chicago time"><div class="cl"><span class="dot" style="background:${css(c.market_open ? "--good" : "--muted")}"></span>
@@ -1603,32 +1663,58 @@ async function loadLogs() {
   } catch (e) { /* offline banner covers it */ }
 }
 
+// Each part is drawn on its own: one that fails is reported (pageError) and can't leave the rest of the page empty
+function shown(part, draw) { try { draw(); } catch (e) { pageError(`${part}: ${(e && e.message) || e}`); } }
 function render(s) {
   const first = S === null;
   S = s;
-  renderTop(s); renderUpdates(s.updates); renderPhone(s.phone, s.viewer); renderClock(s.clock); renderOverview(s.bot); renderSetups(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
+  shown("top bar", () => renderTop(s)); shown("updates", () => renderUpdates(s.updates));
+  shown("phone access", () => renderPhone(s.phone, s.viewer)); shown("market clock", () => renderClock(s.clock));
+  shown("overview", () => renderOverview(s.bot)); shown("setups", () => renderSetups(s.bot)); shown("ideas", () => renderIdeas(s.bot));
+  shown("knowledge", () => renderKnowledge(s.bot)); shown("settings", () => renderSettings(s.bot)); shown("events", () => renderLogs(s));
   if (s.setup) $("setupflag").hidden = s.setup.configured && !s.setup.error;
   if (first && s.setup && !s.setup.configured && !ASKED_TAB && !PHONE) showTab("setup");  // first run: straight to setup
   if (tabOpen("knowledge")) loadInsights(false);
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
 }
+let REFRESHING = false;
 async function refresh() {
+  if (REFRESHING || LEAVING) return;  // one at a time: over the phone link an answer can take a few seconds
+  REFRESHING = true;
+  let s;
   try {
-    const r = await fetch("/api/status", {cache:"no-store"}), s = await r.json();
-    if (INSTANCE && s.instance && s.instance !== INSTANCE) { location.reload(); return; }  // restarted (e.g. after an update)
-    INSTANCE = s.instance || INSTANCE;
-    render(s); $("offline").style.display = "none";
+    const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 15000);
+    try {
+      const r = await fetch("/api/status", {cache:"no-store", signal:stop.signal});
+      if (!r.ok) throw new Error(`the controller answered ${r.status}`);
+      s = await r.json();
+    } finally { clearTimeout(timer); }
   } catch (e) {
-    const o = $("offline"); o.style.display = "block"; o.classList.toggle("updating", UPDATING);
-    o.textContent = UPDATING ? "Restarting with the new version… this page reloads by itself when it is back." : OFFLINE_TEXT;
-  }
+    if (!LEAVING) {
+      const o = $("offline"); o.style.display = "block"; o.classList.toggle("updating", UPDATING);
+      o.textContent = UPDATING ? "Restarting with the new version… this page reloads by itself when it is back." : OFFLINE_TEXT;
+    }
+    return;
+  } finally { REFRESHING = false; }
+  if (INSTANCE && s.instance && s.instance !== INSTANCE) { location.reload(); return; }  // restarted (e.g. after an update)
+  INSTANCE = s.instance || INSTANCE;
+  $("offline").style.display = "none";
+  render(s);
 }
 const ASKED_TAB = location.hash.slice(1);  // a link to a tab wins over the first-run jump to Setup
 showTab(ASKED_TAB || store.get("tsb-tab") || "overview");
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => store.set("tsb-tab", b.dataset.tab)));
-if (PHONE) { $("m-live").title = "LIVE can only be switched on at the PC";
-  document.querySelector('.tabs [data-tab="setup"]').hidden = true; }
-refresh(); const REFRESH = setInterval(refresh, 2000);
+if (PHONE) {
+  $("m-live").title = "LIVE can only be switched on at the PC";
+  document.querySelector('.tabs [data-tab="setup"]').hidden = true;
+  // Telegram's helper: full height, and closing the page when phone access is turned off
+  const tg = document.createElement("script");
+  tg.src = "https://telegram.org/js/telegram-web-app.js"; tg.async = true;
+  tg.onload = () => { const app = window.Telegram && window.Telegram.WebApp; if (app) { app.ready(); app.expand(); } };
+  document.head.appendChild(tg);
+  if (!TOKEN) signInAgain();
+}
+if (!LEAVING) { refresh(); REFRESH = setInterval(refresh, 2000); }
 setInterval(() => { if (tabOpen("logs")) loadLogs(); }, 10000);
 </script>
 </body>

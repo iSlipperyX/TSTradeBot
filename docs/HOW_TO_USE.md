@@ -1798,6 +1798,13 @@ bot in Telegram"** means the address was opened in a normal browser: use the but
 **Phone access: "Lost contact with your PC".** The PC is off or offline, the Topstep Bot window was
 closed, or the link restarted with a new address: send `/dashboard` for a fresh button.
 
+**Phone access: the dashboard is empty, or says "Part of the dashboard could not be shown".** The
+bot keeps trading either way: only the page is affected. Install the latest update (Settings →
+Updates); older versions could open an empty dashboard on some phones. The notice names the part
+that failed, and the PC's **Logs** tab has the same line (*"The dashboard on your phone hit a
+problem showing the page: …"*). Send that line, or the zip from `start.bat logs --bundle`, with your
+report.
+
 **"Login failed"** — Use your TopstepX *username*, not your email. Copy the API key again in full.
 Check your API subscription is active. Paste the key again on the dashboard's Setup tab and press
 **Connect**.

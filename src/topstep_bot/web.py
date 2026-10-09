@@ -71,6 +71,33 @@ def html_response(text: str) -> Response:
     return Response(200, text.encode("utf-8"), "text/html; charset=utf-8")
 
 
+async def read_body(headers: dict[str, str], reader: asyncio.StreamReader) -> bytes:
+    """The request body: sized by Content-Length, or in chunks (cloudflared may relay a phone's request that way)."""
+    if "chunked" not in headers.get("transfer-encoding", "").lower():
+        try:
+            length = int(headers.get("content-length", "0") or 0)
+        except ValueError:
+            raise HttpError(400, "bad Content-Length") from None
+        if length > MAX_BODY:
+            raise HttpError(400, "request too large")
+        return await reader.readexactly(length) if length > 0 else b""
+    body = bytearray()
+    while True:
+        line = await reader.readuntil(b"\r\n")
+        try:
+            size = int(line.split(b";", 1)[0].strip(), 16)
+        except ValueError:
+            raise HttpError(400, "bad chunked body") from None
+        if size == 0:
+            while await reader.readuntil(b"\r\n") != b"\r\n":  # trailer lines, then the blank line
+                pass
+            return bytes(body)
+        if len(body) + size > MAX_BODY:
+            raise HttpError(400, "request too large")
+        body += await reader.readexactly(size)
+        await reader.readexactly(2)  # the CRLF after each chunk
+
+
 Handler = Callable[[Request], Awaitable[Response | dict | str] | Response | dict | str]
 Authorizer = Callable[[Request], Response | None]  # None = let the request through
 
@@ -146,7 +173,7 @@ class HttpServer:
             url = urlsplit(target)
             req = Request(method, url.path, {k: v[-1] for k, v in parse_qs(url.query).items()}, headers, remote=self.remote)
             response = await self._dispatch(req, reader)
-        except (TimeoutError, asyncio.IncompleteReadError, ConnectionError, ValueError):
+        except (TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, ConnectionError, ValueError):
             writer.close()
             return
         try:
@@ -169,9 +196,10 @@ class HttpServer:
         if found is None:
             return json_response({"ok": False, "message": "not found"}, 404)
         handler, req.param = found
-        length = min(int(req.headers.get("content-length", "0") or 0), MAX_BODY)
-        if length:
-            req.body = await asyncio.wait_for(reader.readexactly(length), timeout=10)
+        try:
+            req.body = await asyncio.wait_for(read_body(req.headers, reader), timeout=10)
+        except HttpError as exc:
+            return json_response({"ok": False, "message": str(exc)}, exc.status)
         try:
             result = handler(req)
             if inspect.isawaitable(result):
