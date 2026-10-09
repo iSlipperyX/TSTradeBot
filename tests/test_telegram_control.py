@@ -178,3 +178,22 @@ def test_polling_processes_updates_and_stops_on_revoked_token():
     ctl._client = httpx.AsyncClient(base_url="https://api.telegram.org/botTOKEN/", transport=httpx.MockTransport(handler))
     run(ctl.run())  # returns instead of looping forever
     assert core.risk.paused and ctl.offset == 11
+
+
+def test_brief_next_and_learn_commands():
+    ctl, fake, core, _ = make()
+    run(ctl.handle_update(msg("/next")))
+    assert fake.sent[-1]["text"].startswith("⏳ ")
+    run(ctl.handle_update(button("cmd:brief", 1)))
+    assert fake.sent[-1]["text"].startswith("🧠 What I know") and "My memory:" in fake.sent[-1]["text"]
+    run(ctl.handle_update(msg("/learn")))
+    assert "Learning from the long-run memory" in fake.sent[-2]["text"]
+    assert "only available while the bot is connected" in fake.sent[-1]["text"]  # this test has no TopstepX connection
+    buttons = [b["callback_data"] for row in ctl_keyboard() for b in row]
+    assert "cmd:brief" in buttons and "cmd:next" in buttons
+
+
+def ctl_keyboard():
+    from topstep_bot.telegram_control import KEYBOARD
+
+    return KEYBOARD["inline_keyboard"]

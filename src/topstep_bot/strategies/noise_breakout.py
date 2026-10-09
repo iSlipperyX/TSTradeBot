@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from topstep_bot.indicators import ATR, SessionVWAP
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Setup, Strategy, StrategyContext
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext, parse_hhmm
 
 
 class NoiseAreaMomentum(Strategy):
@@ -178,7 +178,8 @@ class NoiseAreaMomentum(Strategy):
                 distance = self.p["stop_atr"] * self.atr.value
                 trail = self._trail_level(long)
                 stop = min(trail, ref - distance) if long else max(trail, ref + distance)
-            out.append(Setup(side, conds, ref, stop, None, f"decides at the {at} CT checkpoint; {left} of {self.p['max_trades_per_day']} trades left today"))
+            out.append(Setup(side, conds, ref, stop, None, f"decides at the {at} CT checkpoint; {left} of {self.p['max_trades_per_day']} trades left today",
+                             at=parse_hhmm(at)))
         return out
 
     def state(self) -> dict:

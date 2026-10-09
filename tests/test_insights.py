@@ -276,7 +276,7 @@ def test_actions_and_telegram_text(tmp_path):
     core = build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=lambda: now, account_label="T")
     run(core.begin_day(core.schedule.trading_day(now), 50_000))
     actions = BotActions(core, Controls())
-    assert run(actions.handle("insights", {})) == {"report": None}
+    assert run(actions.handle("insights", {})) == {"report": None, "scope": "recent"}
     with pytest.raises(RuntimeError, match="turned off"):
         run(actions.handle("insights_csv", {}))
     kb = KnowledgeBase(tmp_path / "knowledge_MNQ_5m.json", min_samples=2)

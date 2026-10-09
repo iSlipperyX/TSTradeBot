@@ -217,3 +217,35 @@ def test_paper_mode_never_sends_orders(tmp_path):
         assert core.closed_trades and runner.broker.position == 0
 
     run(go())
+
+
+def test_runner_keeps_every_bar_and_learns_from_all_of_them(tmp_path):
+    async def go():
+        fake = FakeTopstepX()
+        async with websockets.serve(fake.hub, "127.0.0.1", 0) as srv:
+            port = srv.sockets[0].getsockname()[1]
+            runner = make_runner(fake, port, "paper", tmp_path)
+            runner.cfg.knowledge.deep_history_days = 60
+            ready = asyncio.Event()
+
+            async def on_ready(core):
+                ready.set()
+
+            task = asyncio.create_task(runner.run(on_ready))
+            await asyncio.wait_for(ready.wait(), 30)
+            memory = runner.core.memory
+            stored = memory.status()["library"]["bars"]
+            assert stored == len(fake.bars)  # warm-up and the startup training went straight into the library
+            asked = len([p for p, _ in fake.calls if p == "/api/History/retrieveBars"])
+
+            message = await runner.learn("test")
+            assert message.startswith("Long-run memory updated") and memory.knowledge.obs
+            assert memory.status()["library"]["bars"] == stored
+            again = len([p for p, _ in fake.calls if p == "/api/History/retrieveBars"]) - asked
+            assert again <= 2  # only the ranges it never had (older than the training window) were asked for
+            assert runner.core.snapshot()["memory"]["observations"] == len(memory.knowledge.obs)
+            runner.controls.stop.set()
+            await asyncio.wait_for(task, 20)
+        assert (tmp_path / "market_library.sqlite").exists()
+
+    run(go())

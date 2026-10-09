@@ -45,6 +45,7 @@ from topstep_bot.sessions import session_open_for
 log = logging.getLogger(__name__)
 UTC = timezone.utc
 KILL_FILE = Path("KILL")
+LEARN_CHECK_SECONDS = 300  # how often the learning loop checks whether the long-run memory is due
 
 
 class SetupError(Exception):
@@ -119,6 +120,8 @@ class LiveRunner:
         self.started_at = datetime.now(UTC)
         self._checked_in: date | None = None
         self._training = False
+        self._learn_after: datetime | None = None  # after a failed long-run learning run: wait before trying again
+        self._warmup_bars: tuple[list, tuple[datetime, datetime]] | None = None  # kept until the long-run memory opens
 
     @staticmethod
     def now() -> datetime:
@@ -198,6 +201,7 @@ class LiveRunner:
         core.setups.enabled = True  # the dashboard's Setups panel: note setups forming, firing, cancelled
         for change in core.remote.load_saved():
             log.info("Re-applied remote setting: %s", change)
+        self._setup_memory()
         await self._setup_knowledge()
         await self._setup_news()
         self._apply_ramp_up()
@@ -233,6 +237,61 @@ class LiveRunner:
                 log.warning("Training failed: %s", exc)
                 core.event("warning", f"Could not retrain the knowledge base: {exc}")
 
+    def _setup_memory(self) -> None:
+        """Open the long-run memory (memory.py): the bars downloaded so far go straight into its library."""
+        cfg, core = self.cfg, self.core
+        if not (cfg.knowledge.enabled and cfg.knowledge.deep_learning) or core is None:
+            return
+        from topstep_bot.memory import LongRunMemory
+
+        try:
+            core.memory = LongRunMemory.open(cfg)
+        except Exception as exc:  # noqa: BLE001 - the long-run memory is a bonus: trading goes on without it
+            log.warning("Could not open the long-run memory: %s", exc)
+            return
+        if self._warmup_bars:
+            bars, span = self._warmup_bars
+            core.memory.remember(bars, self.contract.id, span)
+        self._warmup_bars = None
+        st = core.memory.status()
+        log.info("Long-run memory: %d bars in the library, %d observations%s", st["library"]["bars"], st["observations"],
+                 f", replayed {st['trained']['at'][:16]}" if st["trained"] else ", not replayed yet")
+
+    def _remember(self, bars, span: tuple[datetime, datetime] | None = None) -> None:
+        if self.core is not None and self.core.memory is not None and self.contract is not None:
+            self.core.memory.remember(bars, self.contract.id, span)
+
+    async def learn(self, source: str) -> str:
+        """Backfill the market library and replay all of it into the long-run knowledge (memory.py)."""
+        core = self.core
+        if core is None or core.memory is None:
+            raise RuntimeError("The long-run memory is turned off (knowledge.deep_learning: false)")
+        core.event("info", f"Learning from the long-run memory ({source}): downloading missing history, then replaying "
+                           f"up to {self.cfg.knowledge.deep_history_days} days through every strategy...")
+        result = await core.memory.learn(self.cfg, self.contract, self.client, self.now())
+        message = result.text()
+        core.event("info", message)
+        return message
+
+    async def _learn_loop(self) -> None:
+        """Once a day, outside the bot's entry window and while flat, grow the long-run memory."""
+        while True:
+            await asyncio.sleep(LEARN_CHECK_SECONDS)
+            core, now = self.core, self.now()
+            memory = core.memory if core else None
+            if memory is None or memory.running or (self._learn_after and now < self._learn_after):
+                continue
+            if not memory.due(now, self.cfg.knowledge.retrain_hours) or not core.orders.is_flat:
+                continue
+            if core.schedule.entry_block_reason(now) is None:
+                continue  # inside the entry window: learn later, so trading never waits on it
+            try:
+                await self.learn("daily")
+            except Exception as exc:  # noqa: BLE001 - keep trading; try again later
+                self._learn_after = now + timedelta(hours=2)
+                log.warning("Long-run learning failed: %s", exc)
+                core.event("warning", f"Could not update the long-run memory: {exc} (will try again later)")
+
     async def retrain(self, source: str) -> str:
         """Download recent history and rebuild the knowledge base's training layer."""
         core = self.core
@@ -251,6 +310,7 @@ class LiveRunner:
             bars = await self.client.retrieve_bars_range(self.contract.id, end - timedelta(days=days), end, BarUnit.MINUTE, tf,
                                                          live=self.cfg.data.live_market_data)
             bars = [b for b in bars if b.ts + timedelta(minutes=tf) <= end]
+            self._remember(bars, (end - timedelta(days=days), end - timedelta(minutes=tf)))
             result = await train_from_bars(self.cfg, self.contract, bars, core.knowledge, at=end)
             per = ", ".join(f"{k} {v}" for k, v in result["per_strategy"].items())
             message = (f"Knowledge base trained on {result['days']} days ({result['from']} to {result['to']}): "
@@ -273,6 +333,7 @@ class LiveRunner:
             self.core.warmup_bar(bar)
         if closed:
             self._last_bar_ts = closed[-1].ts
+        self._warmup_bars = (closed, (start, end - timedelta(minutes=tf)))  # stored once the long-run memory is open
         log.info("Warmed up on %d %d-minute bars", len(closed), tf)
 
     # -------------------------------------------------------------------- run
@@ -297,6 +358,7 @@ class LiveRunner:
             spawn(self._clock_loop(), name="clock"),
             spawn(self._reconcile_loop(), name="reconcile"),
             spawn(self._news_loop(), name="news"),
+            spawn(self._learn_loop(), name="learning"),
         ]
         for task in self._tasks:
             task.add_done_callback(self._loop_ended)
@@ -336,6 +398,8 @@ class LiveRunner:
             await self.market.hub.stop()
         if self.broker:
             await self.broker.stop()
+        if core and core.memory:
+            core.memory.close()
         if core:
             self._save_paper_balance()
             if self.controls.restart_requested:
@@ -404,6 +468,8 @@ class LiveRunner:
         for bar in new:
             self._last_bar_ts = bar.ts
             await self.core.on_bar(bar)
+        if new:
+            self._remember(new, (start, new[-1].ts))
         return bool(new)
 
     async def _clock_loop(self) -> None:

@@ -35,7 +35,8 @@ class Setup:
     ``conditions`` are the entry rules in plain words with whether each is met right now (the
     live price stands in for the next bar's close). ``entry`` is the price the trigger needs (None
     when the trigger is a time or an event rather than a level); ``stop`` / ``target`` are what the
-    signal would carry if it fired at ``entry`` (or the current price).
+    signal would carry if it fired at ``entry`` (or the current price). ``at`` is the earliest time it
+    can fire when that is a fixed time (None = any bar close); the next-trade forecast uses it.
     """
 
     side: str  # long | short
@@ -45,6 +46,7 @@ class Setup:
     target: float | None = None
     note: str = ""  # e.g. "decides at the 10:30 checkpoint"
     strategy: str = ""  # filled in by the adaptive strategy for its sub-strategies
+    at: time | None = None  # earliest exchange time it can fire (a checkpoint or decision time), when it has one
 
     @property
     def progress(self) -> float:
