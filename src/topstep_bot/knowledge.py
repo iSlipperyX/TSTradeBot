@@ -16,6 +16,11 @@ Four sources of observations are kept apart:
           never switch a strategy on or off; the ticket uses them to show your own record by time
           of day and regime next to what the strategies have done.
 
+The bot's "first trade after starting" (first_trade.py) is a real trade too, filed under the
+strategy name "first_trade" with ``basis`` naming the setup it followed. Like manual trades it
+never counts as evidence for a strategy, so a trade the bot took early on purpose can't switch
+one on or off.
+
 Observations fade with age (half-life ``half_life_days``), so the base keeps adapting as the
 market changes. Retraining replaces the "train" layer and drops shadow observations the new
 training already covers, so nothing is counted twice. Real and manual trades are never dropped.
@@ -60,6 +65,8 @@ REGIMES = ("calm", "volatile")
 SOURCES = ("train", "shadow", "real", "manual")
 KEPT_SOURCES = ("real", "manual")  # actual fills: never pruned or replaced by retraining
 MANUAL = "manual"  # strategy name of trades opened from the dashboard's trade ticket
+FIRST_TRADE = "first_trade"  # strategy name of the first educated trade after the bot starts
+NOT_STRATEGIES = (MANUAL, FIRST_TRADE)  # real trades that are no strategy's own signal
 VOLATILE_RATIO = 1.2
 UNINFORMATIVE_EXITS = ("bot shutdown", "halted", "flatten requested", "daily maintenance", "expired", "entry not filled")
 
@@ -123,6 +130,7 @@ class Observation:
     cost_r: float | None = None  # costs not already in ``r``, in R: fees (+ assumed slippage for ideas)
     slip_in: float | None = None  # real fills: entry slippage in ticks (positive = worse than expected)
     slip_out: float | None = None  # real fills: exit slippage in ticks
+    basis: str | None = None  # first trades: the setup or evidence it followed, e.g. "orb_momentum long setup"
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Observation:
@@ -136,7 +144,7 @@ class Observation:
 
 
 _OBS_FIELDS = frozenset(f.name for f in fields(Observation))
-_OPTIONAL = frozenset({"ctx", "mfe_r", "mae_r", "bars", "cost_r", "slip_in", "slip_out"})
+_OPTIONAL = frozenset({"ctx", "mfe_r", "mae_r", "bars", "cost_r", "slip_in", "slip_out", "basis"})
 
 
 @dataclass
@@ -294,12 +302,16 @@ class KnowledgeBase:
                 s.add(o, self.weight(o, today))
         return s
 
-    def side_stats(self, side: str, slot: str, regime: str, today: date | None = None) -> Stats:
-        """Every strategy's signals on one side (LONG / SHORT) at this slot and regime - your manual trades excluded."""
+    def side_stats(self, side: str, slot: str | None, regime: str | None, today: date | None = None) -> Stats:
+        """Every strategy's signals on one side (LONG / SHORT) at this slot and regime.
+
+        ``slot`` / ``regime`` None = any. Your manual trades and the bot's first trades are left out:
+        they are no strategy's signal."""
         today = today or datetime.now(UTC).date()
         s = Stats()
         for o in self.obs:
-            if o.side == side and o.slot == slot and o.regime == regime and o.strategy != MANUAL:
+            if (o.side == side and (slot is None or o.slot == slot) and (regime is None or o.regime == regime)
+                    and o.strategy not in NOT_STRATEGIES):
                 s.add(o, self.weight(o, today))
         return s
 
@@ -340,6 +352,7 @@ class KnowledgeBase:
                          "cells": cells, "allowed_now": cells[f"{slot}|{regime}"]["allowed"] if slot in SLOT_NAMES else False})
         return {
             "trained": self.trained, "counts": self.counts(), "total": len(self.obs), "manual": self.manual_summary(today),
+            "first_trade": self.stats(FIRST_TRADE, None, None, today).to_dict(self.min_samples),
             "now": {"slot": slot, "regime": regime}, "slots": list(SLOT_NAMES), "regimes": list(REGIMES),
             "params": {"min_samples": self.min_samples, "min_edge_r": self.min_edge_r, "half_life_days": self.half_life_days},
             "strategies": rows,
@@ -380,6 +393,9 @@ class KnowledgeBase:
         m = s["manual"]["overall"]
         if m["n"]:
             lines.append(f"Your manual trades: {m['n']}, {m['wins']} won, {m['mean_r']:+.2f}R avg.")
+        f = s["first_trade"]
+        if f["n"]:
+            lines.append(f"First trades after starting: {f['n']}, {f['wins']} won, {f['mean_r']:+.2f}R avg.")
         lines.append("c = calm, v = volatile. ✅ trades now, ❌ switched off (losing), ❔ not enough evidence yet.")
         return "\n".join(lines)
 

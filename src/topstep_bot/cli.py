@@ -256,6 +256,35 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_first_trade_test(args: argparse.Namespace) -> int:
+    """Backtest the first trade after starting: educated pick vs coin flip vs no first trade."""
+    import json
+
+    from topstep_bot.backtest.first_trade_test import first_trade_test, result_text
+    from topstep_bot.instruments import offline_contract
+
+    cfg = _load(args)
+    _apply_overrides(cfg, args)
+    bars, synthetic = _history(cfg, args)
+    contract = offline_contract(cfg.instrument.symbol)
+    console.print(f"Starting the bot once per trading day at a different time each day; its first trade is due within "
+                  f"{cfg.first_trade.within_minutes} minutes. Three runs: the strategy alone, with the educated first "
+                  "trade, and with a coin-flip first trade.")
+    with console.status("Replaying...") as status:
+        result = asyncio.run(first_trade_test(cfg, bars, contract, seed=args.seed,
+                                              progress=lambda f: status.update(f"Replaying... {f:.0%}")))
+    for line in result_text(result):
+        console.print(line)
+    if synthetic:
+        console.print("[yellow]Synthetic data: this only shows the test works. Run it on real data before reading anything into it.[/]")
+    path = Path(cfg.backtest.report_dir) / "first_trade_test.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({**result, "synthetic": synthetic}, indent=2), encoding="utf-8")
+    console.print(f"[dim]Saved to {path.resolve()}. No backtest can promise the first trade makes money; it is there to "
+                  "teach the bot.[/]")
+    return 0
+
+
 def _load_bars(cfg: BotConfig, args: argparse.Namespace):
     """Bars for training/backtesting: --data, else a fresh download (with credentials), else the cached CSV."""
     from topstep_bot.backtest.data import load_csv
@@ -349,7 +378,8 @@ def cmd_insights(args: argparse.Namespace) -> int:
                       ("Costs", "right"), ("After costs", "right"), ("Best point", "right"), ("Worst point", "right"),
                       ("Losers up 1R first", "right"), ("Real trades", "right")):
         table.add_column(col, justify=just, no_wrap=True)
-    rows = sorted([*rep["strategies"], *([rep["manual"]] if rep["manual"] else [])], key=lambda x: x["net_r"] or -9, reverse=True)
+    extra = [row for row in (rep["manual"], rep.get("first_trade")) if row]
+    rows = sorted([*rep["strategies"], *extra], key=lambda x: x["net_r"] or -9, reverse=True)
     for row in rows:
         gave = "-" if row["gave_back"] is None else f"{row['gave_back']:.0%} of {row['n_losers']}"
         real = f"{r(row['real_net_r'])} ({row['real_n']})" if row["real_n"] else "-"
@@ -975,6 +1005,7 @@ MENU = [
     ("rules", "Show Topstep's rules for your account and how the bot stays inside them"),
     ("insights", "What the bot has LEARNED: results after costs, real fills, market conditions"),
     ("update", "UPDATE: check GitHub for a newer version of the bot and install it"),
+    ("first-trade-test", "Backtest the FIRST TRADE after starting (Teach the bot) against a coin flip"),
 ]
 
 
@@ -1054,7 +1085,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true", help="skip the live-mode confirmation prompt")
     p.set_defaults(func=cmd_autostart)
 
-    for name, func, helptext in (("backtest", cmd_backtest, "backtest a strategy"), ("demo", cmd_demo, "demo backtest on synthetic data")):
+    for name, func, helptext in (("backtest", cmd_backtest, "backtest a strategy"), ("demo", cmd_demo, "demo backtest on synthetic data"),
+                                 ("first-trade-test", cmd_first_trade_test,
+                                  "backtest the first trade after starting (Teach the bot) against a coin flip")):
         p = sub.add_parser(name, help=helptext)
         p.add_argument("--data", help="CSV of bars (time, open, high, low, close[, volume])")
         p.add_argument("--tz", default="UTC", help="timezone for CSV times without one (e.g. America/Chicago)")

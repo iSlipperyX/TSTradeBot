@@ -132,8 +132,9 @@ class FakeTopstepX:
             task.cancel()
 
 
-def make_runner(fake: FakeTopstepX, port: int, mode: str, tmp_path) -> LiveRunner:
+def make_runner(fake: FakeTopstepX, port: int, mode: str, tmp_path, **extra) -> LiveRunner:
     cfg = BotConfig.model_validate({
+        **extra,
         "mode": mode,
         "data_dir": str(tmp_path),
         "api": {"user_hub_url": f"http://127.0.0.1:{port}/hubs/user", "market_hub_url": f"http://127.0.0.1:{port}/hubs/market"},
@@ -185,6 +186,36 @@ def test_live_mode_end_to_end(tmp_path):
         assert fake.position == 0
         assert all(o["status"] != 1 for o in fake.orders.values())  # nothing left working
         assert core.closed_trades and core.closed_trades[0].exit_reason == "bot shutdown"
+
+    run(go())
+
+
+def test_the_first_trade_planner_starts_with_the_bot(tmp_path):
+    async def go():
+        fake = FakeTopstepX()
+        async with websockets.serve(fake.hub, "127.0.0.1", 0) as srv:
+            port = srv.sockets[0].getsockname()[1]
+            runner = make_runner(fake, port, "paper", tmp_path, first_trade={"enabled": True},
+                                 data={"warmup_days": 2})  # set too low: the warm-up still covers every strategy
+            ready = asyncio.Event()
+
+            async def on_ready(core):
+                ready.set()
+
+            task = asyncio.create_task(runner.run(on_ready))
+            await asyncio.wait_for(ready.wait(), 20)
+            core = runner.core
+            planner = core.first_trade
+            assert planner is not None and planner.state in ("waiting", "watching", "blocked", "done")
+            assert planner.requested_at == runner.started_at and planner.deadline is not None
+            assert any(e["message"].startswith("First trade after starting:") for e in core.events)
+            assert core.snapshot()["first_trade"]["state"] == planner.state
+            runner.controls.stop.set()
+            await asyncio.wait_for(task, 20)
+        # signal-ready on the first live bar: the warm-up reached back far enough for the slowest strategy
+        history = [b for p, b in fake.calls if p == "/api/History/retrieveBars"]
+        span = parse_ts(history[0]["endTime"]) - parse_ts(history[0]["startTime"])
+        assert span.days >= (core.strategy.warmup_days + 1) * 1.6
 
     run(go())
 

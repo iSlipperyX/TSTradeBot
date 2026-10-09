@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from topstep_bot.bars import resample
 from topstep_bot.broker.paper import PaperBroker
 from topstep_bot.config import BotConfig
-from topstep_bot.engine import DayRecord
+from topstep_bot.engine import DayRecord, TradingCore
 from topstep_bot.execution import ManagedTrade
 from topstep_bot.factory import build_core, fees_for, starting_balance
 from topstep_bot.models import Bar, Contract
@@ -61,12 +61,17 @@ async def run_backtest(
     end: date | None = None,
     progress: Callable[[float], None] | None = None,
     enforce_mll: bool = True,
+    prepare: Callable[[TradingCore], None] | None = None,
+    before_bar: Callable[[TradingCore, Bar], None] | None = None,
 ) -> BacktestResult:
     """Replay ``bars`` through the real trading core.
 
     ``enforce_mll=False`` (used by training) switches off the trailing Maximum Loss Limit so one bad
     stretch doesn't end the simulated account and hide how the strategy did afterwards. Daily limits
     stay on; Combine pass rates are computed from the daily results with the real MLL.
+
+    ``prepare`` is called with the trading core before the replay and ``before_bar`` before each
+    traded bar (the first-trade test uses them to simulate the bot being started).
     """
     bars = prepare_bars(bars, cfg.instrument.timeframe_minutes)
     schedule = SessionSchedule(cfg.session)
@@ -99,6 +104,8 @@ async def run_backtest(
 
         core.recommender = RecommendationBook(core, quiet=True)
         core.attach_knowledge(KnowledgeBase.from_config(cfg, None))
+    if prepare is not None:
+        prepare(core)
     tf = timedelta(minutes=cfg.instrument.timeframe_minutes)
     breaches: list[tuple[datetime, float, float]] = []
     in_breach = False
@@ -115,6 +122,8 @@ async def run_backtest(
             broker.last_price = bar.close
             continue
         last_bar = bar
+        if before_bar is not None:
+            before_bar(core, bar)
         await core.roll_day_if_needed(bar.ts)
         await broker.on_bar(bar)
         worst_equity = core.observe_extremes(bar)

@@ -77,6 +77,10 @@ def render_config(
     goal_line = ("# Goal: LEARN - this account is for teaching the bot. It trades more often, tries unproven\n"
                  "# strategies, and doesn't stop early for the consistency rule. Every Topstep rule still applies.\n"
                  if learn else "")
+    first_trade = ("\nfirst_trade:                    # learning: an educated trade soon after the bot starts (every rule still applies)\n"
+                   "  enabled: true\n"
+                   "  within_minutes: 15            # placed within this many minutes of starting (or of entries opening)\n"
+                   "  contracts: 1                  # the smallest size\n") if learn else ""
     account_line = f"  account_id: {account_id}" if account_id else "  # account_id: 123456          # set by 'topstep-bot setup'"
     dll_amount = PLANS[plan].daily_loss_limit
     dll_line = (f"  topstep_daily_loss_limit: true  # you added Topstep's ${dll_amount:,.0f} Daily Loss Limit; the bot stops before it"
@@ -111,7 +115,7 @@ strategy:
 knowledge:                      # what the bot learns while it runs (drives the adaptive strategy)
   auto_train: true              # retrain on the last 60 days of history at startup when stale (daily)
   history_days: 60
-
+{first_trade}
 risk:
   risk_per_trade: {risk_per_trade:g}          # $ lost if a trade hits its stop (position size is calculated from this)
   personal_daily_loss_limit: {daily_loss:g} # stop trading for the day after losing this much (incl. open P&L)

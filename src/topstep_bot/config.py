@@ -245,6 +245,20 @@ class KnowledgeConfig(_Section):
     real_trade_weight: float = Field(default=2.0, ge=1.0, description="How much more a real trade counts than an idea.")
 
 
+class FirstTradeConfig(_Section):
+    """Teach the bot: make a first educated trade soon after it starts (first_trade.py).
+
+    If the bot's own strategy hasn't traded by then, it takes the setup its knowledge base supports
+    best, at the smallest size. Every Topstep rule and risk limit still applies, and it happens at
+    most once per trading day. Off unless you turn it on (the "Teach the bot" goal does)."""
+
+    enabled: bool = Field(default=False, description="Take a first educated trade soon after the bot starts.")
+    within_minutes: int = Field(default=15, ge=5, le=120,
+                                description="Minutes after the start (or after entries open, if it starts outside "
+                                            "trading hours) by which the first trade is placed.")
+    contracts: int = Field(default=1, ge=1, le=5, description="Size of that trade (1 = the smallest).")
+
+
 class ServiceConfig(_Section):
     """Unattended 24/7 operation (the controller started by 'topstep-bot start')."""
 
@@ -315,6 +329,7 @@ class BotConfig(_Section):
     news: NewsConfig = Field(default_factory=NewsConfig)
     recommendations: RecommendationsConfig = Field(default_factory=RecommendationsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    first_trade: FirstTradeConfig = Field(default_factory=FirstTradeConfig)
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
