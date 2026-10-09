@@ -294,8 +294,9 @@ class ManualTrading:
             if soon:
                 e = soon[0]
                 mins = int((e.time - now).total_seconds() // 60)
-                add(None, f"News in {mins} min: {e.label} - the bot pauses entries around it"
-                          + (" and closes trades before it" if core.cfg.news.flatten_before else ""))
+                does = ("the bot pauses entries around it" + (" and closes trades before it" if core.cfg.news.flatten_before else "")
+                        if core.cfg.news.enabled else "news pauses are off")
+                add(None, f"News in {mins} min: {e.label} - {does}")
         guard = core.orders.guard
         if guard is not None and guard.tripped:
             add(False, f"Order guard tripped: {guard.tripped}")

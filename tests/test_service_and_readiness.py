@@ -79,6 +79,47 @@ def test_news_falls_back_to_cache_when_offline(tmp_path):
     assert [e.title for e in cal.events] == ["CPI m/m"]
 
 
+def test_out_of_date_news_cache_counts_as_no_calendar(mnq, tmp_path):
+    import json
+
+    now = ct(2026, 3, 10, 7, 20)  # 10 minutes before this week's CPI, which the old cache doesn't have
+    (tmp_path / "news.json").write_text(json.dumps({"fetched_at": (now - timedelta(days=9)).isoformat(), "events": FEED}))
+    cal = make_calendar(tmp_path)
+    assert run(cal.refresh(httpx.MockTransport(lambda r: httpx.Response(429)))) is True  # fell back to the cache
+    assert cal.events and not cal.is_current(now)
+    core = build_core(BotConfig(), mnq, PaperBroker(mnq, 50_000), clock=lambda: now, account_label="t")
+    run(core.begin_day(core.schedule.trading_day(now), 50_000))
+    core.risk.live_guards = True
+    core.schedule.news = cal
+    assert core.risk.news_size_cap(now) == core.risk.max_contracts_topstep() // 2
+    cal.fetched_at, cal.events = now - timedelta(hours=1), []  # fresh, and nothing coming up
+    assert cal.is_current(now) and core.risk.news_size_cap(now) is None
+    # Forex Factory's feed covers one week (from Sunday 00:00 New York time): last week's file is out of date
+    # even when it was downloaded only a few hours ago.
+    saturday_night = ct(2026, 3, 7, 21, 0)  # 22:00 New York
+    cal.fetched_at = saturday_night
+    assert cal.is_current(saturday_night + timedelta(hours=2)) is False
+    assert cal.is_current(saturday_night + timedelta(minutes=30)) is True
+
+
+def test_news_calendar_loads_even_with_news_pauses_off(mnq, tmp_path):
+    """Turning the news pause off must not leave the bot blind to releases (that halved every trade)."""
+    import json
+    from datetime import datetime
+
+    cfg = BotConfig.model_validate({"data_dir": str(tmp_path), "news": {"enabled": False}})
+    (tmp_path / "news_cache.json").write_text(json.dumps({"fetched_at": datetime.now(UTC).isoformat(), "events": []}))
+    runner = LiveRunner(cfg, Secrets(username="u", api_key="k"))
+    runner.core = core = build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=runner.now, account_label="t")
+    run(core.begin_day(core.schedule.trading_day(runner.now()), 50_000))
+    core.risk.live_guards = True
+    run(runner._setup_news())  # the cache is fresh: nothing is downloaded
+    assert core.schedule.news is not None
+    assert core.risk.max_contracts(runner.now()) == core.risk.max_contracts_topstep()
+    runner.journal.close()
+    run(runner.client.close())
+
+
 def test_engine_flattens_before_news_when_enabled(mnq, tmp_path):
     cfg = BotConfig.model_validate({"news": {"flatten_before": True}})
     now = [ct(2026, 3, 3, 7, 26)]

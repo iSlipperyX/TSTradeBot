@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import datetime
 
@@ -19,6 +20,8 @@ from topstep_bot.risk.topstep import PLANS, LossLimitTracker, starting_balance_f
 from topstep_bot.sessions import SessionSchedule
 from topstep_bot.strategies import create_strategy
 
+log = logging.getLogger(__name__)
+
 
 def fees_for(cfg: BotConfig, contract: Contract) -> float:
     if cfg.risk.fees_per_contract_round_turn is not None:
@@ -31,6 +34,23 @@ def starting_balance(cfg: BotConfig) -> float:
     if cfg.account.starting_balance is not None:
         return cfg.account.starting_balance
     return starting_balance_for(PLANS[cfg.account.plan], cfg.account.stage)
+
+
+def mll_floor_for(cfg: BotConfig, saved: float | None) -> float | None:
+    """The Maximum Loss Limit floor to start from: the saved floor, raised (never lowered) by the override.
+
+    Topstep's floor only moves up, so an ``account.mll_floor_override`` left in config.yaml from an
+    earlier sync must not undo the higher floor the bot has worked out and saved since.
+    """
+    override = cfg.account.mll_floor_override
+    if override is None or saved is None:
+        return saved if override is None else override
+    if override < saved:
+        log.warning("Not using account.mll_floor_override ($%s) from config.yaml: the Maximum Loss Limit floor the bot "
+                    "saved is higher ($%s), and Topstep's floor never goes down, so the bot keeps $%s. You can delete "
+                    "mll_floor_override from config.yaml.", f"{override:,.0f}", f"{saved:,.0f}", f"{saved:,.0f}")
+        return saved
+    return override
 
 
 def build_core(
@@ -46,8 +66,8 @@ def build_core(
 ) -> TradingCore:
     plan = PLANS[cfg.account.plan]
     schedule = SessionSchedule(cfg.session)
-    floor = cfg.account.mll_floor_override if cfg.account.mll_floor_override is not None else mll_floor
-    tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
+    schedule.news_pauses = lambda: cfg.news.enabled  # follows the setting when changed from the dashboard/Telegram
+    tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=mll_floor_for(cfg, mll_floor))
     fees = fees_for(cfg, contract)
     risk = RiskManager(cfg.risk, cfg.account, plan, contract, schedule, tracker, fees)
     strategy = create_strategy(cfg.strategy.name, cfg.strategy.params, contract, cfg.instrument.timeframe_minutes)

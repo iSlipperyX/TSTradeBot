@@ -1,7 +1,8 @@
 """Economic calendar: automatic no-trade windows around high-impact news.
 
 Uses this week's calendar from the free Forex Factory JSON feed (fetched at most every few
-hours and cached in data/news_cache.json, so it keeps working briefly offline). Each event
+hours and cached in data/news_cache.json, so it keeps working briefly offline: a copy more than
+12 hours old, or from an earlier week, counts as no calendar at all). Each event
 blocks new entries from ``minutes_before`` to ``minutes_after`` its release time; optionally
 open trades are flattened just before the release.
 """
@@ -11,8 +12,9 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -20,6 +22,16 @@ from topstep_bot.api.parse import parse_ts
 
 log = logging.getLogger(__name__)
 UTC = timezone.utc
+# The feed holds one Forex Factory week (Sunday to Saturday, New York time). A copy older than
+# MAX_AGE, or from an earlier week, may be missing this week's releases.
+FEED_TZ = ZoneInfo("America/New_York")
+MAX_AGE = timedelta(hours=12)
+
+
+def feed_week(ts: datetime) -> date:
+    """The Sunday (New York time) that starts the Forex Factory week ``ts`` falls in."""
+    local = ts.astimezone(FEED_TZ)
+    return local.date() - timedelta(days=(local.weekday() + 1) % 7)
 
 
 @dataclass(frozen=True)
@@ -63,6 +75,11 @@ class NewsCalendar:
         self.after = timedelta(minutes=minutes_after)
         self.events: list[NewsEvent] = []
         self.fetched_at: datetime | None = None
+
+    def is_current(self, now: datetime) -> bool:
+        """True when the calendar was downloaded recently enough to list this week's releases."""
+        return (self.fetched_at is not None and now - self.fetched_at <= MAX_AGE
+                and feed_week(self.fetched_at) == feed_week(now))
 
     def _relevant(self, events: list[NewsEvent]) -> list[NewsEvent]:
         return [e for e in events if e.impact.lower() in self.impacts and e.country.upper() in self.currencies]

@@ -7,6 +7,7 @@ calendar date it ends on (Sunday 17:00 CT belongs to Monday's trading day).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -46,6 +47,9 @@ class SessionSchedule:
         self.tz = ZoneInfo(cfg.timezone)
         self._no_trade = set(cfg.no_trade_dates)
         self.news = None  # optional NewsCalendar with automatic news blackouts
+        # Whether entries pause around news right now (the news setting, which can change while running).
+        # The calendar stays loaded either way: Topstep's position-size rule around news needs it.
+        self.news_pauses: Callable[[], bool] = lambda: True
 
     def local(self, ts: datetime) -> datetime:
         return to_local(ts, self.tz)
@@ -72,6 +76,12 @@ class SessionSchedule:
                 return w.label or f"blackout {w.start:%H:%M}-{w.end:%H:%M}"
         return None
 
+    def news_blackout(self, ts: datetime) -> str | None:
+        """The news pause ``ts`` falls in, or None (also when news pauses are turned off)."""
+        if self.news is None or not self.news_pauses():
+            return None
+        return self.news.blackout_reason(ts, self.tz)
+
     def entry_block_reason(self, ts: datetime) -> str | None:
         """None if a new entry is allowed at ts, otherwise a human-readable reason."""
         day = self.trading_day(ts)
@@ -83,10 +93,7 @@ class SessionSchedule:
             return f"before trade_start {self.cfg.trade_start:%H:%M}"
         if local >= last:
             return f"after last_entry {self.cfg.last_entry:%H:%M}"
-        reason = self.in_blackout(ts)
-        if reason is None and self.news is not None:
-            reason = self.news.blackout_reason(ts, self.tz)
-        return reason
+        return self.in_blackout(ts) or self.news_blackout(ts)
 
     def must_be_flat(self, ts: datetime) -> bool:
         """True from flatten_at until the next session opens at 17:00."""

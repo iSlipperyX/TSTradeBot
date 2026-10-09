@@ -227,6 +227,26 @@ def test_settings_bounds_validation_and_persistence(tmp_path):
     assert json.loads((tmp_path / "remote.json").read_text(encoding="utf-8")) == {}
 
 
+def test_news_pause_follows_the_setting_without_a_restart(tmp_path):
+    from topstep_bot.forecast import next_allowed
+    from topstep_bot.news import NewsCalendar, NewsEvent
+
+    core, _, now = make_core(tmp_path)
+    release = ct(2026, 3, 3, 9, 0)
+    now[0] = release - timedelta(minutes=2)
+    cal = NewsCalendar("http://unused", tmp_path / "news.json", ["High"], ["USD"], 5, 10)
+    cal.events, cal.fetched_at = [NewsEvent("ISM Manufacturing PMI", "USD", "High", release)], now[0]
+    core.schedule.news = cal
+    run(core.begin_day(core.schedule.trading_day(now[0]), 50_000))
+    rc = RemoteControl(core, tmp_path / "remote.json")
+    assert "news blackout" in core.risk.entry_block_reason(now[0], 50_000)
+    rc.apply("news", "off", "test")
+    assert core.risk.entry_block_reason(now[0], 50_000) is None
+    assert next_allowed(core, now[0]) == (now[0], None)  # the next-trade forecast agrees
+    rc.apply("news", "on", "test")
+    assert "news blackout" in core.risk.entry_block_reason(now[0], 50_000)
+
+
 def test_strategy_switch_reuses_warm_shadow_and_waits_when_in_trade(tmp_path):
     core, broker, now = make_core(tmp_path, strategy={"name": "orb"})
     run(core.begin_day(core.schedule.trading_day(ct(2026, 3, 3, 9, 0)), 50_000))

@@ -39,9 +39,12 @@ DEFAULT_COMBINE_DAILY_CAP = 0.40
 # An open Combine trade is closed once the day's P&L reaches this share of the profit target,
 # safely before the 55% line that would raise the target.
 CONSISTENCY_GUARD_FRACTION = 0.50
-# Within this long before a scheduled major release (or when the calendar is unavailable)
-# new trades use at most half of Topstep's maximum position size.
+# Within this long before a scheduled major release (or when the calendar is unavailable or out
+# of date) new trades use at most half of Topstep's maximum position size.
 NEWS_SIZE_GUARD = timedelta(minutes=30)
+# A position at Topstep's maximum size is closed at least this long before a release, however short
+# the entry pause (news.minutes_before) is set.
+NEWS_FLATTEN_LEAD = timedelta(minutes=2)
 
 
 class RiskManager:
@@ -95,7 +98,8 @@ class RiskManager:
 
     def max_contracts_topstep(self) -> int:
         """Topstep's own position limit for today, in contracts of this instrument."""
-        return max_contracts_allowed(self.plan, self.stage, self.day_start_balance, self.contract.root, self.contract.is_micro)
+        return max_contracts_allowed(self.plan, self.stage, self.day_start_balance, self.contract.root, self.contract.is_micro,
+                                     self.tracker.starting_balance)
 
     def news_size_cap(self, now: datetime | None) -> int | None:
         """Half of Topstep's max when a scheduled major release is near (or the calendar is unknown).
@@ -105,7 +109,7 @@ class RiskManager:
         if now is None or not self.live_guards:
             return None
         news = self.schedule.news
-        calendar_known = news is not None and news.fetched_at is not None
+        calendar_known = news is not None and news.is_current(now)
         if calendar_known and not any(now <= e.time <= now + NEWS_SIZE_GUARD for e in news.events):
             return None
         return max(1, self.max_contracts_topstep() // 2)
@@ -264,12 +268,13 @@ class RiskManager:
         news = self.schedule.news
         if position == 0 or news is None or abs(position) < self.max_contracts_topstep():
             return None
-        event = news.releasing_soon(now)
+        lead = max(news.before, NEWS_FLATTEN_LEAD)
+        event = next((e for e in news.events if e.time - lead <= now < e.time), None)
         if event is None:
             return None
         return f"Topstep's maximum position size may not be held into news ({event.label})"
 
-    def snapshot(self, balance: float, open_pnl: float) -> dict:
+    def snapshot(self, balance: float, open_pnl: float, now: datetime | None = None) -> dict:
         equity = balance + open_pnl
         progress = self.combine_progress(balance, open_pnl)
         return {
@@ -280,7 +285,7 @@ class RiskManager:
             "wins_today": self.wins_today,
             "mll_size": self.plan.max_loss_limit,
             "consecutive_losses": self.consecutive_losses,
-            "max_contracts": self.max_contracts(),
+            "max_contracts": self.max_contracts(now),  # with the news cap when ``now`` is given
             "topstep_max_contracts": self.max_contracts_topstep(),
             "topstep_dll": self.topstep_dll,
             "combine": None if progress is None else {

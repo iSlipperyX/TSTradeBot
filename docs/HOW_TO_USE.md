@@ -976,7 +976,7 @@ The rules were checked against Topstep's Help Center in October 2026.
 | **Flat by 15:10 CT** | Flattens at `flatten_at` (15:00 default); the config refuses anything later than 15:08. |
 | **News** — no maximum-size position into a scheduled major release | Entries pause around high-impact releases, sizes are halved in the 30 minutes before one, and a full-size position is closed before it. |
 | **Your own computer only** — no VPS, VPN or remote server | The preflight warns if the PC looks like a cloud server, virtual machine or Remote Desktop session. Running it on your own PC is your responsibility. |
-| **No high-frequency trading** | A few trades a day on 1-minute bars or slower. An order-rate breaker stops new entries (and halts the bot) after 30 order actions in a minute or 20 entries in a day. |
+| **No high-frequency trading** | A few trades a day on 1-minute bars or slower. More than 30 order actions in a minute stops the bot and closes the open trade (restart to trade again); more than 20 entries in a day refuses further entries. |
 | **No API trading on Live Funded Accounts** | The bot refuses to trade an account the API reports as real-money. |
 | **No hedging** | One position at a time on one contract. Don't run opposite strategies on several accounts. |
 | **Automation is your responsibility** — Topstep makes no exceptions for bot malfunctions | Paper trade first, watch the first live days closely, and keep Telegram set up so you can `/flatten` from anywhere. |
@@ -992,6 +992,10 @@ account:
 
 For an Express Funded Account after your first payout, Topstep sets the MLL to $0 — set
 `mll_floor_override: 0`.
+
+The override can only **raise** the floor the bot has saved, because Topstep's floor never goes
+down. An old value left in `config.yaml` is ignored once the bot's own floor is higher (the log says
+so), so you can leave it or delete it.
 
 Topstep changes its rules from time to time. Check help.topstep.com and your TopstepX Risk Settings,
 and adjust the config if anything differs: a lower position limit goes in `risk.max_contracts`, a
@@ -1566,7 +1570,11 @@ reports, FOMC and so on. The dashboard and Telegram show the reason (`news black
 - A smaller open trade keeps its stop and target through the release. To close every trade
   beforehand instead, set `news.flatten_before: true`.
 - Change the window with `news.minutes_before` / `news.minutes_after`; include medium-impact events
-  with `news.impacts: [High, Medium]`; turn it off with `news.enabled: false`.
+  with `news.impacts: [High, Medium]`; turn the pause off with `news.enabled: false` (or `/set news
+  off`, which works at once). The calendar is still loaded, so the half-size limit and the closing of
+  a full-size position before a release keep working.
+- A calendar more than 12 hours old, or from last week, counts as no calendar: new trades use at
+  most half of Topstep's limit until it downloads again, and you get an alert.
 
 Backtests, training and tuning don't apply news blackouts (there is no historical calendar), so live
 results around news days can differ a little from them.

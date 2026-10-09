@@ -47,6 +47,9 @@ _LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARN
 UTC = timezone.utc
 
 FLATTEN_RETRY = timedelta(seconds=5)
+# A signal from a bar that closed longer ago than one bar (and at least this long) is out of date:
+# its bar came in late, e.g. after failed downloads, so it is skipped rather than traded at today's price.
+LATE_SIGNAL = timedelta(minutes=2)
 
 
 @dataclass
@@ -117,7 +120,7 @@ class TradingCore:
         self.halted: str | None = None
         self._day_min_equity = 0.0
         self._last_flatten: datetime | None = None
-        self._skip_note: tuple[date | None, str] | None = None
+        self._skipped: set[tuple[date | None, str]] = set()  # skip messages already noted today
         self.atr = ATR(14)
         self.regime = RegimeTracker()  # calm / volatile, for the knowledge base
         self.market = MarketContext()  # the market snapshot saved with every observation
@@ -203,6 +206,7 @@ class TradingCore:
         self.current_day = day
         self.balance = balance
         self.risk.start_day(day, balance, realized, closed_today)
+        self._skipped.clear()
         self._day_min_equity = balance
         if self.strategy_day != day:
             self.strategy.on_new_day(day)
@@ -232,8 +236,8 @@ class TradingCore:
 
     async def roll_day_if_needed(self, ts: datetime) -> None:
         day = self.schedule.trading_day(ts)
-        if day == self.current_day:
-            return
+        if self.current_day is not None and day <= self.current_day:
+            return  # same day, or a late bar from a finished day: never roll back
         await self.end_day()
         await self.begin_day(day, self.balance)
 
@@ -278,6 +282,9 @@ class TradingCore:
             self.last_price = bar.close
 
     async def on_bar(self, bar: Bar) -> None:
+        if self.current_day is not None and self.schedule.trading_day(bar.ts) < self.current_day:
+            log.info("Ignoring a late bar (%s) from a trading day that has already closed", bar.ts)
+            return
         await self._process_bar(bar)
         if self.recommender:
             for action, tag, value in self.recommender.on_bar(bar):
@@ -338,8 +345,14 @@ class TradingCore:
             if held and (held > 0) != (side == OrderSide.BUY) and self.owns_trade():
                 await self.orders.exit(f"reversal signal: {sig.reason}")
             return
-        now = ctx.bar_close
-        reason = f"bot halted ({self.halted})" if self.halted else self.risk.entry_block_reason(now, self.balance)
+        now = max(ctx.bar_close, self.clock())  # a bar that came in late is checked at the real time
+        late = now - ctx.bar_close
+        if self.halted:
+            reason = f"bot halted ({self.halted})"
+        elif late > max(self.tf, LATE_SIGNAL):
+            reason = f"the signal is {late.total_seconds() / 60:.0f} min old (its bar data came in late)"
+        else:
+            reason = self.risk.entry_block_reason(now, self.balance)
         if reason:
             self._note_skip(f"Skipped {side.label} signal: {reason}")
             if self.recommender:
@@ -377,7 +390,8 @@ class TradingCore:
             min_dist = max(min_dist, c.round_price(self.cfg.risk.min_stop_atr * self.atr.value, "up"))
         if distance < min_dist:
             stop = c.round_price(entry_ref - side.sign * min_dist)
-        elif c.ticks(distance) > self.cfg.risk.max_stop_ticks:
+            distance = (entry_ref - stop) * side.sign
+        if c.ticks(distance) > self.cfg.risk.max_stop_ticks:
             return f"stop is {c.ticks(distance):.0f} ticks away (max {self.cfg.risk.max_stop_ticks})"
         max_slip = self.cfg.execution.max_entry_slippage_ticks
         worst_entry = entry_ref + side.sign * c.price_offset(max_slip or 0)
@@ -399,8 +413,8 @@ class TradingCore:
     def _note_skip(self, message: str) -> None:
         """Log a skipped signal once per day per message to avoid noise."""
         key = (self.current_day, message)
-        if self._skip_note != key:
-            self._skip_note = key
+        if key not in self._skipped:
+            self._skipped.add(key)
             self.event("info", message)
 
     async def _manage_open_trade(self, bar: Bar, ctx: StrategyContext) -> None:
@@ -443,7 +457,7 @@ class TradingCore:
         self._day_min_equity = min(self._day_min_equity, self.balance + open_pnl)
         reason = self.risk.check_open_risk(self.balance, open_pnl)
         if reason:
-            await self._flatten(reason, ts, kind="risk")
+            await self._flatten(reason, kind="risk")
 
     def observe_extremes(self, bar: Bar) -> float:
         """Backtests: worst intrabar equity for the open position (Topstep checks the MLL in real time)."""
@@ -456,12 +470,15 @@ class TradingCore:
         self._day_min_equity = min(self._day_min_equity, equity)
         return equity
 
-    async def _flatten(self, reason: str, now: datetime, kind: str | None = None) -> None:
+    async def _flatten(self, reason: str, kind: str | None = None) -> bool:
+        """Flatten, at most once per FLATTEN_RETRY. Returns False if one was sent moments ago."""
+        now = self.clock()  # the PC clock: quote timestamps come from the exchange's clock
         if self._last_flatten and now - self._last_flatten < FLATTEN_RETRY:
-            return
+            return False
         self._last_flatten = now
         self.event("warning", f"FLATTEN: {reason}", kind)
         await self.orders.flatten_all(reason)
+        return True
 
     # ------------------------------------------------------------------- clock
 
@@ -471,19 +488,20 @@ class TradingCore:
         if guard is not None and guard.tripped and not self.halted:
             await self.halt(guard.tripped)
         if self.schedule.must_be_flat(now) and not self.orders.is_flat:
-            await self._flatten("session flatten time (Topstep requires flat by 15:10 CT)", now)
+            await self._flatten("session flatten time (Topstep requires flat by 15:10 CT)")
         elif (news_reason := self.risk.news_flatten_reason(now, self.orders.position)) is not None:
-            await self._flatten(news_reason, now, kind="risk")
-        elif self.cfg.news.flatten_before and self.schedule.news and not self.orders.is_flat:
+            await self._flatten(news_reason, kind="risk")
+        elif self.cfg.news.enabled and self.cfg.news.flatten_before and self.schedule.news and not self.orders.is_flat:
             event = self.schedule.news.releasing_soon(now)
             if event:
-                await self._flatten(f"closing ahead of news: {event.label}", now)
+                await self._flatten(f"closing ahead of news: {event.label}")
 
     async def halt(self, reason: str) -> None:
         """Kill switch: flatten and stop opening trades until restarted."""
         self.halted = reason
         self.risk.paused = True
-        await self._flatten(f"halted: {reason}", self.clock(), kind="risk")
+        if not await self._flatten(f"halted: {reason}", kind="risk"):
+            self.event("warning", f"FLATTEN: halted: {reason} (the position was already being closed)", "risk")
 
     # ---------------------------------------------------------------- results
 
@@ -604,7 +622,7 @@ class TradingCore:
             "manual_block": self.manual.block_reason(),  # why the trade ticket can't place a trade now
             "setups": self.setups.view(),
             "last_trade": self.orders.last_trade.to_dict() if self.orders.last_trade else None,
-            "risk": self.risk.snapshot(self.balance, open_pnl),
+            "risk": self.risk.snapshot(self.balance, open_pnl, now=self.clock()),
             "strategy_state": {
                 k: (round(v, 2) if isinstance(v, float) else v) for k, v in self.strategy.state().items()
             },

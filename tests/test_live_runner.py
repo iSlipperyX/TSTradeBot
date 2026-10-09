@@ -134,7 +134,14 @@ class FakeTopstepX:
             task.cancel()
 
 
+def fresh_news_cache(data_dir) -> None:
+    """An up-to-date (empty) economic calendar, so the bot doesn't download the real one."""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "news_cache.json").write_text(json.dumps({"fetched_at": datetime.now(UTC).isoformat(), "events": []}))
+
+
 def make_runner(fake: FakeTopstepX, port: int, mode: str, tmp_path) -> LiveRunner:
+    fresh_news_cache(tmp_path)
     cfg = BotConfig.model_validate({
         "mode": mode,
         "data_dir": str(tmp_path),

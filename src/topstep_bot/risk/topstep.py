@@ -39,9 +39,6 @@ XFA_CONSISTENCY_DAYS = 3
 FLAT_BY = time(15, 10)  # Chicago time
 MICROS_PER_MINI = 10
 
-# Kept for older imports; the Combine rule is now measured against the profit target.
-COMBINE_CONSISTENCY_LIMIT = COMBINE_CONSISTENCY_TARGET
-
 
 @dataclass(frozen=True)
 class PlanSpec:
@@ -53,10 +50,6 @@ class PlanSpec:
     daily_loss_limit: float  # the optional Topstep DLL chosen at checkout
     # Express Funded Account scaling plan: (minimum balance, max minis) tiers.
     xfa_scaling: tuple[tuple[float, int], ...]
-
-    @property
-    def legacy_daily_loss_limit(self) -> float:  # old name, kept for compatibility
-        return self.daily_loss_limit
 
     @property
     def consistency_day_limit(self) -> float:
@@ -91,15 +84,17 @@ def starting_balance_for(plan: PlanSpec, stage: str) -> float:
     return 0.0 if stage == "express" else plan.account_size
 
 
-def max_minis_allowed(plan: PlanSpec, stage: str, start_of_day_balance: float) -> int:
+def max_minis_allowed(plan: PlanSpec, stage: str, start_of_day_balance: float, starting_balance: float | None = None) -> int:
     """Topstep's maximum position size in mini-contract units for today's session.
 
     In an XFA the limit follows the Scaling Plan and only changes between sessions, so it is
-    computed from the balance at the start of the day.
+    computed from the profit at the start of the day: the balance minus ``starting_balance``
+    (the account's starting balance, $0 for an XFA unless ``account.starting_balance`` says otherwise).
     """
     if stage != "express":
         return plan.max_minis
-    profit = start_of_day_balance - starting_balance_for(plan, stage)
+    start = starting_balance_for(plan, stage) if starting_balance is None else starting_balance
+    profit = start_of_day_balance - start
     allowed = plan.xfa_scaling[0][1]
     for threshold, minis in plan.xfa_scaling:
         if profit >= threshold:
@@ -113,9 +108,11 @@ def product_limit(root: str, plan: PlanSpec) -> int | None:
     return None if caps is None else caps[_PLAN_INDEX[plan.name]]
 
 
-def max_contracts_allowed(plan: PlanSpec, stage: str, start_of_day_balance: float, root: str, is_micro: bool) -> int:
+def max_contracts_allowed(
+    plan: PlanSpec, stage: str, start_of_day_balance: float, root: str, is_micro: bool, starting_balance: float | None = None
+) -> int:
     """Topstep's maximum position in contracts of this instrument: plan/scaling cap and product cap."""
-    minis = max_minis_allowed(plan, stage, start_of_day_balance)
+    minis = max_minis_allowed(plan, stage, start_of_day_balance, starting_balance)
     cap = minis * MICROS_PER_MINI if is_micro else minis
     product = product_limit(root, plan)
     return cap if product is None else min(cap, product)
@@ -138,28 +135,6 @@ class LossLimitTracker:
     def room(self, equity: float) -> float:
         """Dollars between current equity (balance + open P&L) and the floor."""
         return equity - self.floor
-
-    def breached(self, equity: float) -> bool:
-        return equity <= self.floor
-
-
-@dataclass
-class ConsistencyStatus:
-    total_profit: float
-    best_day: float
-    ratio: float | None  # best day / total profit
-    ok: bool
-    required_total: float  # total profit needed for the best day to be within the limit
-
-
-def consistency(daily_pnls: list[float], limit: float = COMBINE_CONSISTENCY_TARGET) -> ConsistencyStatus:
-    """Best day versus total profit: ``ok`` when the best day is at most ``limit`` of the total."""
-    total = sum(daily_pnls)
-    best = max(daily_pnls, default=0.0)
-    ratio = best / total if total > 0 else None
-    ok = total > 0 and best <= limit * total + 1e-9
-    required = best / limit if best > 0 else 0.0
-    return ConsistencyStatus(total, best, ratio, ok, required)
 
 
 @dataclass
@@ -185,24 +160,3 @@ def combine_progress(plan: PlanSpec, total_profit: float, best_day: float) -> Co
     target = max(plan.profit_target, best_day / COMBINE_CONSISTENCY_TARGET if best_day > 0 else 0.0)
     remaining = max(0.0, target - total_profit)
     return CombineProgress(total_profit, best_day, target, remaining, total_profit >= target - 1e-9, target > plan.profit_target)
-
-
-@dataclass
-class PayoutProgress:
-    path: str
-    eligible: bool
-    detail: str
-
-
-def xfa_payout_progress(daily_pnls: list[float], path: str = "standard") -> PayoutProgress:
-    """Progress toward an Express Funded Account payout (days since the last payout)."""
-    if path == "consistency":
-        traded = len(daily_pnls)
-        status = consistency(daily_pnls, XFA_CONSISTENCY_LIMIT)
-        eligible = traded >= XFA_CONSISTENCY_DAYS and status.ok
-        ratio = f"{status.ratio:.0%}" if status.ratio is not None else "n/a"
-        return PayoutProgress(path, eligible, f"{traded}/{XFA_CONSISTENCY_DAYS} trading days, best day {ratio} of net profit "
-                              f"(must be {XFA_CONSISTENCY_LIMIT:.0%} or less)")
-    wins = sum(1 for p in daily_pnls if p >= XFA_WINNING_DAY)
-    return PayoutProgress(path, wins >= XFA_STANDARD_WINNING_DAYS,
-                          f"{wins}/{XFA_STANDARD_WINNING_DAYS} winning days of ${XFA_WINNING_DAY:,.0f}+")

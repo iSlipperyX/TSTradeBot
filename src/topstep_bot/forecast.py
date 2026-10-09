@@ -67,7 +67,7 @@ def session_clear(schedule: SessionSchedule, t: datetime, days: int = 21) -> dat
         if t >= last:
             t = schedule.entry_window(_next_trade_day(schedule, day))[0]
             continue
-        if schedule.in_blackout(t) or (schedule.news is not None and schedule.news.blackout_reason(t)):
+        if schedule.in_blackout(t) or schedule.news_blackout(t):
             t = t.replace(second=0, microsecond=0) + timedelta(minutes=1)
             continue
         return t

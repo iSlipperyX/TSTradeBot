@@ -25,7 +25,7 @@ from topstep_bot.controller import Controller
 from topstep_bot.web import HttpServer, Request, Response
 
 from .conftest import run
-from .test_live_runner import FakeTopstepX
+from .test_live_runner import FakeTopstepX, fresh_news_cache
 
 TOKEN = "123456:TEST"
 CHAT = 555
@@ -122,6 +122,7 @@ def test_telegram_commands_never_close_the_bot(workdir, caplog):
             await api.start()
             await telegram.start()
             cfg_path = workdir / "config.yaml"
+            fresh_news_cache(workdir / "data")
             cfg_path.write_text(yaml.safe_dump({
                 "mode": "paper",
                 "api": {"base_url": f"http://127.0.0.1:{api.port}", "user_hub_url": f"{hub}/user",

@@ -1,9 +1,9 @@
-from datetime import date, time
+from datetime import date, time, timedelta
 
 import pytest
 
 from topstep_bot.config import BotConfig, SessionConfig
-from topstep_bot.risk.topstep import PLANS, LossLimitTracker, consistency, max_minis_allowed
+from topstep_bot.risk.topstep import PLANS, LossLimitTracker, max_minis_allowed
 from topstep_bot.sessions import SessionSchedule
 
 from .conftest import ct
@@ -38,18 +38,10 @@ def test_express_mll_starts_negative_and_locks_at_zero():
     assert t.floor == 0
 
 
-def test_mll_breach_is_inclusive_and_uses_equity():
+def test_mll_room_uses_equity():
     t = LossLimitTracker(50_000, 2_000)
-    assert t.breached(48_000)
-    assert not t.breached(48_000.01)
+    assert t.room(48_000) == 0  # touching the floor ends the account
     assert t.room(49_000) == 1_000
-
-
-def test_consistency_rule():
-    assert consistency([500, 400, 300]).ok  # best 500 <= 55% of 1200
-    status = consistency([1_600, 200, 200])
-    assert not status.ok
-    assert status.required_total == pytest.approx(1_600 / 0.55)
 
 
 def test_contract_caps():
@@ -82,6 +74,27 @@ def test_entry_window_and_flatten(schedule):
     assert schedule.must_be_flat(ct(2026, 3, 3, 15, 0))
     assert schedule.must_be_flat(ct(2026, 3, 3, 16, 30))
     assert not schedule.must_be_flat(ct(2026, 3, 3, 17, 5))
+
+
+def test_session_rules_across_dst_changes(schedule):
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    # Clocks go forward on Sunday 2026-03-08 and back on Sunday 2026-11-01: the session still opens at
+    # 17:00 CT, and the flatten deadline stays at 15:00 Chicago time (a different hour in UTC).
+    for sunday, monday in ((date(2026, 3, 8), date(2026, 3, 9)), (date(2026, 11, 1), date(2026, 11, 2))):
+        assert schedule.trading_day(ct(sunday.year, sunday.month, sunday.day, 17, 0)) == monday
+        assert not schedule.market_open(ct(sunday.year, sunday.month, sunday.day, 16, 59))
+        assert schedule.market_open(ct(sunday.year, sunday.month, sunday.day, 17, 0))
+        assert schedule.trading_day(ct(monday.year, monday.month, monday.day, 17, 0)) == monday + timedelta(days=1)
+        assert schedule.entry_block_reason(ct(monday.year, monday.month, monday.day, 8, 30)) is None
+        assert schedule.entry_block_reason(ct(monday.year, monday.month, monday.day, 8, 29)) is not None
+        assert schedule.must_be_flat(ct(monday.year, monday.month, monday.day, 15, 0))
+        assert not schedule.must_be_flat(ct(monday.year, monday.month, monday.day, 14, 59))
+    assert schedule.flatten_time(date(2026, 3, 6)) == datetime(2026, 3, 6, 21, 0, tzinfo=utc)  # CST
+    assert schedule.flatten_time(date(2026, 3, 9)) == datetime(2026, 3, 9, 20, 0, tzinfo=utc)  # CDT
+    assert schedule.flatten_time(date(2026, 10, 30)) == datetime(2026, 10, 30, 20, 0, tzinfo=utc)
+    assert schedule.flatten_time(date(2026, 11, 2)) == datetime(2026, 11, 2, 21, 0, tzinfo=utc)
 
 
 def test_holidays_and_blackouts():

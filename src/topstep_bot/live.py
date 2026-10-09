@@ -506,12 +506,14 @@ class LiveRunner:
     # ----------------------------------------------------------- 24/7 helpers
 
     async def _setup_news(self) -> None:
-        if not self.cfg.news.enabled or self.core is None:
+        """Load the economic calendar. Loaded even with news pauses off: Topstep's rule against taking the
+        maximum position size into a release needs it (without it every trade is held to half size)."""
+        if self.core is None:
             return
         n = self.cfg.news
         calendar = NewsCalendar(n.url, self.cfg.data_path / "news_cache.json", n.impacts, n.currencies,
                                 n.minutes_before, n.minutes_after)
-        if not calendar.load_cache() or calendar.fetched_at is None or (
+        if not calendar.load_cache() or not calendar.is_current(self.now()) or (
             self.now() - calendar.fetched_at > timedelta(hours=6)
         ):
             await calendar.refresh()
@@ -520,16 +522,28 @@ class LiveRunner:
         if upcoming:
             tz = self.core.schedule.tz
             listing = ", ".join(f"{e.label} {e.time.astimezone(tz):%a %H:%M} CT" for e in upcoming[:6])
-            self.core.event("info", f"News blackouts in the next 24h: {listing}")
+            heading = "News blackouts in the next 24h" if n.enabled else "High-impact news in the next 24h (news pauses are off)"
+            self.core.event("info", f"{heading}: {listing}")
 
     async def _news_loop(self) -> None:
+        stale_noted = False
         while True:
-            await asyncio.sleep(6 * 3600)
-            if self.core and self.core.schedule.news:
-                try:
-                    await self.core.schedule.news.refresh()
-                except Exception:  # noqa: BLE001 - keep the last calendar; trading goes on
-                    log.exception("Economic calendar refresh failed")
+            news = self.core.schedule.news if self.core else None
+            fresh = news is not None and news.fetched_at is not None and self.now() - news.fetched_at < timedelta(hours=6)
+            await asyncio.sleep(6 * 3600 if fresh else 15 * 60)  # after a failed download, try again sooner
+            if news is None:
+                continue
+            try:
+                await news.refresh()
+            except Exception:  # noqa: BLE001 - keep the last calendar; trading goes on
+                log.exception("Economic calendar refresh failed")
+            if news.is_current(self.now()):
+                stale_noted = False
+            elif not stale_noted:
+                stale_noted = True
+                self.core.event("warning", "The economic calendar is out of date (it couldn't be downloaded): until it "
+                                           "loads again, new trades use at most half of Topstep's maximum size and "
+                                           "news pauses may miss releases", "risk")
 
     def _apply_ramp_up(self) -> None:
         """The first live trading days on an account run at reduced risk (replaces a paper-trading period).

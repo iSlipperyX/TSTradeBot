@@ -68,7 +68,8 @@ class AccountConfig(_Section):
     starting_balance: float | None = None
     mll_floor_override: float | None = Field(
         default=None,
-        description="Current Maximum Loss Limit floor shown in your Topstep dashboard. Set it to sync the bot.",
+        description="Current Maximum Loss Limit floor shown in your Topstep dashboard. Set it to sync the bot "
+        "(it only ever raises the floor the bot has saved: Topstep's floor never goes down).",
     )
     topstep_daily_loss_limit: float | None = Field(
         default=None,
@@ -77,7 +78,8 @@ class AccountConfig(_Section):
     )
     payout_path: Literal["standard", "consistency"] = Field(
         default="standard",
-        description="Express Funded Account payout path chosen at activation (only used for progress reports).",
+        description="Express Funded Account payout path chosen at activation (only used to describe your payout rules, "
+        "e.g. in topstep-bot rules).",
     )
 
     @model_validator(mode="before")

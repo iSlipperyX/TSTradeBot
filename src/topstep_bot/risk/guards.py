@@ -5,8 +5,10 @@ check right before an order goes out, so a bug elsewhere still can't make the bo
 
 * ``OrderGuard.check_entry`` - a new entry may never take the position past Topstep's cap.
 * ``OrderGuard.record_action`` - an order-rate circuit breaker. Topstep prohibits high-frequency
-  trading; a runaway loop that sends orders too quickly trips the breaker and stops new entries
-  (exits and flattening are never blocked).
+  trading; a runaway loop that sends orders too quickly trips the breaker, and the engine then
+  halts the bot and closes the open trade (a restart is needed to trade again). Exits and
+  flattening are never blocked.
+* A daily entry limit - past ``max_entries_per_day`` further entries are refused (nothing is closed).
 * ``api_trading_block`` - Live Funded Accounts may not trade through the ProjectX API.
 * ``hosting_warning`` - Topstep's terms prohibit trading from a VPS, VPN or remote server.
 """

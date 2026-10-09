@@ -132,7 +132,8 @@ async def run_preflight(
     if spec is None:
         rep.add(WARN, "Product", f"{root} has no built-in spec (fees, trading hours) - double-check it is allowed on Topstep")
     else:
-        cap_now = max_contracts_allowed(plan, cfg.account.stage, starting_balance(cfg), root, offline_contract(root).is_micro)
+        start = starting_balance(cfg)
+        cap_now = max_contracts_allowed(plan, cfg.account.stage, start, root, offline_contract(root).is_micro, start)
         extra = f" (Topstep's product limit for {root})" if product_limit(root, plan) is not None else ""
         rep.add(OK, "Position limit", f"at most {cap_now} {root} contract(s){extra}"
                 + (" - grows with the Scaling Plan" if cfg.account.stage == "express" else ""))

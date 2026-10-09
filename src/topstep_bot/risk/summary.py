@@ -61,7 +61,8 @@ def rule_rows(cfg: BotConfig) -> list[tuple[str, str, str]]:
 
     symbol = cfg.instrument.symbol
     is_micro = offline_contract(symbol).is_micro if symbol in SPECS else symbol.startswith("M")
-    cap_now = max_contracts_allowed(plan, stage, starting_balance_for(plan, stage), symbol, is_micro)
+    start = cfg.account.starting_balance if cfg.account.starting_balance is not None else starting_balance_for(plan, stage)
+    cap_now = max_contracts_allowed(plan, stage, start, symbol, is_micro, start)
     unit = "micros" if is_micro else "contracts"
     topstep_cap = f"{cap_now} {symbol} {unit}"
     if stage == "express":
@@ -89,6 +90,6 @@ def rule_rows(cfg: BotConfig) -> list[tuple[str, str, str]]:
     rows.append((
         "Automation",
         "your own computer only (no VPS/VPN), no high-frequency trading, not on Live Funded accounts",
-        "warns on servers/VMs, stops after 30 order actions a minute, refuses Live accounts",
+        "warns on servers/VMs, stops and closes the trade after 30 order actions a minute, refuses Live accounts",
     ))
     return rows

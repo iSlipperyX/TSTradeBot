@@ -17,7 +17,6 @@ from topstep_bot.risk.topstep import (
     combine_progress,
     max_contracts_allowed,
     product_limit,
-    xfa_payout_progress,
 )
 from topstep_bot.sessions import SessionSchedule
 
@@ -139,6 +138,24 @@ def test_risk_manager_uses_product_cap():
     assert rm.position_size(2_000.0, 1_999.0, 50_000) <= 3
 
 
+def test_xfa_scaling_plan_counts_profit_from_the_configured_starting_balance(mnq):
+    from topstep_bot.models import OrderSide
+    from topstep_bot.risk.summary import rule_rows
+
+    from .conftest import run
+
+    core, broker, now = _core(mnq, account={"stage": "express", "starting_balance": 50_000})
+
+    async def go():
+        await core.begin_day(DAY, 50_000)  # no profit yet: the first tier, 2 minis
+        assert core.tracker.floor == 48_000
+        assert core.risk.max_contracts_topstep() == 20
+        await broker.on_price(now[0], 100.0)
+        assert await core.orders.enter(OrderSide.BUY, 21, 90.0, None, "too big", ref_price=100.0) is None
+    run(go())
+    assert "20 MNQ micros" in dict((r[0], r[1]) for r in rule_rows(core.cfg))["Position size"]
+
+
 # ------------------------------------------------------------------- Daily Loss Limit
 
 def test_topstep_dll_true_uses_the_plan_amount():
@@ -183,8 +200,27 @@ def test_mll_guard_flattens_before_the_floor(mnq):
 
 def test_xfa_mll_resets_to_zero_floor():
     t = LossLimitTracker(0, 2_000, floor=0)  # after the first payout the MLL is $0
-    assert t.breached(0)
+    assert t.room(0) == 0
     assert t.room(500) == 500
+
+
+def test_old_mll_override_never_lowers_the_saved_floor(mnq, caplog):
+    from topstep_bot.broker.paper import PaperBroker
+    from topstep_bot.factory import build_core
+
+    def floor(override, saved):
+        cfg = BotConfig.model_validate({"account": {"mll_floor_override": override}})
+        broker = PaperBroker(mnq, 50_500, slippage_ticks=0, live=True)
+        core = build_core(cfg, mnq, broker, clock=lambda: OPEN, account_label="t", mll_floor=saved)
+        core.tracker.end_of_day(50_500)  # the daily restart applies yesterday's (losing) close
+        return core.tracker.floor
+
+    # The override was set weeks ago; since then a $51,000 close raised the saved floor to $49,000.
+    assert floor(48_500, 49_000) == 49_000
+    assert "mll_floor_override" in caplog.text and "$49,000" in caplog.text
+    assert floor(49_250, 49_000) == 49_250  # a higher override syncs the bot up to Topstep's dashboard
+    assert floor(48_500, None) == 48_500  # nothing saved yet: the override is used as it is
+    assert floor(None, 49_000) == 49_000
 
 
 # ----------------------------------------------------------------------- news
@@ -264,16 +300,6 @@ def test_hosting_warning_detects_cloud_servers(tmp_path):
     (tmp_path / "sys_vendor").write_text("Dell Inc.\n")
     assert hosting_warning(tmp_path, env={}) is None
     assert "Remote Desktop" in hosting_warning(tmp_path, env={"SESSIONNAME": "RDP-Tcp#3"})
-
-
-# ---------------------------------------------------------------- XFA payouts
-
-def test_xfa_payout_progress():
-    assert xfa_payout_progress([200, 150, -50, 300, 160, 175]).eligible
-    assert not xfa_payout_progress([200, 149, 300]).eligible
-    assert xfa_payout_progress([400, 300, 300], "consistency").eligible  # best day 40%
-    assert not xfa_payout_progress([450, 300, 250], "consistency").eligible  # 45%
-    assert not xfa_payout_progress([300, 300], "consistency").eligible  # only 2 days
 
 
 def test_session_must_end_before_topstep_flat_time():
@@ -357,6 +383,28 @@ def test_engine_closes_a_max_size_position_before_news(mnq):
     run(go())
 
 
+def test_max_size_position_is_closed_before_news_with_no_entry_pause(mnq):
+    from topstep_bot.models import OrderSide
+
+    from .conftest import run
+
+    core, broker, now = _core(mnq, risk={"risk_per_trade": 400, "personal_daily_loss_limit": 1_000})
+    cal = NewsCalendar("http://unused", Path("unused.json"), ["High"], ["USD"], 0, 10)  # news.minutes_before: 0
+    cal.events, cal.fetched_at = [NewsEvent("CPI m/m", "USD", "High", OPEN + timedelta(minutes=1))], OPEN
+    core.schedule.news = cal
+
+    async def go():
+        await core.begin_day(DAY, 50_000)
+        await broker.on_price(now[0], 100.0)
+        await core.orders.enter(OrderSide.BUY, 50, 99.0, None, "t", ref_price=100.0)
+        await broker.drain()
+        assert core.orders.position == 50
+        await core.on_clock(now[0])
+        await broker.drain()
+        assert broker.position == 0
+    run(go())
+
+
 def test_engine_keeps_a_smaller_position_through_news(mnq):
     from topstep_bot.models import OrderSide
 
@@ -374,6 +422,17 @@ def test_engine_keeps_a_smaller_position_through_news(mnq):
         await broker.drain()
         assert broker.position == 2
     run(go())
+
+
+def test_dashboard_shows_the_size_limit_in_force_near_news(mnq):
+    from .conftest import run
+
+    core, broker, now = _core(mnq)
+    run(core.begin_day(DAY, 50_000))
+    core.risk.live_guards = True
+    core.schedule.news = calendar(NewsEvent("CPI m/m", "USD", "High", OPEN + timedelta(minutes=20)))
+    risk = core.snapshot()["risk"]
+    assert risk["max_contracts"] == 25 and risk["topstep_max_contracts"] == 50
 
 
 def test_order_manager_refuses_an_entry_over_the_cap(mnq):

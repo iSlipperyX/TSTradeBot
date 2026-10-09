@@ -54,7 +54,8 @@ touching it ends the account. In an XFA the MLL moves to $0 after the first payo
   once when it gets within half of it.
 - If the bot can't work out the floor (for example an account that was traded before), the
   preflight check asks you for the value shown in your dashboard, or you can set
-  `account.mll_floor_override`.
+  `account.mll_floor_override`. The override can only raise the floor the bot has saved (Topstep's
+  floor never goes down), so an old value left in `config.yaml` can't loosen it later.
 
 ### Daily Loss Limit (DLL)
 
@@ -120,10 +121,11 @@ news.
 
 **The bot:**
 - Pauses new entries from 5 minutes before to 10 minutes after each high-impact US release (from
-  the economic calendar; `news` settings).
-- In the 30 minutes before a release, or whenever the calendar can't be loaded, new trades use
-  at most half of Topstep's maximum position size.
-- If a position at the maximum size is open just before a release, it is closed.
+  the economic calendar; `news` settings). `news.enabled: false` turns only this pause off.
+- In the 30 minutes before a release, or whenever the calendar can't be loaded (or is more than 12
+  hours old, or from last week), new trades use at most half of Topstep's maximum position size.
+- If a position at the maximum size is open just before a release (at least 2 minutes before,
+  whatever `news.minutes_before` says), it is closed.
 - `news.flatten_before: true` closes every open trade before releases, not just full-size ones.
 
 ### Automation, VPS and Live accounts
@@ -139,9 +141,9 @@ news.
 - Runs on your own Windows computer (`start.bat`), and the preflight check warns if the computer
   looks like a cloud server, a virtual machine or a Remote Desktop session.
 - Refuses to trade an account the API reports as a real-money (Live) account.
-- Has an order-rate circuit breaker: more than 30 order actions in a minute, or more than 20 entries
-  in a day, stops new entries (closing positions is never blocked). A normal day is a handful of
-  orders.
+- Has an order-rate circuit breaker: more than 30 order actions in a minute stops the bot, closes
+  the open trade and needs a restart; more than 20 entries in a day refuses further entries.
+  Closing positions is never blocked. A normal day is a handful of orders.
 - Telegram and the dashboard only send commands to the bot on your computer; the orders still
   come from your computer.
 
@@ -161,7 +163,8 @@ one. If your TopstepX Risk Settings show different values:
 - **Different position limit** (for example a temporary product cap): set `risk.max_contracts` to
   the lower number in `config.yaml`. The bot never goes above it.
 - **Different Daily Loss Limit**: set `account.topstep_daily_loss_limit` to the dollar amount.
-- **Different MLL floor**: set `account.mll_floor_override` to the value in your dashboard.
+- **Different MLL floor**: set `account.mll_floor_override` to the value in your dashboard (it is used
+  when it is higher than the floor the bot saved).
 - Anything else: update `risk/topstep.py` and run the tests (`pytest`); every rule has a test in
   `tests/test_topstep_compliance.py`.
 

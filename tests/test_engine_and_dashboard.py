@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from pathlib import Path
 
 from topstep_bot.broker.paper import PaperBroker
 from topstep_bot.config import BotConfig
@@ -73,6 +74,99 @@ def test_engine_ignores_signal_when_stop_on_wrong_side(mnq):
         await core._handle_entry(Signal("short", stop_price=95.0, reason="bad"), b, core.context(b))
         assert core.orders.trade is None
     run(go())
+
+
+def test_late_bar_is_checked_against_the_real_time(mnq):
+    """A bar fetched late must not open a trade in a news blackout that started since, or act on an old signal."""
+    from topstep_bot.news import NewsCalendar, NewsEvent
+
+    async def go():
+        core, broker, now = make_core(mnq, session={"trade_start": "07:00"})
+        release = ct(2026, 3, 3, 7, 31)  # news blackout 07:26-07:41
+        cal = NewsCalendar("http://unused", Path("unused.json"), ["High"], ["USD"], 5, 10)
+        cal.events, cal.fetched_at = [NewsEvent("CPI m/m", "USD", "High", release)], release - timedelta(hours=1)
+        core.schedule.news = cal
+        await core.begin_day(core.schedule.trading_day(release), 50_000)
+        core.last_price = 100.0
+        core.strategy.on_bar = lambda b, ctx: Signal("long", stop_price=90.0, reason="t")
+        now[0] = ct(2026, 3, 3, 7, 27)
+        await core.on_bar(bar(ct(2026, 3, 3, 7, 20), 100, 100, 100, 100))  # closed 07:25, before the blackout
+        assert core.orders.trade is None
+        assert "news blackout" in core.events[0]["message"]
+        now[0] = ct(2026, 3, 3, 8, 0)
+        await core.on_bar(bar(ct(2026, 3, 3, 7, 45), 100, 100, 100, 100))  # closed 10 minutes ago
+        assert core.orders.trade is None
+        assert "came in late" in core.events[0]["message"]
+        await core.on_bar(bar(ct(2026, 3, 3, 7, 55), 100, 100, 100, 100))  # just closed: trades
+        assert core.orders.trade is not None
+    run(go())
+
+
+def test_a_late_bar_from_a_finished_day_never_rolls_the_day_back(mnq):
+    async def go():
+        core, broker, now = make_core(mnq)
+        day = core.schedule.trading_day(T0)
+        await core.begin_day(day, 50_000)
+        core.risk.trades_today, core.balance = 2, 51_400
+        now[0] = ct(2026, 3, 3, 17, 0)
+        await core.on_clock(now[0])  # the day closes at 17:00
+        next_day = core.current_day
+        assert next_day > day and core.risk.trades_today == 0
+        assert core.tracker.floor == 49_400  # the MLL trails the $51,400 close
+        now[0] = ct(2026, 3, 3, 17, 5)
+        await core.on_bar(bar(ct(2026, 3, 3, 15, 55), 100, 100, 100, 100))  # missed at 16:00, fetched now
+        await core.on_clock(now[0])
+        assert core.current_day == next_day
+        row = next(r for r in core.journal.daily("test") if r["trading_day"] == day.isoformat())
+        assert row["net_pnl"] == 1_400 and row["trades"] == 2
+        assert core.journal.get_state("last_eod:test") == day.isoformat()
+    run(go())
+
+
+def test_flatten_retry_uses_the_pc_clock_and_halt_always_says_so(mnq):
+    """Quotes carry the exchange's timestamps: a PC clock behind them must not silence a later flatten or halt."""
+    async def go():
+        core, broker, now = make_core(mnq, risk={"risk_per_trade": 400, "personal_daily_loss_limit": 450})
+        await core.begin_day(core.schedule.trading_day(T0), 50_000)
+        b = bar(T0, 100, 100, 100, 100)
+        core.last_price = 100.0
+        await core._handle_entry(Signal("long", stop_price=50.0, reason="t"), b, core.context(b))
+        await broker.on_bar(bar(T0 + timedelta(minutes=5), 100, 100, 100, 100))
+        calls = []
+
+        async def flatten_all(reason):
+            calls.append(reason)
+        core.orders.flatten_all = flatten_all
+        now[0] = T0 + timedelta(minutes=6)
+        await core.on_price(now[0] + timedelta(minutes=1), 20.0)  # the exchange's clock is a minute ahead
+        assert len(calls) == 1
+        now[0] += timedelta(seconds=10)
+        await core.halt("KILL file found")
+        assert len(calls) == 2 and "KILL file found" in calls[1]
+        await core.halt("KILL file found")  # moments later: no second flatten, but still reported
+        assert len(calls) == 2
+        assert "FLATTEN: halted: KILL file found" in core.events[0]["message"]
+    run(go())
+
+
+def test_skipped_signals_are_noted_once_per_day_each(mnq):
+    core, _, _ = make_core(mnq)
+    day = core.schedule.trading_day(T0)
+    run(core.begin_day(day, 50_000))
+    for message in ("Skipped LONG: A", "Skipped SHORT: B", "Skipped LONG: A", "Skipped SHORT: B"):
+        core._note_skip(message)
+    assert [e["message"] for e in core.events] == ["Skipped SHORT: B", "Skipped LONG: A"]
+    run(core.begin_day(day + timedelta(days=1), 50_000))
+    core._note_skip("Skipped LONG: A")  # a new day: noted again
+    assert len(core.events) == 3
+
+
+def test_widened_stop_still_respects_max_stop_ticks(mnq):
+    core, _, _ = make_core(mnq, risk={"min_stop_atr": 2.0, "max_stop_ticks": 40})
+    run(core.begin_day(core.schedule.trading_day(T0), 50_000))
+    for _ in range(14):
+        core.atr.update(110.0, 100.0, 105.0)  # ATR 10 points, so the minimum stop is 20 points (80 ticks)
+    assert core.plan_entry(Signal("long", stop_price=99.0, reason="t"), 100.0) == "stop is 80 ticks away (max 40)"
 
 
 def test_bot_api_requires_token_and_local_host(mnq):
