@@ -30,6 +30,11 @@ knowledge:                      # what the bot learns while it runs (drives the 
   deep_learning: true           # long-run memory: keep every bar, backfill history and replay it all daily (reports only)
   deep_history_days: 365        # how far back the long-run memory reaches (up to 3650)
 
+first_trade:                    # one educated trade soon after the bot starts (the "Teach the bot" goal turns it on)
+  enabled: false
+  within_minutes: 15            # due this long after the start, or after entries open if it starts outside hours
+  contracts: 1                  # its size: at most this, and never more than the risk rules allow
+
 risk:
   risk_per_trade: 150          # $ lost if a trade hits its stop (position size is calculated from this)
   personal_daily_loss_limit: 500 # stop trading for the day after losing this much (incl. open P&L)

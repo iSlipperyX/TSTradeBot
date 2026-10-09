@@ -22,7 +22,7 @@ from topstep_bot.config import BotConfig
 from topstep_bot.execution import ManagedTrade, OrderManager, TradeState
 from topstep_bot.indicators import ATR
 from topstep_bot.journal import Journal
-from topstep_bot.knowledge import MANUAL, RegimeTracker, slot_for
+from topstep_bot.knowledge import FIRST_TRADE, MANUAL, RegimeTracker, slot_for
 from topstep_bot.manual import ManualTrading
 from topstep_bot.market_context import MarketContext
 from topstep_bot.models import Account, Bar, Contract, OrderSide, Signal
@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 event_log = logging.getLogger("topstep_bot.events")
 
 if TYPE_CHECKING:
+    from topstep_bot.first_trade import FirstTradePlanner
     from topstep_bot.knowledge import KnowledgeBase
     from topstep_bot.memory import LongRunMemory
     from topstep_bot.recommendations import RecommendationBook
@@ -126,6 +127,7 @@ class TradingCore:
         self.remote: RemoteControl | None = None  # settings/trades from the dashboard and Telegram
         self.manual = ManualTrading(self)  # trades you open yourself from the dashboard's trade ticket
         self.setups = SetupTracker(self)  # the trades every strategy is building toward (dashboard)
+        self.first_trade: FirstTradePlanner | None = None  # an educated trade soon after starting (first_trade.py)
         self._insights: dict[bool, tuple[tuple, dict]] = {}  # cached "What the bot learned" reports (recent / long-run)
         self.memory: LongRunMemory | None = None  # every bar seen + what every strategy did on all of it (reports only)
 
@@ -289,6 +291,8 @@ class TradingCore:
                 elif action == "stop":
                     await self.orders.update_stop(value)
         self.setups.on_bar_closed(bar.ts + self.tf, bar.close)
+        if self.first_trade:
+            await self.first_trade.on_bar_closed(bar.ts + self.tf)
         if self.remote:
             self.remote.on_flat()
 
@@ -478,6 +482,8 @@ class TradingCore:
             event = self.schedule.news.releasing_soon(now)
             if event:
                 await self._flatten(f"closing ahead of news: {event.label}", now)
+        if self.first_trade:
+            await self.first_trade.on_clock(now)
 
     async def halt(self, reason: str) -> None:
         """Kill switch: flatten and stop opening trades until restarted."""
@@ -493,6 +499,8 @@ class TradingCore:
             self.recommender.trade_closed(t)
         if t.strategy == MANUAL:
             self.manual.trade_closed(t)
+        elif t.strategy == FIRST_TRADE and self.first_trade:
+            self.first_trade.trade_closed(t)
         self.closed_trades.append(t)
         if self.journal and self.current_day:
             self.journal.record_trade(t, self.current_day, self.account_label, self.contract.name, self.trade_facts(t))
@@ -617,6 +625,7 @@ class TradingCore:
             "slot": self.slot(),
             "regime": self.regime.value,
             "knowledge": self.knowledge_summary(),
+            "first_trade": self.first_trade.view() if self.first_trade else None,
             "forecast": self.forecast(),
             "memory": self.memory.status() if self.memory else None,
         }

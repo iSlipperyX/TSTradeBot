@@ -129,6 +129,7 @@ def test_first_run_from_an_empty_folder_to_a_running_bot(tmp_path, clean_env):
         cfg = load_config(path)
         assert cfg.account.account_id == 101 and cfg.account.account_name == "50KTC-V2-11-22"
         assert cfg.strategy.params == {"trade_unproven": True} and not cfg.risk.consistency_guard
+        assert cfg.first_trade.enabled and cfg.first_trade.within_minutes == 15  # Teach the bot: first trade on
         assert path.read_text().startswith("# Goal: LEARN")
         s = (await http.get("/api/status")).json()
         assert s["setup"]["configured"] and s["setup"]["blocker"] is None
@@ -154,12 +155,27 @@ def test_saving_keeps_hand_edits_and_switching_goal_restores_the_profile(tmp_pat
         assert cfg.instrument.symbol == "MES" and cfg.news.minutes_before == 15 and "# my own setting" in saved
         assert cfg.risk.consistency_guard and cfg.risk.max_consecutive_losses == 2 and cfg.risk.daily_profit_target is None
         assert cfg.strategy.params == {} and "# Goal: LEARN" not in saved
+        assert not cfg.first_trade.enabled and "within_minutes: 15" in saved  # off, its other settings kept
         assert (tmp_path / "config.yaml.bak").read_text() == text
 
         # a setting that would break a Topstep rule is refused, and the file is left alone
         r = (await http.post("/api/setup/save", json={**FORM, "daily_loss_limit": "2500", "risk_per_trade": "100"})).json()
         assert not r["ok"] and "Maximum Loss Limit" in r["message"] and path.read_text() == saved
     setup_scenario(tmp_path, body, config_text=text)
+
+
+def test_the_first_trade_after_starting_follows_the_teach_the_bot_goal(tmp_path, clean_env):
+    async def body(ctl, http, path):
+        r = (await http.post("/api/setup/save", json={**FORM, "goal": "learn", "first_trade": False})).json()
+        assert r["ok"], r
+        assert not load_config(path).first_trade.enabled  # unticked on the Setup tab
+        state = (await http.post("/api/setup/state")).json()["values"]
+        assert state["first_trade"] is False and state["first_trade_minutes"] == 15
+        r = (await http.post("/api/setup/save", json={**FORM, "goal": "learn", "first_trade": True})).json()
+        assert r["ok"] and load_config(path).first_trade.enabled
+        r = (await http.post("/api/setup/save", json={**FORM, "goal": "pass", "first_trade": True})).json()
+        assert r["ok"] and not load_config(path).first_trade.enabled  # never while protecting a Combine
+    setup_scenario(tmp_path, body, config_text=render_config())
 
 
 def test_a_broken_config_still_opens_the_dashboard_and_can_be_replaced(tmp_path, clean_env):

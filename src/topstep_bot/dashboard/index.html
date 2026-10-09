@@ -100,6 +100,15 @@ td.note { white-space:normal; color:var(--text2); min-width:200px; }
 .tag { font-size:11px; padding:1px 6px; border-radius:999px; border:1px solid var(--border); color:var(--text2); white-space:nowrap; }
 .tag.auto { border-color:var(--accent); color:var(--accent); }
 .tag.manual { border-color:var(--warn); color:var(--warn); }
+.tag.first { border-color:var(--good); color:var(--good); }
+
+/* first trade after starting */
+.firsthead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+.firstleft { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+.firststate { font-size:11.5px; padding:1px 8px; border-radius:999px; border:1px solid var(--border); color:var(--text2); }
+.firststate.watching, .firststate.waiting { border-color:var(--accent); color:var(--accent); }
+.firststate.blocked { border-color:var(--warn); color:var(--warn); }
+.firststate.done { border-color:var(--good); color:var(--good); }
 
 /* knowledge */
 .kb { display:inline-block; font-size:12px; padding:2px 7px; border-radius:6px; border:1px solid var(--border); white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -353,6 +362,15 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
       <ul id="next-basis" class="basis"></ul>
       <p class="hint" id="next-caveat"></p>
     </div>
+    <div class="panel" style="margin-top:12px" id="first-panel" hidden>
+      <div class="firsthead"><h2 style="margin:0">First trade after starting</h2><span class="firststate" id="first-state"></span>
+        <span class="spacer"></span><span class="firstleft" id="first-left"></span></div>
+      <p id="first-msg" style="margin:6px 0 0"></p>
+      <p class="hint" id="first-pick" style="margin:6px 0 0"></p>
+      <p class="hint" style="margin:6px 0 0">Teach the bot: if no strategy has traded by then, it takes the setup its knowledge base supports
+        best, at the smallest size, with every Topstep rule and risk limit applied. At most once a trading day. It is there to learn,
+        not because it is expected to make money.</p>
+    </div>
     <div class="panel" style="margin-top:12px" id="setups-panel">
       <div class="row"><h2 style="margin:0">Getting ready to trade</h2><span class="spacer"></span>
         <span class="meta" id="setups-meta"></span></div>
@@ -584,9 +602,14 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
       <div class="sfield" id="su-goal-row"><span class="lbl">What is this account for?</span>
         <div class="ctl"><div class="choices">
           <button class="choice" data-goal="pass"><b>Pass the Combine</b><small>Protect the account and stop early on big days.</small></button>
-          <button class="choice" data-goal="learn"><b>Teach the bot</b><small>Trade more often and try unproven strategies so it learns
-            faster. Losing this account is acceptable.</small></button></div></div>
+          <button class="choice" data-goal="learn"><b>Teach the bot</b><small>Trade more often, try unproven strategies and make a first
+            trade soon after starting, so it learns faster. Losing this account is acceptable.</small></button></div></div>
         <div class="help">Every Topstep rule applies either way.</div></div>
+      <div class="sfield" id="su-first-row" hidden><span class="lbl">First trade after starting</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-first"><span id="su-first-label">Make an educated trade
+          within 15 minutes of starting</span></label></div>
+        <div class="help">If no strategy has traded by then, the bot takes the setup its knowledge base supports best, at 1 contract.
+          Started outside trading hours, it waits for the session. Every rule still applies; at most once a trading day.</div></div>
       <div class="sfield" id="su-dll-row"><span class="lbl">Topstep Daily Loss Limit</span>
         <div class="ctl"><label class="checkline"><input type="checkbox" id="su-dll"><span id="su-dll-label">I added Topstep's optional Daily Loss Limit</span></label></div>
         <div class="help">Shown under Risk Settings in TopstepX. The bot always stops before it.</div></div>
@@ -883,6 +906,7 @@ const STATES = {running:["--good","Running"], starting:["--warn","Starting…"],
   stopping:["--warn","Stopping…"], stopped:["--muted","Stopped"], crashed:["--crit","Crashed"], failed:["--crit","Failed to start"]};
 function who(strategy, reason) {
   if (strategy === "manual") return `<span class="tag manual">you</span>`;
+  if (strategy === "first_trade") return `<span class="tag first">first trade</span>`;
   if ((reason || "").startsWith("taken from")) return `<span class="tag">idea</span>`;
   return `<span class="tag auto">bot</span>`;
 }
@@ -953,6 +977,7 @@ function tickClock() {
     return `<div class="c${soon ? " soon" : ""}" title="${esc(e.detail)}"><div class="cl">${esc(e.label)}</div><div class="cv">${fmtLeft(left)}</div>
       <div class="cs">at ${esc(e.local)}</div></div>`; }).join("");
   $("clock").innerHTML = state + nextTile(now) + evs + (c.holiday ? `<div class="holiday">⚠ ${esc(c.holiday)}</div>` : "");
+  tickFirst();
 }
 // the bot's own estimate of its next trade (forecast.py): a countdown tile next to the market's
 function nextTile(now) {
@@ -961,6 +986,8 @@ function nextTile(now) {
   let v = "–", sub = "not enough history yet";
   if (f.state === "in_trade") { v = "In a trade"; sub = "the next can follow it"; }
   else if (f.state === "blocked") { v = "On hold"; sub = f.blocked || ""; }
+  else if (f.first_trade && (!e.at || Date.parse(f.first_trade.at) < Date.parse(e.at))) {
+    v = fmtLeft(Date.parse(f.first_trade.at) - now); sub = `first trade by ${f.first_trade.at_local}`; }
   else if (e.at) { v = "~" + fmtLeft(Date.parse(e.at) - now);
     sub = `around ${e.at_local}` + (e.p_today != null && f.state !== "closed" ? ` · ${Math.round(100 * e.p_today)}% today` : ""); }
   else if (f.earliest && Date.parse(f.earliest) > now) { v = fmtLeft(Date.parse(f.earliest) - now); sub = `not before ${f.earliest_local}`; }
@@ -1032,6 +1059,31 @@ function renderOverview(b) {
     <td class="num ${t.net_pnl < 0 ? "neg" : t.net_pnl > 0 ? "pos" : ""}">${money(t.net_pnl)}</td><td class="num">${t.r != null ? signed(t.r) : "–"}</td>
     <td class="note">${esc(t.exit_reason)}</td></tr>`).join("") || `<tr><td colspan="9" class="empty">No closed trades yet today.</td></tr>`;
   $("activity").innerHTML = (b.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(11, 19))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">Nothing yet.</div>`;
+}
+
+// ---- first trade after starting (first_trade.py): countdown and what it would take
+let FIRST = null;
+const FIRST_STATES = {waiting: "Waiting for the session", watching: "Counting down", blocked: "Due, waiting for the rules",
+  done: "Done", idle: "Not this start", off: "Off"};
+function renderFirst(b) {
+  const f = b && b.first_trade, panel = $("first-panel");
+  FIRST = f || null; panel.hidden = !f;
+  if (!f) return;
+  $("first-state").textContent = FIRST_STATES[f.state] || f.state;
+  $("first-state").className = "firststate " + f.state;
+  $("first-msg").textContent = f.message;
+  const p = f.preview, t = f.taken;
+  $("first-pick").textContent = t && t.by === "first_trade" ? `Followed: ${t.text}`
+    : p ? `If it were due now: ${p.text}` : "";
+  tickFirst();
+}
+function tickFirst() {
+  const f = FIRST; if (!f) return;
+  const box = $("first-left");
+  if (!f.deadline || !["waiting", "watching", "blocked"].includes(f.state)) { box.textContent = ""; return; }
+  const left = Date.parse(f.deadline) - (Date.now() + CLOCK_OFFSET);
+  box.textContent = f.state === "blocked" || left <= 0 ? "due" : fmtLeft(left);
+  box.title = `By ${f.deadline_local}`;
 }
 
 // ---- next trade (Overview): when the bot expects to trade, and what that is based on
@@ -1406,9 +1458,9 @@ function renderInsights() {
     `${c.with_path.toLocaleString()} with their price path, ${c.with_costs.toLocaleString()} with costs. New ones carry all three.`;
   head.innerHTML = `<tr><th>Strategy</th><th class="num">Signals</th><th class="num">Won</th><th class="num">Before costs</th><th class="num">Costs</th>
     <th class="num">After costs</th><th class="num">Best point</th><th class="num">Worst point</th><th class="num">Losers up 1R first</th><th class="num">Real trades</th><th class="num">Simulated</th></tr>`;
-  const rows = [...r.strategies, ...(r.manual ? [r.manual] : [])].sort((a, b) => (b.net_r ?? -9) - (a.net_r ?? -9));
+  const rows = [...r.strategies, ...(r.manual ? [r.manual] : []), ...(r.first_trade ? [r.first_trade] : [])].sort((a, b) => (b.net_r ?? -9) - (a.net_r ?? -9));
   body.innerHTML = rows.map(x => { const thin = x.n < min;
-    return `<tr class="${thin ? "muted" : ""}"><td>${esc(x.title)}${x.name === "manual" ? ` <span class="tag manual">you</span>` : ""}</td><td class="num">${x.n}</td>
+    return `<tr class="${thin ? "muted" : ""}"><td>${esc(x.title)}${x.name === "manual" ? ` <span class="tag manual">you</span>` : x.name === "first_trade" ? ` <span class="tag first">first trade</span>` : ""}</td><td class="num">${x.n}</td>
       <td class="num">${x.win_rate == null ? "–" : Math.round(100 * x.win_rate) + "%"}</td>${rcell(x.gross_r)}
       <td class="num">${x.cost_r == null ? "–" : x.cost_r.toFixed(2)}</td>${rcell(x.net_r, null)}${rcell(x.mfe_r)}${rcell(x.mae_r)}
       <td class="num">${x.gave_back == null ? "–" : `${Math.round(100 * x.gave_back)}% <span class="muted">of ${x.n_losers}</span>`}</td>
@@ -1595,6 +1647,8 @@ function fillSetup() {
   su("payout").value = v.payout_path; su("dll").checked = v.topstep_dll;
   F.account_id = v.account_id; F.account_name = v.account_name; F.goal = v.goal;
   su("risk").value = v.risk_per_trade; su("daily").value = v.daily_loss_limit; su("trades").value = v.max_trades;
+  su("first").checked = v.goal === "learn" ? v.first_trade : true;  // on by default when switching to Teach the bot
+  su("first-label").textContent = `Make an educated trade within ${v.first_trade_minutes || 15} minutes of starting`;
   SU_SUG = suSuggestion();
   su("path").textContent = SU.exists ? `Saved in ${SU.path}` : `Creates ${SU.path}`;
   suMsg("save-msg", "");
@@ -1636,6 +1690,7 @@ function suRender() {
     : sym.key.startsWith("M") ? " A micro: the best way to start." : " A full-size contract: ten times a micro's risk per point.") : "";
   su("symbol-help").className = "help" + (blocked ? " bad" : "");
   const learn = F.goal === "learn";
+  su("first-row").hidden = !learn;
   if (learn) su("strategy").value = "adaptive";
   su("strategy").disabled = learn;
   const st = c.strategies.find(x => x.key === su("strategy").value);
@@ -1665,6 +1720,7 @@ function suChanged() {
   SU_SUG = next; suRender();
 }
 ["plan", "stage", "symbol", "strategy", "payout", "dll"].forEach(id => su(id).addEventListener("change", suChanged));
+su("first").addEventListener("change", () => SU_DIRTY = true);
 ["risk", "daily", "trades"].forEach(id => su(id).addEventListener("input", () => { SU_DIRTY = true; suRender(); }));
 ["user", "key"].forEach(id => su(id).addEventListener("input", () => SU_DIRTY = true));
 document.querySelectorAll("[data-goal]").forEach(b => b.onclick = () => { F.goal = b.dataset.goal; suChanged(); });
@@ -1693,7 +1749,8 @@ su("save").onclick = async () => {
   const d = await post("setup/save", {
     account_id: F.account_id, account_name: F.account_name, plan: su("plan").value, stage: su("stage").value, goal: F.goal,
     topstep_dll: su("dll").checked, payout_path: su("payout").value, symbol: su("symbol").value, strategy: su("strategy").value,
-    risk_per_trade: su("risk").value, daily_loss_limit: su("daily").value, max_trades: su("trades").value, fresh: su("fresh").checked});
+    risk_per_trade: su("risk").value, daily_loss_limit: su("daily").value, max_trades: su("trades").value, fresh: su("fresh").checked,
+    first_trade: su("first").checked});
   su("save").disabled = false;
   if (d.ok === false) { suMsg("save-msg", d.message, false); return; }
   toast(d.message); SU_DIRTY = false;
@@ -1785,7 +1842,8 @@ function render(s) {
   S = s;
   shown("top bar", () => renderTop(s)); shown("updates", () => renderUpdates(s.updates));
   shown("phone access", () => renderPhone(s.phone, s.viewer)); shown("market clock", () => renderClock(s.clock));
-  shown("overview", () => renderOverview(s.bot)); shown("next trade", () => renderNext(s.bot)); shown("setups", () => renderSetups(s.bot));
+  shown("overview", () => renderOverview(s.bot)); shown("next trade", () => renderNext(s.bot));
+  shown("first trade", () => renderFirst(s.bot)); shown("setups", () => renderSetups(s.bot));
   shown("long-run memory", () => renderMemory(s.bot)); shown("ideas", () => renderIdeas(s.bot));
   shown("knowledge", () => renderKnowledge(s.bot)); shown("settings", () => renderSettings(s.bot)); shown("events", () => renderLogs(s));
   if (s.setup) $("setupflag").hidden = s.setup.configured && !s.setup.error;

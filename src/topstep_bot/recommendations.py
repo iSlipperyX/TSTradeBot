@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from topstep_bot.knowledge import MANUAL, UNINFORMATIVE_EXITS, Observation
+from topstep_bot.knowledge import NOT_STRATEGIES, UNINFORMATIVE_EXITS, Observation
 from topstep_bot.models import Bar, OrderSide, Signal
 from topstep_bot.strategies import STRATEGIES, Strategy, StrategyContext, create_strategy
 
@@ -309,7 +309,7 @@ class RecommendationBook:
     def _learn(self, rec: Recommendation, why: str) -> None:
         """Hand a finished recommendation to the knowledge base (if its ending says something)."""
         kb = self.core.knowledge
-        if rec.strategy == MANUAL:  # your own trades are filed by the trade ticket (manual.py)
+        if rec.strategy in NOT_STRATEGIES:  # filed by the trade ticket (manual.py) / first_trade.py themselves
             return
         if kb is None or rec.outcome_r is None or any(k in why for k in UNINFORMATIVE_EXITS):
             return
