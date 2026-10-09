@@ -74,7 +74,7 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   owner-only, confirmations for dangerous actions; the setup wizard finds your chat ID for you.
 - **Journal** (SQLite) and Telegram/Discord alerts.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
-- 240+ automated tests, including end-to-end runs against a simulated TopstepX server and a test for every Topstep rule.
+- 147 automated tests, including end-to-end runs against a simulated TopstepX server and Telegram.
 
 ## Commands
 

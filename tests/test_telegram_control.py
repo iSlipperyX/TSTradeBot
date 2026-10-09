@@ -178,3 +178,25 @@ def test_polling_processes_updates_and_stops_on_revoked_token():
     ctl._client = httpx.AsyncClient(base_url="https://api.telegram.org/botTOKEN/", transport=httpx.MockTransport(handler))
     run(ctl.run())  # returns instead of looping forever
     assert core.risk.paused and ctl.offset == 11
+
+
+def test_polling_survives_unexpected_errors():
+    """An unexpected error while polling used to end the poller silently: Telegram stopped answering for good."""
+    ctl, fake, core, _ = make()
+    replies = iter([
+        RuntimeError("something unexpected"),
+        {"ok": True, "result": [msg("/pause") | {"update_id": 10}]},
+        {"ok": False, "error_code": 401, "description": "Unauthorized"},
+    ])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("getUpdates"):
+            reply = next(replies)
+            if isinstance(reply, Exception):
+                raise reply
+            return httpx.Response(200, json=reply)
+        return fake.handler(request)
+
+    ctl._client = httpx.AsyncClient(base_url="https://api.telegram.org/botTOKEN/", transport=httpx.MockTransport(handler))
+    run(ctl.run())
+    assert core.risk.paused and ctl.offset == 11
