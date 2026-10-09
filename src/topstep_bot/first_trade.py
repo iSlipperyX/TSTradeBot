@@ -174,7 +174,10 @@ def rank(core: TradingCore, price: float, now: datetime) -> list[Choice]:
             if not v.allowed and v.level != "unproven":
                 ch.excluded = f"the knowledge base has switched {ch.title} off here ({v.why})"
             strat_score = v.score if v.level != "unproven" else 0.0
-            parts.append(f"its record {v.why}")
+            if v.level == "unproven":
+                parts.append(f"{ch.title} has too little record here to count yet")
+            else:
+                parts.append(f"its record {v.why}")
         side_score, side_text = side_evidence(ch.side)
         if side_text:
             parts.append(side_text)

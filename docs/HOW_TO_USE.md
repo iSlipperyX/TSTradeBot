@@ -289,7 +289,9 @@ bottom; every field already has a suggestion, and a short note under each one ex
    - **What is this account for?** *Pass the Combine* protects the account and stops early on big
      days. *Teach the bot* trades more often and tries unproven strategies so it learns faster;
      use it only on an account you're willing to lose ([section 17](#using-a-combine-to-teach-the-bot)).
-     Every Topstep rule applies either way.
+     Every Topstep rule applies either way. With *Teach the bot*, a **First trade after starting**
+     box appears, ticked: the bot then makes one educated trade within 15 minutes of starting
+     ([The first trade after starting](#the-first-trade-after-starting)).
    - Tick **Daily Loss Limit** if you added Topstep's optional one at checkout (it's under Risk
      Settings in TopstepX; the bot then stops before it). For an Express Funded Account, pick the
      **payout path** you chose.
@@ -357,6 +359,7 @@ the preflight, the journal and so on. To open it, open a Command Prompt in the b
 | 17 | insights | **What the bot has learned:** each strategy's results after costs, real fills against simulated ones, and the market conditions it did best and worst in ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 | 18 | update | **Updates:** checks GitHub for a newer version, lists what changed and installs it when you say so ([Updating](#updating)) |
 | 19 | learn | **Feeds the bot more history:** downloads up to a year it doesn't have yet and replays all of it through every strategy ([long-run memory](#the-long-run-memory-a-much-bigger-knowledge-base)) |
+| 20 | first-trade-test | **Tests the first trade after starting:** replays history with it off, with the bot's educated pick, and with a coin flip, and shows what each did ([The first trade after starting](#the-first-trade-after-starting)) |
 
 Above the list, the menu shows a one-line summary of your setup (account, symbol, strategy, mode).
 If `config.yaml` has a mistake, that line says what and where. When a newer version of the bot is
@@ -1361,6 +1364,7 @@ Setup tab (step 2, *What is this account for?*) and press Save. That writes a le
 | `cooldown_minutes_after_loss` | 5 | 10 | |
 | `daily_profit_target` | the full profit target | 40% of it | No early stop on a big day. |
 | `consistency_guard` | off | on | A big day only raises the target; that doesn't matter on a learning account. |
+| `first_trade.enabled` | on | off | One educated trade within 15 minutes of starting, so every start teaches it something ([below](#the-first-trade-after-starting)). |
 
 What stays the same: **every Topstep rule** (MLL, any DLL, position limits, news, flat by 15:10) and
 your personal daily loss limit. Breaking a Topstep rule or touching the MLL ends the Combine, and
@@ -1381,6 +1385,56 @@ Good to know:
   ([Trading manually from the dashboard](#trading-manually-from-the-dashboard)).
 - When you move to an account you want to pass, choose **"Pass the Combine"** on the Setup tab and
   save. Your other settings stay as they are.
+
+### The first trade after starting
+
+With *Teach the bot*, the bot makes its own educated trade within 15 minutes of starting, so each
+start gives it a real fill to learn from instead of waiting for a strategy signal that may take hours.
+Untick **First trade after starting** on the Setup tab and press Save to turn it off.
+
+How it works:
+
+- **When.** The 15 minutes count from the start, or from 08:30 CT when the bot starts before the
+  session, on a weekend or on a holiday. Outside trading hours it waits, and the Overview tab says
+  so: *"Outside trading hours: waiting for the session. Entries open Mon 08:30 CT; the first trade
+  follows by Mon 08:45 CT."*
+  It is due by 14:29 CT at the latest (the last entry is 14:30). It happens at most once per trading
+  day: a restart the same day doesn't add another one.
+- **A strategy can go first.** The bot keeps watching for a normal signal. If a strategy trades
+  before the deadline, that trade counts and nothing more happens.
+- **What it picks.** On the last bar before the deadline it ranks everything it could take, using
+  the knowledge base for this time of day and market mood:
+  1. a strategy signal that fired just now (it keeps that signal's stop and target),
+  2. a setup that is close to firing,
+  3. simply long or short, whichever side its record here favours.
+
+  A strategy the knowledge base has switched off for this time is never followed. Setups and plain
+  long/short trades get a stop of 1 ATR (within the usual minimum and maximum stop) and a target of 1.5 times the risk. The reason it chose is
+  shown on the Overview tab and in the trade's log line.
+- **Size and rules.** One contract (`first_trade.contracts`), and never more than `risk_per_trade`
+  allows. Every Topstep rule and risk limit applies: the MLL, any DLL, contract caps, news blackouts,
+  trades per day, the losing-streak pause. If a rule blocks it, it tries again on every bar; if the
+  rules block it for the rest of the session, it moves to the next session.
+- **What it learns.** Its result is filed in the knowledge base as a *first trade*, apart from the
+  strategies, with the reason it was chosen, so it never inflates a strategy's record. The Knowledge
+  tab and `insights` show first trades on their own line.
+- It is off on an Express Funded account and with the *Pass the Combine* goal.
+
+On the dashboard: the Overview tab has a **First trade after starting** panel with a countdown, what
+it would take right now and why, and the trade once it's placed. The **Next trade** countdown at the
+top shows the first trade while it's due.
+
+**Test it before you rely on it.** In the text menu choose **20 (first-trade-test)**, or run
+`topstep-bot first-trade-test --days 365`. It downloads your TopstepX history and replays it three
+times through the real trading code: the strategy alone, with the bot's educated first trade, and
+with a coin-flip first trade (random side, an ATR stop and a 1.5R target). Each day the bot is "started" at a
+different time, so every part of the session is tested. The result is saved to
+`reports/first_trade_test.json`. Read it honestly: if the educated pick doesn't beat the coin flip,
+the first trade has no edge, and its value is only what the bot learns from it. **No setting makes
+the bot profitable or guarantees passing the Combine**, and an extra trade a day is an extra chance
+to lose. Keep it to an account you're willing to lose.
+
+Settings (`first_trade:` in `config.yaml`): `enabled`, `within_minutes` (5-120), `contracts` (1-5).
 
 Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
 `half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`, `deep_learning`, `deep_history_days`. The file is
@@ -1689,6 +1743,11 @@ knowledge:                     # what the bot learns while it runs (drives the a
   deep_learning: true          # long-run memory: keep every bar, backfill and replay it all daily (reports only)
   deep_history_days: 365       # 30-3650: how far back the long-run memory reaches
 
+first_trade:                   # one educated trade soon after starting ("Teach the bot" turns it on)
+  enabled: false
+  within_minutes: 15           # 5-120, from the start, or from 08:30 CT if it starts outside hours
+  contracts: 1                 # 1-5, and never more than risk_per_trade allows
+
 risk:
   risk_per_trade: 150
   max_contracts: null
@@ -1824,6 +1883,7 @@ different config file.
 | `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
 | `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
 | `topstep-bot learn [--days N] [--import CSV] [--offline]` | Grow the long-run memory: download the history it's missing, add a CSV, then replay all of it through every strategy ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
+| `topstep-bot first-trade-test [--days N] [--data F] [--download]` | Backtest the first trade after starting against a coin flip ([section 17](#the-first-trade-after-starting)) |
 | `topstep-bot insights [--csv FILE] [--longrun]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat menu` or

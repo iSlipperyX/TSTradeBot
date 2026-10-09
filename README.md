@@ -88,6 +88,11 @@ No bot can guarantee passing the Combine or making a profit, and this one doesn'
   what it would trade right now and why, and when its next trade is likely (an honest estimate from
   its own history and the rules, with what it's based on): Knowledge tab, a countdown on the
   dashboard, `/brief` and `/next` in Telegram.
+- **First trade after starting** — with the *Teach the bot* goal, the bot makes one educated trade
+  within 15 minutes of starting (or of the session opening): the setup its knowledge base supports
+  best, at 1 contract, with every Topstep rule and risk limit applied, filed apart so it learns from
+  it. `first-trade-test` compares its picks with a coin flip on your history. It is there to teach
+  the bot, not a promise of profit.
 - **Long-run memory** — every price bar the bot sees is kept, up to a year (or more) of history is
   backfilled, and all of it is replayed through every strategy daily, for a much bigger knowledge base
   to report on and compare against. It doesn't change how the bot trades.
@@ -134,6 +139,7 @@ topstep-bot telegram-test   send a test message to your Telegram bot
 topstep-bot logs            recent errors and crash reports  (--open, --bundle for support)
 topstep-bot insights        what the bot has learned: results after costs, real fills, conditions (--csv FILE, --longrun)
 topstep-bot learn           grow the long-run memory: backfill history and replay it all (--import CSV, --days N)
+topstep-bot first-trade-test  backtest the first trade after starting against a coin flip (--days N)
 topstep-bot update          check GitHub for a newer version and install it (--check, --token, --undo)
 ```
 

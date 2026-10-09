@@ -287,6 +287,31 @@ def _nearest_setup(core: TradingCore, now: datetime) -> dict[str, Any] | None:
 def forecast(core: TradingCore, now: datetime | None = None) -> dict[str, Any]:
     """Everything the dashboard, Telegram and the menu say about the next trade."""
     now = now or core.clock()
+    return _with_first_trade(core, now, _forecast(core, now))
+
+
+def _with_first_trade(core: TradingCore, now: datetime, out: dict[str, Any]) -> dict[str, Any]:
+    """When the first trade after starting (first_trade.py) is due before the estimate, it leads the headline."""
+    planner = core.first_trade
+    if planner is None or planner.deadline is None or planner.state not in ("waiting", "watching", "blocked"):
+        return out
+    if out["state"] in ("in_trade", "blocked"):
+        return out
+    deadline = planner.deadline
+    at = (out.get("estimate") or {}).get("at")
+    out["first_trade"] = {"at": deadline.astimezone(UTC).isoformat(), "at_local": _when(core.schedule, now, deadline)}
+    if at is not None and datetime.fromisoformat(at) <= deadline:
+        return out
+    when = out["first_trade"]["at_local"]
+    lead = "First trade after starting: due now" if deadline <= now else \
+        f"First trade after starting: by {when} (in {wait_text((deadline - now).total_seconds())})"
+    out["headline"] = f"{lead}, unless a strategy signal comes first. {out['headline']}".strip()
+    out["basis"].insert(0, "Teach the bot: soon after it starts the bot makes one educated trade (the best-supported setup, "
+                           "smallest size, every rule applied) if no strategy has traded by then.")
+    return out
+
+
+def _forecast(core: TradingCore, now: datetime) -> dict[str, Any]:
     schedule = core.schedule
     today = schedule.trading_day(now)
     out: dict[str, Any] = {"now": now.isoformat(), "state": "waiting", "headline": "", "basis": [], "caveat": CAVEAT,

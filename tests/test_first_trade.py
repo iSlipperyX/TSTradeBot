@@ -252,3 +252,16 @@ def test_backtest_compares_the_first_trade_with_a_coin_flip():
     assert best["trades"] >= off["trades"]
     text = "\n".join(result_text(result))
     assert "Coin-flip first trade" in text and result["verdict"]
+
+
+def test_the_next_trade_forecast_leads_with_the_first_trade_while_it_is_owed(tmp_path):
+    from topstep_bot.forecast import forecast
+
+    core, _, now, planner = make(tmp_path, ct(2026, 3, 3, 9, 2))  # due by 09:17, no history to estimate from
+    f = forecast(core, now[0])
+    assert f["first_trade"]["at_local"].endswith("09:17 CT")
+    assert f["headline"].startswith("First trade after starting: by") and "unless a strategy signal comes first" in f["headline"]
+    assert f["basis"][0].startswith("Teach the bot")
+
+    planner.state = "done"  # once it is placed, the forecast is the usual one
+    assert "first_trade" not in forecast(core, now[0])

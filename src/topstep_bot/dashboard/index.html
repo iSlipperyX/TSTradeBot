@@ -986,6 +986,8 @@ function nextTile(now) {
   let v = "–", sub = "not enough history yet";
   if (f.state === "in_trade") { v = "In a trade"; sub = "the next can follow it"; }
   else if (f.state === "blocked") { v = "On hold"; sub = f.blocked || ""; }
+  else if (f.first_trade && (!e.at || Date.parse(f.first_trade.at) < Date.parse(e.at))) {
+    v = fmtLeft(Date.parse(f.first_trade.at) - now); sub = `first trade by ${f.first_trade.at_local}`; }
   else if (e.at) { v = "~" + fmtLeft(Date.parse(e.at) - now);
     sub = `around ${e.at_local}` + (e.p_today != null && f.state !== "closed" ? ` · ${Math.round(100 * e.p_today)}% today` : ""); }
   else if (f.earliest && Date.parse(f.earliest) > now) { v = fmtLeft(Date.parse(f.earliest) - now); sub = `not before ${f.earliest_local}`; }
