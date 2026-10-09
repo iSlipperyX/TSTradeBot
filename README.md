@@ -10,15 +10,19 @@ strategy can't accidentally break them.
 ## Quick start (Windows)
 
 1. Install [Python 3.11+](https://www.python.org/downloads/) (tick "Add python.exe to PATH").
-2. Double-click **`start.bat`**. The first run installs everything.
-3. Pick **1** to set up your TopstepX API key, account, strategy and risk (or **11** for a demo).
-4. Pick **5 (train)** so the bot learns which strategy works at which time of day from recent real data,
-   then **4 (backtest)** and read the report.
-5. Pick **6 (paper)** to watch it on live prices, or **2 (start trading today)**: every safety check runs
-   first, and the first live days trade at reduced risk. The dashboard's **Paper | Live** switch flips
-   between them later (start small).
+2. Double-click **`start.bat`**. The first run installs everything, then the dashboard opens in your
+   browser. Nothing is asked in the black window; keep it open.
+3. On the dashboard's **Setup** tab, enter your TopstepX API key, pick the account, strategy and risk
+   (every field has a suggestion) and press **Save**.
+4. Press **Start** with the **Paper | Live** switch on Paper to watch it on live prices with simulated
+   orders. Switch to Live (type `LIVE`) when you're ready, and start small.
+5. Optional extras live in the text menu, `start.bat menu`: **5 (train)** so the bot learns which
+   strategy works at which time of day, **4 (backtest)**, and **2 (start trading today)**, which runs
+   every safety check first.
 
-Other systems: `pip install -e .` then run `topstep-bot`.
+Other systems: `pip install -e .` then run `topstep-bot` (it starts the dashboard).
+
+No bot can guarantee passing the Combine or making a profit, and this one doesn't either.
 
 ## Features
 
@@ -60,6 +64,10 @@ Other systems: `pip install -e .` then run `topstep-bot`.
 - **Paper trading** on live TopstepX prices with simulated fills.
 - **Separate controller** — the dashboard (http://127.0.0.1:8765) and Telegram run apart from the trading
   bot, so they stay online if it stops or crashes: see why, then start/restart it remotely; Paper/Live switch.
+- **Set up from the dashboard** — `start.bat` opens the dashboard and asks nothing in the console. The
+  Setup tab fills in the login, account, strategy, risk, Telegram, Discord and Start with Windows, and
+  edits `config.yaml` in place without losing your comments. Credentials stay in `.env` on your PC and
+  are never shown back.
 - **Local dashboard** with guardrail meters and Pause / Flatten / Stop
   buttons; KILL-file kill switch; emergency flatten command.
 - **Manual trades from the dashboard** — a trade ticket that suggests a stop, target and size, checks
@@ -81,7 +89,7 @@ Other systems: `pip install -e .` then run `topstep-bot`.
 - **Logging** — daily logs, an errors-only file, a JSON event log, crash reports, secrets masked,
   and the reason for every shutdown (`topstep-bot logs`).
 - **Telegram remote control** — `/status`, `/pause`, `/resume`, `/flatten`, `/ideas`, `/set`, `/stop` with tap buttons,
-  owner-only, confirmations for dangerous actions; the setup wizard finds your chat ID for you.
+  owner-only, confirmations for dangerous actions; the dashboard's Setup tab finds your chat ID for you.
 - **The dashboard on your phone, inside Telegram** — switch on phone access and `/dashboard` opens the
   full dashboard in Telegram's built-in browser when you're away. Only your Telegram account can open it,
   LIVE can't be switched on from the phone, and the bot keeps running on your PC: a secure Cloudflare
@@ -97,8 +105,9 @@ Other systems: `pip install -e .` then run `topstep-bot`.
 ## Commands
 
 ```
-topstep-bot                 interactive menu
-topstep-bot setup           setup wizard
+topstep-bot                 start the dashboard (set up and start the bot there); same as 'server'
+topstep-bot menu            the text menu
+topstep-bot setup           question-and-answer setup in the console
 topstep-bot go-live         preflight checks, then live trading (24/7 or this session)
 topstep-bot preflight       the checks alone
 topstep-bot start           dashboard + Telegram + bot, 24/7 (--mode paper|live)
@@ -135,6 +144,7 @@ src/topstep_bot/
   recommendations.py  every strategy's signals tracked to an outcome (feeds the knowledge base)
   execution.py    order/trade lifecycle (entry, stop, target, OCO, reconciliation)
   controller.py   dashboard + Telegram + supervision of the bot process
+  setup_service.py  the dashboard's Setup tab;  config_edit.py  edits config.yaml keeping comments
   worker_api.py   the bot's private local API (used by the controller)
   web.py          tiny local HTTP server shared by both
   live.py         live/paper runner (the bot process)

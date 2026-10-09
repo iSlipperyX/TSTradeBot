@@ -28,8 +28,12 @@ def fast(monkeypatch):
 
 
 def make(tmp_path, **cfg_kw) -> Controller:
+    """A controller whose setup is finished (config.yaml saved, TopstepX login known), like after the Setup tab."""
     cfg = BotConfig.model_validate({"data_dir": str(tmp_path / "data"), "log_dir": str(tmp_path / "logs"), **cfg_kw})
-    return Controller(cfg, Secrets(), mode="paper", config_path=None, worker_command=FAKE, port=0, poll_seconds=0.1)
+    path = tmp_path / "config.yaml"
+    path.write_text("mode: paper\n", encoding="utf-8")
+    return Controller(cfg, Secrets(username="me", api_key="key"), mode="paper", config_path=str(path),
+                      worker_command=FAKE, port=0, poll_seconds=0.1)
 
 
 async def until(cond, timeout=15.0, step=0.05):

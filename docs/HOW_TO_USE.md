@@ -13,16 +13,23 @@ enforces it, see [TOPSTEP_RULES.md](TOPSTEP_RULES.md).
 ## Quick start (the short version)
 
 1. Install [Python 3.11+](https://www.python.org/downloads/) and tick **"Add python.exe to PATH"**.
-2. Double-click **`start.bat`**. The first run installs everything.
-3. Get a TopstepX API key ([section 4](#4-get-your-topstepx-api-key)).
-4. Menu **1 (setup)**: answer the questions. Press Enter to accept a suggestion. If the account is
-   just for teaching the bot, choose **"Teach the bot"** ([section 17](#using-a-combine-to-teach-the-bot)).
-5. Menu **16 (rules)**: check the limits the bot will enforce for your account.
-6. Menu **5 (train)**, then menu **4 (backtest)** and read the report.
-7. Menu **6 (paper)**: watch it trade with simulated orders for a few days.
-8. Menu **2 (go-live)**: it checks everything, then you type `LIVE`.
-9. Keep the PC on. Watch it on the dashboard (http://127.0.0.1:8765) or Telegram (`/status`).
+2. Get a TopstepX API key ([section 4](#4-get-your-topstepx-api-key)).
+3. Double-click **`start.bat`**. The first run installs everything (about a minute). Then the
+   dashboard opens in your browser by itself. Leave the black window open: it *is* the bot.
+4. The dashboard opens on the **Setup** tab. Fill it in from top to bottom and press **Save**
+   ([section 5](#5-set-up-on-the-dashboard)). Every field already has a sensible suggestion. If the
+   account is just for teaching the bot, choose **"Teach the bot"**
+   ([section 17](#using-a-combine-to-teach-the-bot)).
+5. Press **Start** with the top switch on **Paper**: watch it trade with simulated orders for a few
+   days.
+6. When you're ready for real orders, stop the bot, flip the switch to **Live** (type `LIVE`) and
+   press **Start**. For the full check first, use **go-live** in the text menu
+   ([section 7](#7-the-path-to-live-trading)).
+7. Keep the PC on. Watch it on the dashboard (http://127.0.0.1:8765) or Telegram (`/status`).
    `/flatten` closes everything, a confirmed `/stop` stops trading, `/startbot` starts it again.
+
+Optional extras like training, backtests and tuning are in the text menu: `start.bat menu`
+([section 6](#6-the-text-menu-optional)).
 
 ---
 
@@ -32,8 +39,8 @@ enforces it, see [TOPSTEP_RULES.md](TOPSTEP_RULES.md).
 2. [What you need](#2-what-you-need)
 3. [Install](#3-install)
 4. [Get your TopstepX API key](#4-get-your-topstepx-api-key)
-5. [Run the setup wizard](#5-run-the-setup-wizard)
-6. [The main menu](#6-the-main-menu)
+5. [Set up on the dashboard](#5-set-up-on-the-dashboard)
+6. [The text menu (optional)](#6-the-text-menu-optional)
 7. [The path to live trading](#7-the-path-to-live-trading)
 8. [Backtesting](#8-backtesting)
 9. [Paper trading and the dashboard](#9-paper-trading-and-the-dashboard)
@@ -117,7 +124,13 @@ enforces it, see [TOPSTEP_RULES.md](TOPSTEP_RULES.md).
 1. Open the bot folder.
 2. Double-click **`start.bat`**.
 3. The first time, it creates a private Python environment and installs everything (about a minute).
-   After that it opens the menu instantly.
+   After that it starts in a few seconds.
+4. The **dashboard** opens in your browser at http://127.0.0.1:8765. That's where you set
+   everything up and start and stop the bot. The black window is the bot's engine: keep it open
+   (you can minimize it). Closing it stops everything.
+
+Double-clicking `start.bat` again while it's already running just opens the dashboard again.
+Nothing is started twice.
 
 ### Manual (any OS)
 
@@ -131,7 +144,8 @@ Then activate it (`.venv\Scripts\activate` on Windows, `source .venv/bin/activat
 pip install -e .
 ```
 
-Now `topstep-bot` is available as a command. Running it with no arguments opens the menu.
+Now `topstep-bot` is available as a command. Running it with no arguments starts the dashboard
+(`topstep-bot menu` opens the text menu).
 
 ### Updating
 
@@ -148,7 +162,8 @@ send your bot an update except through the repository's `main` branch, which onl
 <summary>Only if the repository is ever made private again: give the bot a read-only GitHub token</summary>
 
 A ZIP copy of a private repository needs a GitHub token that can only **read** it. When the bot
-can't see the repository, menu **18 (update)** offers to set one up (or run `start.bat update --token`).
+can't see the repository, the dashboard's **Settings** tab (Updates) shows a box to paste one into
+(or run `start.bat update --token`).
 
 1. Open <https://github.com/settings/personal-access-tokens/new> (signed in to GitHub).
 2. Token name: `Topstep Bot updates`. Expiration: 1 year.
@@ -231,7 +246,7 @@ once, so any new dependencies are installed.
 
 ### Try it before setting anything up
 
-From the menu choose **11 (demo)**, or run:
+From the text menu (`start.bat menu`) choose **11 (demo)**, or run:
 
 ```bash
 topstep-bot demo
@@ -256,47 +271,74 @@ strategy works.
 
 ---
 
-## 5. Run the setup wizard
+## 5. Set up on the dashboard
 
-Choose **1 (setup)** in the menu, or run `topstep-bot setup`. It walks you through:
+Double-click **`start.bat`**. The dashboard opens in your browser, and the first time it goes
+straight to the **Setup** tab. Nothing is asked in the black window. Fill in the steps from top to
+bottom; every field already has a suggestion, and a short note under each one explains it.
 
-1. **API credentials.** Enter your username and API key (the key is hidden as you type). They are
-   saved in a file called `.env` in the bot folder, which only lives on your computer. The wizard
-   then logs in to check them and lists your accounts.
-2. **Which account** the bot should use (if you have several). The wizard reads the account name
-   (e.g. `50KTC-...`, `XFA-150K-...`) and pre-selects the matching size and type below. Live
-   Funded accounts are not offered: Topstep doesn't allow API trading on them.
-3. **Account size** — 50K, 100K or 150K. This sets the Maximum Loss Limit, profit target and
-   contract cap the bot works with.
-4. **Account type** — `combine` (evaluation), `express` (Express Funded Account) or `practice`.
-   Then two yes/no questions: whether you added Topstep's optional **Daily Loss Limit** at checkout
-   (it's under Risk Settings in TopstepX; the bot then stops before it), and for an Express Funded
-   Account, which **payout path** you chose.
-5. **What to trade.** Start with a **micro** contract (MNQ, MES, M2K, MYM, MGC, MCL). Micros are
-   1/10th the size of the minis, so mistakes cost 10× less.
-6. **Strategy.** `adaptive` (recommended) runs every strategy all day and trades only what the bot
-   has learned is working; or pick one strategy. See [section 12](#12-the-strategies).
-7. **Risk.** Dollars to risk per trade and your personal daily loss limit. The wizard suggests
-   7.5% and 25% of your Maximum Loss Limit (for a 50K account: $150 per trade, $500 per day). Your
-   daily limit must be below Topstep's limits; the wizard won't accept one that isn't.
-8. **Telegram and alerts** (optional) — control the bot from your phone and get alerts; see
-   [section 15](#15-telegram-control-and-alerts-on-your-phone).
+1. **TopstepX login.** Enter your username and API key, then press **Connect**. The bot logs in
+   to check them and lists your accounts. The key is saved in a file called `.env` in the bot
+   folder, which only lives on your computer. The dashboard never shows it again: it only says
+   "saved", and you can paste a new one any time.
+2. **Account.** Pick the account the bot should trade. The bot reads the account name (e.g.
+   `50KTC-...`, `XFA-150K-...`) and fills in the matching **size** (50K, 100K or 150K) and
+   **type** (`combine`, `express` or `practice`). Size sets the Maximum Loss Limit, profit target
+   and contract cap the bot works with. Live Funded accounts are not offered: Topstep doesn't
+   allow API trading on them.
+   - **What is this account for?** *Pass the Combine* protects the account and stops early on big
+     days. *Teach the bot* trades more often and tries unproven strategies so it learns faster;
+     use it only on an account you're willing to lose ([section 17](#using-a-combine-to-teach-the-bot)).
+     Every Topstep rule applies either way.
+   - Tick **Daily Loss Limit** if you added Topstep's optional one at checkout (it's under Risk
+     Settings in TopstepX; the bot then stops before it). For an Express Funded Account, pick the
+     **payout path** you chose.
+3. **What to trade.** Start with a **micro** contract (MNQ, MES, M2K, MYM, MGC, MCL). Micros are
+   1/10th the size of the minis, so mistakes cost 10× less. For the **strategy**, `adaptive`
+   (recommended) runs every strategy all day and trades only what the bot has learned is working;
+   or pick one strategy. See [section 12](#12-the-strategies).
+4. **Risk.** Dollars to risk per trade, your personal daily loss limit and the most trades per day.
+   The suggestion is 7.5% and 25% of your Maximum Loss Limit (for a 50K account: $150 per trade,
+   $500 per day), and **Use suggested** puts it back. If a value breaks a Topstep limit, the
+   dashboard says which one and doesn't save it.
 
-It writes **`config.yaml`**. You can edit that file in Notepad any time; it is commented. Re-run
-the wizard to start over.
+Press **Save**. The settings go into **`config.yaml`** in the bot folder; anything else in that file,
+including your own notes and hand edits, is kept. The previous version is kept as
+`config.yaml.bak`. Then press **Start the bot** (or **Start** at the top). It starts in **Paper**
+mode: real prices, simulated orders.
 
-Then choose **3 (check)** in the menu. It logs in, lists your accounts (the selected one is marked
-◀), and shows the exact contract the bot will trade, its tick value and estimated fees.
+You can come back to the Setup tab any time and change anything. If the bot is running when you
+save, the top of the page offers **Restart bot** so the new settings take effect.
+
+Further down the Setup tab, both optional:
+
+- **Alerts and remote control**: connect Telegram (step-by-step instructions are right there;
+  see [section 15](#15-telegram-control-and-alerts-on-your-phone)) or a Discord channel.
+- **Start with Windows**: starts everything about 30 seconds after you sign in, for running 24/7
+  ([section 20](#20-running-247)).
+
+**If `config.yaml` has a mistake** (for example after a hand edit), the dashboard still opens and the
+Setup tab says what's wrong and where. Fix it in Notepad, or tick *Start over with a fresh
+config.yaml* and save. The bot won't start until the file is fixed.
+
+**Prefer typing?** The old question-and-answer setup still works: `start.bat setup` (or menu
+**1**). It writes the same `config.yaml`.
+
+To check the connection in detail, choose **3 (check)** in the text menu. It logs in, lists your
+accounts (the selected one is marked ◀), and shows the exact contract the bot will trade, its tick
+value and estimated fees.
 
 ---
 
-## 6. The main menu
+## 6. The text menu (optional)
 
-Double-click `start.bat` (or run `topstep-bot`):
+Everyday use needs only the dashboard. The text menu has the extras: training, backtests, tuning,
+the preflight, the journal and so on. To open it, open a Command Prompt in the bot folder and run
+**`start.bat menu`** (or `topstep-bot menu`). When this guide says "menu 5", it means option 5 here.
 
 | # | Option | What it does |
 |---|---|---|
-| 1 | setup | The setup wizard |
+| 1 | setup | The question-and-answer setup (the dashboard's Setup tab does the same) |
 | 2 | go-live | **Start trading today:** runs every preflight check, then starts live ([section 21](#21-starting-today-preflight-ramp-up-and-news)) |
 | 3 | check | Tests the connection, shows accounts and the contract |
 | 4 | backtest | Tests the strategy on history and opens a report |
@@ -319,7 +361,8 @@ Above the list, the menu shows a one-line summary of your setup (account, symbol
 If `config.yaml` has a mistake, that line says what and where. When a newer version of the bot is
 waiting, a second line says so.
 
-You can switch between paper and live later from the dashboard, without coming back to this menu.
+Starting the bot from the menu (6, 7 or 2) also opens the dashboard. You can switch between paper
+and live there later, without coming back to this menu.
 
 ---
 
@@ -328,7 +371,8 @@ You can switch between paper and live later from the dashboard, without coming b
 You can start the same day — the bot protects a new account with reduced risk while it proves
 itself — but the more evidence you have first, the better. In order:
 
-1. **Set up** (menu 1) and **check** the connection (menu 3).
+1. **Set up** on the dashboard's Setup tab ([section 5](#5-set-up-on-the-dashboard)) and, if you
+   like, **check** the connection (menu 3).
 2. **Train the bot** (menu 5). It replays the last 60 days of real data through every strategy and
    learns which ones work at which time of day ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)). Read the table it prints: if everything
    is ✘, the market has not been kind to these strategies lately and the adaptive strategy will
@@ -336,7 +380,7 @@ itself — but the more evidence you have first, the better. In order:
 3. **Backtest on real data** (menu 4). Is the result positive *after fees*, is the drawdown
    survivable, does the Combine pass rate look reasonable? To compare single strategies and their
    settings over a longer history without fooling yourself, use **tune** (menu 15, [section 18](#18-tuning-test-strategy-settings-on-unseen-data)).
-4. **Paper trade** (menu 6, or the dashboard's Paper switch): real live prices, simulated orders, no
+4. **Paper trade** (the dashboard's **Start** button with the switch on Paper, or menu 6): real live prices, simulated orders, no
    risk. Optional, but two to four weeks of it tells you more than any backtest — compare what it did
    with what the backtest says it should have done.
 5. **Start trading today** (menu 2). The preflight checks the login, the account (and whether it
@@ -445,16 +489,15 @@ change them with `risk.fees_per_contract_round_turn`.
 
 ## 9. Paper trading and the dashboard
 
-Menu **6**, or:
+Double-click `start.bat`, then press **Start** on the dashboard with the top switch on **Paper**.
+(Menu **6** and `topstep-bot start --mode paper` do the same in one step.)
 
-```bash
-topstep-bot start --mode paper
-```
+Two separate programs are involved:
 
-This starts two separate programs:
-
-- the **controller** — the dashboard at **http://127.0.0.1:8765** and Telegram control;
-- the **trading bot**, which the controller starts, watches and restarts.
+- the **controller**, the dashboard at **http://127.0.0.1:8765** and Telegram control, which
+  `start.bat` starts;
+- the **trading bot**, which the controller starts when you press **Start**, then watches and
+  restarts.
 
 Because they're separate, the dashboard and Telegram **stay online when the bot stops or crashes**:
 you can see why it stopped (and its logs) and start or restart it from either one. Closing the
@@ -656,9 +699,12 @@ Before going live, in TopstepX:
 - Keep TopstepX open so you can see orders appear.
 - You do **not** need to enable "Auto OCO Brackets"; the bot manages its own stop and target.
 
-The recommended way in is **menu 2 (Start trading today)**, which runs the preflight first
-([section 21](#21-starting-today-preflight-ramp-up-and-news)). You can also switch the dashboard's **Paper | Live** toggle to Live (type `LIVE` to
-confirm), or start with menu **7** — which shows a red warning and asks you to type `LIVE` too.
+The recommended way in is **menu 2 (Start trading today)** in the text menu, which runs the
+preflight first ([section 21](#21-starting-today-preflight-ramp-up-and-news)). You can also stop
+the bot on the dashboard, switch the **Paper | Live** toggle to Live (type `LIVE` to confirm) and
+press **Start**, or start with menu **7**, which shows a red warning and asks you to type `LIVE`
+too. Once you've chosen Live, `start.bat` remembers it, but it never starts trading by itself:
+you always press **Start**.
 
 Live mode works like paper mode, except orders really go to your account, and the bot also:
 
@@ -960,16 +1006,19 @@ check-ins, crashes and restarts) and
 
 ### Set it up (about 2 minutes)
 
-Run the setup wizard (menu **1**) and answer **yes** to *"Use Telegram for alerts AND to control
-the bot from your phone?"*. It walks you through:
+On the dashboard's **Setup** tab, scroll to **Alerts and remote control**:
 
 1. In Telegram, open **@BotFather**, send `/newbot`, pick a name and a username ending in `bot`.
-2. Paste the **token** BotFather gives you into the wizard (it's hidden as you type).
-3. Open your new bot in Telegram and press **Start** (or send it anything), then press Enter in the
-   wizard. It finds your chat ID automatically.
+2. Paste the **token** BotFather gives you into **Bot token**.
+3. Open your new bot in Telegram and press **Start** (or send it anything), then press **Find my
+   chat** on the dashboard. It finds your chat for you.
+4. Leave **Also control the bot from Telegram** ticked (untick it for alerts only) and press
+   **Save Telegram**. You get a test message with the control buttons straight away.
 
-Then choose menu **12 (telegram-test)** — you should receive a test message with the control
-buttons. (If you prefer, put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` by hand.)
+Once it's connected, the same place has **Send a test message**, a switch for remote control,
+**Use another bot** and **Remove**. The token is saved in `.env` and never shown again. (The text
+setup, `start.bat setup`, can do this too, or put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in
+`.env` by hand.)
 
 Telegram control starts automatically with the controller, and **keeps working while the bot is
 stopped or has crashed**: `/status` then tells you why it stopped, and `/startbot` or `/restart`
@@ -1074,17 +1123,20 @@ Good to know:
   by your PC, as Topstep requires.
 - Phone access is off by default. While it is on, only your own Telegram account can open the
   dashboard, and LIVE mode can't be switched on from the phone ([above](#open-the-dashboard-on-your-phone-inside-telegram)).
-- Keep the bot token secret. If it leaks, send `/revoke` to @BotFather and run setup again. The
+- Keep the bot token secret. If it leaks, send `/revoke` to @BotFather and connect the new token on
+  the dashboard's Setup tab (**Use another bot**). The
   bot never writes the token (or a Discord webhook) into its log files.
 - Don't run two copies of the bot with the same Telegram token — Telegram only lets one program
   read a bot's messages at a time.
 
-To keep alerts but turn off remote control, set `telegram.control_enabled: false`.
+To keep alerts but turn off remote control, untick remote control on the Setup tab (it sets
+`telegram.control_enabled: false`).
 
 ### Discord (alerts only)
 
 In a Discord server you own, open *Server Settings → Integrations → Webhooks → New Webhook*, copy
-the URL, and either enter it in the setup wizard or add it to `.env`:
+the URL, and paste it into **Discord** on the dashboard's Setup tab (it sends a test message), or
+add it to `.env`:
 
 ```
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
@@ -1229,8 +1281,8 @@ show few or no trades.
 
 ### Using a Combine to teach the bot
 
-If an account is for teaching the bot rather than passing, choose **"Teach the bot"** when setup asks
-what the account is for. That writes a learning configuration:
+If an account is for teaching the bot rather than passing, choose **"Teach the bot"** on the dashboard's
+Setup tab (step 2, *What is this account for?*) and press Save. That writes a learning configuration:
 
 | Setting | Learning | Passing (default) | Why |
 |---|---|---|---|
@@ -1259,7 +1311,8 @@ Good to know:
 - You can teach it with your own trades too: trades you place from the dashboard's **Trade** tab are
   recorded as *manual* observations, so the ticket can show you where your own trades work
   ([Trading manually from the dashboard](#trading-manually-from-the-dashboard)).
-- When you move to an account you want to pass, run setup again and choose **"Pass the Combine"**.
+- When you move to an account you want to pass, choose **"Pass the Combine"** on the Setup tab and
+  save. Your other settings stay as they are.
 
 Settings (`knowledge:` in `config.yaml`): `enabled`, `auto_train`, `history_days`, `retrain_hours`,
 `half_life_days`, `min_samples`, `min_edge_r`, `real_trade_weight`. The file is
@@ -1367,7 +1420,7 @@ credentials, and Topstep's own rules (Maximum Loss Limit, contract caps, flat by
 ## 20. Running 24/7
 
 Topstep requires automated trading to run **on your own computer** — not a VPS. Starting the bot
-(menu 6/7, `start.bat start`, or menu 2 after the preflight) already runs it around the clock: the
+(the dashboard's **Start** button, menu 6/7, or menu 2 after the preflight) already runs it around the clock: the
 **controller** (the dashboard and Telegram) runs the trading bot as a separate program and
 
 - **restarts it after a crash**, waiting a little longer after each one (10 s, 30 s, 1 min, ...),
@@ -1391,11 +1444,11 @@ While it runs it also:
 - sends a **good-morning check-in** at 08:00 CT on weekdays (`service.check_in_time`) with the
   balance and MLL room, so silence tells you something is wrong.
 
-To start everything automatically whenever you sign in to Windows, choose **autostart** (menu 13),
-or run `topstep-bot autostart on`. It adds a small script to your personal Startup folder (no
+To start everything automatically whenever you sign in to Windows, tick **Start with Windows** on
+the dashboard's Setup tab (or choose **autostart**, menu 13, or run `topstep-bot autostart on`). It adds a small script to your personal Startup folder (no
 administrator rights needed) that starts the bot about 30 seconds after you sign in, minimized, in
 the mode you used last (Paper or Live). Check with `topstep-bot autostart status`; remove with
-`topstep-bot autostart off`.
+`topstep-bot autostart off` (or untick the box).
 
 ---
 
@@ -1500,7 +1553,8 @@ Creates a zip of the logs and `config.yaml` (never your `.env`) to share when as
 **Running 24/7 (recommended):** nothing to do before the open. Glance at the 08:00 CT check-in on
 your phone; if it doesn't arrive, look at the PC.
 
-**Starting by hand:** start the bot (menu 2, 6 or 7) before 8:15 CT. Check the dashboard shows
+**Starting by hand:** double-click `start.bat` and press **Start** on the dashboard (or use menu 2,
+6 or 7) before 8:15 CT. Check the dashboard shows
 "connected", the right account and contract, and "Trading normally".
 
 **During the session:** glance at the dashboard (or send `/status` on Telegram) and TopstepX now and
@@ -1677,8 +1731,10 @@ different config file.
 
 | Command | Purpose |
 |---|---|
-| `topstep-bot` | Interactive menu |
-| `topstep-bot setup` | Setup wizard |
+| `topstep-bot` | Start the dashboard (same as `server`); set up and start the bot there |
+| `topstep-bot server [--no-browser]` | Start the dashboard and Telegram without starting the bot or asking anything |
+| `topstep-bot menu` | The text menu ([section 6](#6-the-text-menu-optional)) |
+| `topstep-bot setup` | The question-and-answer setup in the console (the dashboard's Setup tab does the same) |
 | `topstep-bot check` | Test login, list accounts, show the contract |
 | `topstep-bot strategies` | Describe strategies and parameters |
 | `topstep-bot rules` | Topstep's rules for your account and how the bot enforces each one |
@@ -1687,7 +1743,7 @@ different config file.
 | `topstep-bot train [--data F] [--days N] [--tz TZ]` | Teach the bot which strategy works at which time of day from recent real data ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
 | `topstep-bot tune [--days N] [--strategies A,B] [--folds K] [--save\|--no-save] [--data F]` | Walk-forward test of single strategies and their settings ([section 18](#18-tuning-test-strategy-settings-on-unseen-data)) |
 | `topstep-bot download [--days N] [--tf M]` | Save history to `data/` |
-| `topstep-bot start [--mode paper\|live] [--yes] [--no-bot] [--no-browser]` | Start the dashboard + Telegram, which run the bot 24/7 (`service` does the same) |
+| `topstep-bot start [--mode paper\|live] [--yes] [--no-bot] [--no-browser]` | Start the dashboard + Telegram **and** the bot, which runs 24/7 (`service` does the same) |
 | `topstep-bot run [--mode paper\|live] [--yes]` | Run only the trading bot, without dashboard (normally started for you by `start`) |
 | `topstep-bot flatten [--yes]` | Emergency: cancel all orders, close all positions |
 | `topstep-bot journal [--mode paper\|live] [--limit N]` | Recent trades and daily results |
@@ -1699,7 +1755,8 @@ different config file.
 | `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
 | `topstep-bot insights [--csv FILE]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
-On Windows you can also pass commands through the launcher, e.g. `start.bat tune --days 730`.
+On Windows you can also pass commands through the launcher, e.g. `start.bat menu` or
+`start.bat tune --days 730`. Double-clicking `start.bat` with no command starts the dashboard.
 
 ---
 
@@ -1742,9 +1799,10 @@ bot in Telegram"** means the address was opened in a normal browser: use the but
 closed, or the link restarted with a new address: send `/dashboard` for a fresh button.
 
 **"Login failed"** — Use your TopstepX *username*, not your email. Copy the API key again in full.
-Check your API subscription is active. Re-run setup or edit `.env`.
+Check your API subscription is active. Paste the key again on the dashboard's Setup tab and press
+**Connect**.
 
-**"Several accounts can trade"** — Run setup and pick one, or set `account.account_id`
+**"Several accounts can trade"** — Pick one on the dashboard's Setup tab, or set `account.account_id`
 (`topstep-bot check` lists the IDs).
 
 **"No contract found for symbol"** — Check the symbol spelling, or pin `instrument.contract_id`.
@@ -1789,8 +1847,8 @@ virtualised firmware), you can ignore it.
 costs on days it hadn't seen. Try more history (`--days 730`) or another symbol, and don't go live
 on single-strategy settings from it.
 
-**Dashboard doesn't open** — Browse to http://127.0.0.1:8765 yourself. If the port is taken, change
-`dashboard.port`.
+**Dashboard doesn't open** — Browse to http://127.0.0.1:8765 yourself. If another program uses that
+port, change `dashboard.port` in `config.yaml`.
 
 **"disconnected" on the dashboard** — The bot reconnects automatically; while disconnected it
 polls prices instead. If it persists, check your internet connection.
@@ -1818,19 +1876,25 @@ keeps restarting it, `logs/controller.log` says why (crash, no heartbeat); after
 while it runs; if it still happens (e.g. an old version), right-click the window's title bar →
 Properties → untick *QuickEdit Mode*.
 
-**The dashboard doesn't load** — The controller window was closed (or the PC restarted). Start it
-again from the menu, or turn on `autostart`. If it says the port is busy, it's already running:
-open http://127.0.0.1:8765.
+**The dashboard doesn't load** — The black bot window was closed (or the PC restarted).
+Double-click `start.bat` again, or tick **Start with Windows** on the Setup tab. If it's already
+running, double-clicking `start.bat` just opens the dashboard; you can also open
+http://127.0.0.1:8765 yourself.
+
+**Start is greyed out** — Setup isn't finished, or `config.yaml` has a mistake. Hover over the
+button to see why, and open the **Setup** tab: it says what's missing.
 
 **Telegram: no reply to commands** — Check the bot window says `Telegram control: on`. Run
 `topstep-bot telegram-test`. Make sure you're messaging from the chat that was set up (a different
 chat is ignored — `logs/bot.log` shows "Ignored Telegram command from unauthorized chat ..." with
 its ID). Only one program can read a bot's messages: close any other copy of the bot.
 
-**Telegram: "the bot token was rejected"** — The token is wrong or was revoked. Run setup again.
+**Telegram: "the bot token was rejected"** — The token is wrong or was revoked. On the Setup tab,
+press **Use another bot** and paste a new token from @BotFather.
 
 **Updates: "GitHub did not show the repository"** — The repository is private (or `updates.repo` in
-`config.yaml` is misspelled). For a private repository, run `start.bat update --token` (or menu 18)
+`config.yaml` is misspelled). For a private repository, paste a token on the dashboard (Settings tab, Updates), or run
+`start.bat update --token`,
 and follow the steps in [Updating](#updating). **"GitHub rejected the token"** means it expired or
 was deleted: make a new one, or delete the `GITHUB_TOKEN` line in `.env` if the repository is public.
 

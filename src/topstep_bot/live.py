@@ -80,7 +80,7 @@ async def select_account(client: ProjectXClient, cfg: BotConfig) -> Account:
         match = [a for a in accounts if a.can_trade]
         if len(match) > 1:
             names = ", ".join(f"{a.name} (id {a.id})" for a in match)
-            raise SetupError(f"Several accounts can trade: {names}. Set account.account_id in config.yaml (or run setup).")
+            raise SetupError(f"Several accounts can trade: {names}. Pick the account on the dashboard's Setup tab.")
     if not match:
         names = ", ".join(f"{a.name} (id {a.id})" for a in accounts)
         raise SetupError(f"Configured account not found. Available: {names}")
@@ -96,7 +96,7 @@ async def resolve_contract(client: ProjectXClient, cfg: BotConfig) -> Contract:
 class LiveRunner:
     def __init__(self, cfg: BotConfig, secrets: Secrets, controls: Controls | None = None):
         if not secrets.has_credentials:
-            raise SetupError("Missing TopstepX credentials. Run 'topstep-bot setup' (or set TOPSTEPX_USERNAME / TOPSTEPX_API_KEY in .env).")
+            raise SetupError("Missing TopstepX credentials. Add your TopstepX login on the dashboard's Setup tab.")
         self.cfg = cfg
         self.secrets = secrets
         self.controls = controls or Controls()

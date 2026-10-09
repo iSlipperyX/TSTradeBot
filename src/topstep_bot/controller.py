@@ -355,10 +355,10 @@ class ProxyActions:
         return await self.bot.stop(source)
 
     async def start_bot(self, source: str) -> str:
-        return await self.bot.start(source)
+        return await self.ctl.start_bot(source)
 
     async def restart_bot(self, source: str) -> str:
-        return await self.bot.restart(source)
+        return await self.ctl.restart_bot(source)
 
     async def status_text(self) -> str:
         if not self.bot.running or self.bot.state != "running":
@@ -432,7 +432,8 @@ class Controller:
     telegram_api = "https://api.telegram.org"
 
     def __init__(self, cfg: BotConfig, secrets: Secrets, *, mode: str, config_path: str | None,
-                 worker_command: list[str] | None = None, port: int | None = None, poll_seconds: float = 5.0):
+                 worker_command: list[str] | None = None, port: int | None = None, poll_seconds: float = 5.0,
+                 config_error: str | None = None):
         self.cfg = cfg
         self.secrets = secrets
         self.config_path = config_path
@@ -451,14 +452,25 @@ class Controller:
                 ("GET", "/", self._index),
                 ("GET", "/api/status", self._status),
                 ("GET", "/api/logs", self._logs),
-                ("POST", "/api/bot/start", lambda r: self.bot.start(source(r))),
+                ("POST", "/api/bot/start", lambda r: self.start_bot(source(r))),
                 ("POST", "/api/bot/stop", lambda r: self.bot.stop(source(r))),
-                ("POST", "/api/bot/restart", lambda r: self.bot.restart(source(r))),
+                ("POST", "/api/bot/restart", lambda r: self.restart_bot(source(r))),
                 ("POST", "/api/mode", self._mode),
                 ("POST", "/api/action/*", self._proxy),
                 ("POST", "/api/updates/check", lambda r: self.updates.check_text(source(r))),
                 ("POST", "/api/updates/install", lambda r: self.updates.install(source(r), str(r.json().get("when", "now")))),
                 ("POST", "/api/updates/cancel", lambda r: self.updates.cancel(source(r))),
+                ("POST", "/api/setup/state", lambda r: self.setup.state()),
+                ("POST", "/api/setup/login", lambda r: self.setup.login(r.json())),
+                ("POST", "/api/setup/save", lambda r: self.setup.save(r.json())),
+                ("POST", "/api/setup/telegram/find", lambda r: self.setup.telegram_find(r.json())),
+                ("POST", "/api/setup/telegram/save", lambda r: self.setup.telegram_save(r.json())),
+                ("POST", "/api/setup/telegram/test", lambda r: self.setup.telegram_test()),
+                ("POST", "/api/setup/telegram/control", lambda r: self.setup.telegram_control(r.json())),
+                ("POST", "/api/setup/telegram/remove", lambda r: self.setup.telegram_remove()),
+                ("POST", "/api/setup/discord", lambda r: self.setup.discord_save(r.json())),
+                ("POST", "/api/setup/github_token", lambda r: self.setup.github_token(r.json())),
+                ("POST", "/api/setup/autostart", lambda r: self.setup.autostart(r.json())),
                 ("POST", "/api/phone/on", lambda r: self.phone.enable(source(r))),
                 ("POST", "/api/phone/off", lambda r: self.phone.disable(source(r), wait=not r.remote)),
             ],
@@ -468,9 +480,11 @@ class Controller:
         self.instance = pysecrets.token_hex(4)  # changes on every start: an open dashboard reloads itself
         self.exit_code = 0
         self._exit = asyncio.Event()
+        from topstep_bot.setup_service import SetupService
         from topstep_bot.update_service import UpdateService
 
         self.updates = UpdateService(self)
+        self.setup = SetupService(self, config_error)
         self.phone = PhoneAccess(self)  # after the dashboard's routes: the phone link serves some of them
 
     # ---------------------------------------------------------------- dashboard routes
@@ -493,6 +507,7 @@ class Controller:
             "updates": self.updates.status(),
             "phone": self.phone.status(),
             "viewer": "phone" if req.remote else "pc",
+            "setup": self.setup.summary(),
             # market / trading-day countdowns: computed here so they show even while the bot is stopped
             "clock": self._clock(),
         }
@@ -528,6 +543,17 @@ class Controller:
         data = await self.bot.action(req.param, payload)
         data.pop("ok", None)
         return data
+
+    async def start_bot(self, source: str) -> str:
+        """Start the trading bot, unless setup isn't finished (then say what is missing)."""
+        if not self.bot.running and (blocker := self.setup.blocker()):
+            raise ValueError(blocker)
+        return await self.bot.start(source)
+
+    async def restart_bot(self, source: str) -> str:
+        if not self.bot.running:
+            return await self.start_bot(source)
+        return await self.bot.restart(source)
 
     async def _mode(self, req: Request) -> str:
         body = req.json()
@@ -594,6 +620,21 @@ class Controller:
         self.telegram = tg
         self._telegram_task = spawn(tg.run(), name="telegram")
 
+    async def stop_telegram(self) -> None:
+        if self._telegram_task:  # stop polling before its HTTP client is closed below
+            self._telegram_task.cancel()
+            await asyncio.wait([self._telegram_task], timeout=5)
+            self._telegram_task = None
+        if self.telegram:
+            tg, self.telegram = self.telegram, None
+            await tg.close()
+
+    async def restart_telegram(self) -> None:
+        """Pick up a changed Telegram setup (Setup tab) without restarting the server."""
+        await self.stop_telegram()
+        await self.start_telegram()
+        await self.phone.telegram_changed()
+
     async def run(self, start_bot: bool = True, open_browser: bool = True) -> None:
         try:
             await self.server.start()
@@ -606,7 +647,10 @@ class Controller:
         await self.start_telegram()
         await self.phone.start()
         if start_bot:
-            await self.bot.start("controller start")
+            try:
+                await self.start_bot("controller start")
+            except ValueError as exc:
+                self.bot._event("warning", f"The bot was not started: {exc}")
         await self.updates.start()
         if open_browser and self.cfg.dashboard.open_browser:
             webbrowser.open(self.server.url)
@@ -636,8 +680,9 @@ class Controller:
 
 
 def run_controller(cfg: BotConfig, secrets: Secrets, *, config_path: str | None, mode: str,
-                   start_bot: bool = True, open_browser: bool = True) -> int:
+                   start_bot: bool = True, open_browser: bool = True, config_error: str | None = None) -> int:
     from rich.console import Console
+    from rich.panel import Panel
 
     from topstep_bot.keepawake import console_stays_responsive, keep_awake
     from topstep_bot.logging_setup import log_startup, setup_logging
@@ -652,8 +697,14 @@ def run_controller(cfg: BotConfig, secrets: Secrets, *, config_path: str | None,
     state = load_state(cfg)
     state["mode"] = mode
     save_state(cfg, state)
-    ctl = Controller(cfg, secrets, mode=mode, config_path=config_path)
-    console.print(f"[bold]Dashboard:[/] {ctl.server.url}   (Ctrl+C here stops everything)")
+    ctl = Controller(cfg, secrets, mode=mode, config_path=config_path, config_error=config_error)
+    console.print(Panel.fit(
+        f"[bold]Topstep Bot is running.[/] Dashboard: [bold cyan]{ctl.server.url}[/]\n"
+        "Set up, start and stop the bot there - it opens in your browser by itself.\n"
+        "[dim]Keep this window open (minimise it if you like). Closing it, or Ctrl+C, stops the bot and the dashboard.[/]",
+        border_style="cyan"))
+    if config_error:
+        console.print(f"[yellow]config.yaml has a problem - fix it on the dashboard's Setup tab:[/]\n{config_error}")
     try:
         with keep_awake(cfg.service.keep_awake), console_stays_responsive():
             asyncio.run(ctl.run(start_bot=start_bot, open_browser=open_browser))

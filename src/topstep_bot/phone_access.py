@@ -345,10 +345,10 @@ class PhoneAccess:
     def problem(self) -> str | None:
         """Why phone access can't work with the current setup (None if it can)."""
         if not (self.secrets.telegram_bot_token and self.secrets.telegram_chat_id):
-            return ("Set up Telegram first (bot token and chat ID): the dashboard opens through your Telegram bot, "
+            return ("Set up Telegram first on the Setup tab: the dashboard opens through your Telegram bot, "
                     "and Telegram's sign-in is what keeps everyone else out.")
         if not self.cfg.telegram.control_enabled:
-            return "Turn on Telegram control (telegram.control_enabled in config.yaml): the Dashboard button is sent through it."
+            return "Turn on remote control for Telegram on the Setup tab: the Dashboard button is sent through it."
         if not self.owners():
             return ("Your Telegram chat is a group. Add your own Telegram user ID to telegram.allowed_user_ids in "
                     "config.yaml so only you can open the dashboard.")
@@ -468,6 +468,16 @@ class PhoneAccess:
         else:
             spawn(self._teardown(delay=0.5), name="phone-link-off")
         return "Phone access is off. The phone link no longer opens the dashboard."
+
+    async def telegram_changed(self) -> None:
+        """Telegram was set up again on the Setup tab: sign everyone in again under the new setup."""
+        self.sessions.clear()
+        if self.problem() is not None:
+            await self._teardown()  # nobody could sign in; the on/off choice is kept for when it is fixed
+        elif self.enabled and self.state == "on" and self.url:
+            await self._announce(self.url)  # the (possibly new) bot gets the button too
+        elif self.enabled:
+            self._launch()
 
     async def close(self) -> None:
         """Controller shutdown: end the link but keep the on/off choice for next time."""
