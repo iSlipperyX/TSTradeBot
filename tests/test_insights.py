@@ -35,8 +35,8 @@ BARS_1M = synthetic_bars("MNQ", days=45, seed=11, end=TODAY)
 NAMES = [(n, STRATEGIES[n].title) for n in BASE_STRATEGIES]
 
 
-def observation(strategy="ema_trend", r=0.5, side="LONG", source="shadow", **extra):
-    return Observation(TODAY.isoformat(), "09:30", strategy, side, "open", "calm", r, r * 50, source, **extra)
+def observation(strategy="ema_trend", r=0.5, side="LONG", source="shadow", at="09:30", **extra):
+    return Observation(TODAY.isoformat(), at, strategy, side, "open", "calm", r, r * 50, source, **extra)
 
 
 # ------------------------------------------------------------------ market snapshot
@@ -280,8 +280,8 @@ def test_actions_and_telegram_text(tmp_path):
     with pytest.raises(RuntimeError, match="turned off"):
         run(actions.handle("insights_csv", {}))
     kb = KnowledgeBase(tmp_path / "knowledge_MNQ_5m.json", min_samples=2)
-    for _ in range(6):
-        kb.record(observation("ema_trend", 0.4, cost_r=0.05))
+    for i in range(6):
+        kb.record(observation("ema_trend", 0.4, cost_r=0.05, at=f"09:{30 + i}"))
     core.attach_knowledge(kb)
     rep = run(actions.handle("insights", {}))["report"]
     assert rep["strategies"][0]["n"] == 6

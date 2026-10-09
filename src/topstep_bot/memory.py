@@ -204,7 +204,8 @@ class LongRunMemory:
 
         k = cfg.knowledge
         kb = KnowledgeBase(cfg.longrun_knowledge_path, half_life_days=k.half_life_days, min_samples=k.min_samples,
-                           min_edge_r=k.min_edge_r, real_weight=k.real_trade_weight, max_observations=LONGRUN_MAX_OBSERVATIONS)
+                           min_edge_r=k.min_edge_r, real_weight=k.real_trade_weight, max_observations=LONGRUN_MAX_OBSERVATIONS,
+                           backups=0, ledger=False)  # rebuilt from the market library: nothing here is irreplaceable
         return cls(MarketLibrary(cfg.library_path), kb, cfg.instrument.symbol, cfg.instrument.timeframe_minutes)
 
     def close(self) -> None:
