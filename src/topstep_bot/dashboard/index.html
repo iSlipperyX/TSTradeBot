@@ -205,6 +205,38 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
 .changes time { color:var(--muted); font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .changes code { color:var(--muted); font-size:11.5px; margin-left:auto; padding-left:8px; }
 .changes .more { color:var(--muted); }
+/* setup */
+.stepnum { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; background:var(--accent);
+  color:#fff; font-size:12px; font-weight:700; margin-right:8px; flex:none; }
+.steptitle { display:flex; align-items:center; margin:0 0 4px; font-size:15px; font-weight:680; color:var(--text); text-transform:none; letter-spacing:0; }
+.welcome { border-color:var(--accent); }
+.welcome p { margin:6px 0 0; }
+.sfield { display:grid; grid-template-columns:190px minmax(0,1fr); gap:4px 14px; align-items:center; padding:9px 0; border-top:1px solid var(--border); }
+h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
+.sfield > label, .sfield > .lbl { font-weight:600; font-size:13px; }
+.sfield .ctl { display:flex; gap:8px; align-items:center; flex-wrap:wrap; min-width:0; }
+.sfield input[type=text], .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select {
+  font:inherit; padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text);
+  width:260px; max-width:100%; font-variant-numeric:tabular-nums; }
+.sfield input.short { width:130px; }
+.sfield input[type=checkbox] { width:18px; height:18px; margin:0; }
+.sfield .help { grid-column:2; font-size:12px; color:var(--muted); }
+.sfield .help.bad { color:var(--neg); } .sfield .help.warn { color:var(--warn); }
+.checkline { display:flex; gap:8px; align-items:flex-start; font-size:13px; cursor:pointer; }
+.checkline input { margin-top:2px; flex:none; }
+.choices { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); width:100%; }
+.choice { text-align:left; font-weight:400; padding:10px 12px; border-radius:10px; background:var(--surface2); }
+.choice b { display:block; font-weight:650; } .choice small { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
+.choice.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; background:var(--surface); }
+.choice:disabled { opacity:.55; }
+.msg { font-size:12.5px; margin-top:8px; min-height:0; }
+.msg.ok { color:var(--pos); } .msg.bad { color:var(--neg); }
+.savebar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:14px; }
+.savebar .placebtn { width:auto; margin:0; padding:10px 22px; }
+.steps { margin:6px 0 10px; padding-left:20px; font-size:13px; } .steps li { margin:3px 0; }
+.connected { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--pos); }
+@media (max-width:620px) { .sfield { grid-template-columns:1fr; } .sfield .help { grid-column:1; } .sfield input[type=text],
+  .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select { width:100%; } }
 </style>
 </head>
 <body>
@@ -236,6 +268,7 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
     <button data-tab="ideas">Ideas <span class="count" id="ideacount" hidden></span></button>
     <button data-tab="knowledge">Knowledge</button>
     <button data-tab="settings">Settings</button>
+    <button data-tab="setup">Setup <span class="count" id="setupflag" hidden>!</span></button>
     <button data-tab="logs">Logs</button>
   </nav>
 
@@ -411,13 +444,20 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
       <div class="row"><h2 style="margin:0">Settings</h2><span class="spacer"></span><button class="small" id="reset">Undo all changes</button></div>
       <div id="settings" style="margin-top:6px"></div>
       <p class="hint">Changes apply immediately, are saved, and are listed in Activity. Bounds keep every value safe for your plan.
-        config.yaml is never rewritten — “Undo all changes” goes back to it. Topstep's own rules, the account and the symbol
-        can only be changed on your PC.</p>
+        config.yaml is not rewritten here — “Undo all changes” goes back to it. Your account, market, strategy and the risk the
+        bot starts with are on the <button class="link" onclick="openTab('setup')">Setup tab</button>; Topstep's own rules never change.</p>
     </div>
     <div class="panel" style="margin-top:12px" id="updates">
       <div class="row"><h2 style="margin:0">Updates</h2><span class="spacer"></span><button class="small" id="upd-check">Check now</button></div>
       <div id="upd-meta" class="meta" style="margin:6px 0 0"></div>
       <div id="upd-state"></div>
+      <div id="upd-token-box" hidden>
+        <p class="hint">This copy follows a private repository, so GitHub needs a read-only token: open
+          <b>github.com/settings/personal-access-tokens/new</b>, choose only this repository, give it <b>Contents: Read-only</b>,
+          generate it and paste it here.</p>
+        <div class="row"><input type="password" id="upd-token" class="picker" style="width:280px;max-width:100%" autocomplete="off"
+          spellcheck="false" placeholder="github_pat_…"><button class="small" id="upd-token-save">Save token</button></div>
+      </div>
       <ul id="upd-changes" class="changes"></ul>
       <div class="row" id="upd-actions" style="margin-top:12px" hidden>
         <button class="small primary" id="upd-now">Install now</button>
@@ -427,6 +467,131 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
         <span class="meta" id="upd-sched-txt"></span><button class="small" id="upd-cancel">Cancel</button>
       </div>
       <p class="hint" id="upd-hint"></p>
+    </div>
+  </section>
+
+  <!-- SETUP (what the setup wizard used to ask in the console window) -->
+  <section class="tab" id="tab-setup">
+    <div class="panel welcome" id="su-welcome" hidden>
+      <h2 class="steptitle">Welcome to Topstep Bot</h2>
+      <p>Fill in the four steps below and press <b>Save</b>, then press <b>Start</b> at the top. The bot starts in
+        <b>Paper</b> mode: real prices, simulated orders. Everything here can be changed later.</p>
+      <p class="hint">Trading futures involves substantial risk of loss and no bot guarantees passing the Combine or a profit.
+        Topstep requires automated trading to run on your own computer (no VPS or VPN).</p>
+    </div>
+    <div class="panel" id="su-problem" style="margin-top:12px;border-color:var(--crit)" hidden>
+      <h2 class="steptitle" style="color:var(--neg)">config.yaml has a problem</h2>
+      <pre id="su-problem-text" style="margin-top:6px"></pre>
+      <label class="checkline" style="margin-top:10px"><input type="checkbox" id="su-fresh">
+        <span>Start over with a fresh config.yaml from this page (the old file is kept as config.yaml.bak). Leave this off to
+          fix only the settings on this page and keep the rest of your file.</span></label>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2 class="steptitle"><span class="stepnum">1</span>TopstepX login</h2>
+      <p class="hint" style="margin:0 0 6px">You need a TopstepX API subscription (TopstepX &gt; Settings &gt; API; Topstep traders get
+        50% off with code <b>topstep</b>). Create an API key on the same page.</p>
+      <div class="sfield"><label for="su-user">Username</label>
+        <div class="ctl"><input type="text" id="su-user" autocomplete="username" spellcheck="false" placeholder="your TopstepX login name"></div>
+        <div class="help">Your TopstepX login name, not your email.</div></div>
+      <div class="sfield"><label for="su-key">API key</label>
+        <div class="ctl"><input type="password" id="su-key" autocomplete="off" spellcheck="false" placeholder="paste your API key">
+          <button class="small primary" id="su-connect">Connect</button></div>
+        <div class="help" id="su-key-help">Checked with TopstepX, then saved in the .env file on this PC. It is never shown again.</div></div>
+      <div class="msg" id="su-login-msg"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2 class="steptitle"><span class="stepnum">2</span>Account</h2>
+      <div class="sfield"><span class="lbl">Account the bot trades</span>
+        <div class="ctl"><div class="choices" id="su-accounts"></div></div></div>
+      <div class="sfield"><label for="su-plan">Account size</label>
+        <div class="ctl"><select id="su-plan"></select></div><div class="help" id="su-plan-help"></div></div>
+      <div class="sfield"><label for="su-stage">Account type</label>
+        <div class="ctl"><select id="su-stage"></select></div></div>
+      <div class="sfield" id="su-goal-row"><span class="lbl">What is this account for?</span>
+        <div class="ctl"><div class="choices">
+          <button class="choice" data-goal="pass"><b>Pass the Combine</b><small>Protect the account and stop early on big days.</small></button>
+          <button class="choice" data-goal="learn"><b>Teach the bot</b><small>Trade more often and try unproven strategies so it learns
+            faster. Losing this account is acceptable.</small></button></div></div>
+        <div class="help">Every Topstep rule applies either way.</div></div>
+      <div class="sfield" id="su-dll-row"><span class="lbl">Topstep Daily Loss Limit</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-dll"><span id="su-dll-label">I added Topstep's optional Daily Loss Limit</span></label></div>
+        <div class="help">Shown under Risk Settings in TopstepX. The bot always stops before it.</div></div>
+      <div class="sfield" id="su-payout-row"><label for="su-payout">Payout path</label>
+        <div class="ctl"><select id="su-payout"><option value="standard">Standard: 5 winning days of $150 or more</option>
+          <option value="consistency">Consistency: 3 trading days, best day at most 40% of profit</option></select></div>
+        <div class="help">Chosen when the Express Funded Account was activated.</div></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2 class="steptitle"><span class="stepnum">3</span>What to trade</h2>
+      <div class="sfield"><label for="su-symbol">Market</label>
+        <div class="ctl"><select id="su-symbol"></select></div><div class="help" id="su-symbol-help"></div></div>
+      <div class="sfield"><label for="su-strategy">Strategy</label>
+        <div class="ctl"><select id="su-strategy"></select></div><div class="help" id="su-strategy-help"></div></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2 class="steptitle"><span class="stepnum">4</span>Risk</h2>
+      <p class="hint" style="margin:0 0 4px" id="su-risk-intro"></p>
+      <div class="sfield"><label for="su-risk">Risk per trade ($)</label>
+        <div class="ctl"><input type="number" class="short" id="su-risk" min="1" step="10" inputmode="decimal">
+          <button class="small" id="su-suggest">Use suggested</button></div>
+        <div class="help" id="su-risk-help">Lost if a trade hits its stop; the position size is worked out from this.</div></div>
+      <div class="sfield"><label for="su-daily">Daily loss limit ($)</label>
+        <div class="ctl"><input type="number" class="short" id="su-daily" min="1" step="10" inputmode="decimal"></div>
+        <div class="help" id="su-daily-help">No new trades for the day after losing this much, open trades included.</div></div>
+      <div class="sfield"><label for="su-trades">Max trades per day</label>
+        <div class="ctl"><input type="number" class="short" id="su-trades" min="1" max="50" step="1" inputmode="numeric"></div>
+        <div class="help" id="su-trades-help"></div></div>
+      <div class="savebar">
+        <button class="placebtn primary" id="su-save">Save</button>
+        <button class="placebtn" id="su-start" hidden>Start the bot</button>
+        <span class="meta" id="su-path"></span>
+      </div>
+      <div class="msg" id="su-save-msg"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2 class="steptitle">Alerts and remote control <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
+      <h3>Telegram</h3>
+      <div id="su-tg-on" hidden>
+        <div class="row"><span class="connected">✔ Connected</span><span class="meta" id="su-tg-chat"></span></div>
+        <label class="checkline" style="margin-top:8px"><input type="checkbox" id="su-tg-ctl">
+          <span>Let Telegram control the bot (status, pause, flatten, start and stop, settings). Off = alerts only.</span></label>
+        <div class="row" style="margin-top:8px"><button class="small" id="su-tg-test">Send a test message</button>
+          <button class="small" id="su-tg-change">Use another bot</button><button class="small" id="su-tg-remove">Remove</button></div>
+      </div>
+      <div id="su-tg-setup">
+        <ol class="steps"><li>In Telegram, open <b>@BotFather</b>, send <b>/newbot</b> and follow the prompts.</li>
+          <li>Paste the token it gives you below (it looks like 123456789:AA…).</li>
+          <li>Open your new bot in Telegram and press <b>Start</b> (or send it any message), then press <b>Find my chat</b>.</li></ol>
+        <div class="sfield"><label for="su-tg-token">Bot token</label>
+          <div class="ctl"><input type="password" id="su-tg-token" autocomplete="off" spellcheck="false" placeholder="123456789:AA…">
+            <button class="small" id="su-tg-find">Find my chat</button></div></div>
+        <div class="sfield" id="su-tg-chats-row" hidden><span class="lbl">Your chat</span>
+          <div class="ctl"><div class="choices" id="su-tg-chats"></div></div></div>
+        <div class="sfield" id="su-tg-save-row" hidden><span class="lbl">Remote control</span>
+          <div class="ctl"><label class="checkline"><input type="checkbox" id="su-tg-control" checked>
+            <span>Also control the bot from Telegram. Only this chat can; messages from anyone else are ignored.</span></label></div></div>
+        <div class="row" id="su-tg-save-bar" style="margin-top:8px" hidden><button class="small primary" id="su-tg-save">Save Telegram</button></div>
+      </div>
+      <div class="msg" id="su-tg-msg"></div>
+      <h3 style="margin-top:18px">Discord</h3>
+      <div class="sfield"><label for="su-dc-url">Webhook link</label>
+        <div class="ctl"><input type="password" id="su-dc-url" autocomplete="off" spellcheck="false" placeholder="https://discord.com/api/webhooks/…">
+          <button class="small" id="su-dc-save">Save</button></div>
+        <div class="help" id="su-dc-help">Trade alerts in a Discord channel: channel settings &gt; Integrations &gt; Webhooks &gt; Copy Webhook URL.</div></div>
+      <div class="msg" id="su-dc-msg"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2 class="steptitle">Start with Windows <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
+      <label class="checkline" style="margin-top:6px"><input type="checkbox" id="su-auto">
+        <span>Start Topstep Bot about 30 seconds after I sign in to Windows, and start the bot in the mode used last.
+          For running 24/7 on this PC (keep it awake and signed in).</span></label>
+      <div class="msg" id="su-auto-msg"></div>
     </div>
   </section>
 
@@ -497,6 +662,7 @@ function showTab(name) {
   if (name === "logs") loadLogs();
   if (name === "trade") loadTicket();
   if (name === "knowledge") loadInsights(true);
+  if (name === "setup") loadSetup(false);
 }
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 const openTab = showTab;
@@ -525,6 +691,10 @@ $("upd-now").onclick = () => run("updates/install", {when: "now"}, S && S.update
 $("upd-tonight").onclick = () => run("updates/install", {when: "tonight"});
 $("upd-cancel").onclick = () => run("updates/cancel", {}, "Cancel the update scheduled for after the close?");
 $("reloadlogs").onclick = loadLogs;
+$("upd-token-save").onclick = async () => {
+  const d = await run("setup/github_token", {token: $("upd-token").value.trim()});
+  if (d && d.ok !== false) $("upd-token").value = "";
+};
 $("newtrade").onclick = () => openTab("trade");
 $("ins-csv").onclick = async () => {
   const d = await post("action/insights_csv");
@@ -558,7 +728,9 @@ function renderTop(s) {
   $("botpill").querySelector(".dot").style.background = css(color);
   $("botpill").lastChild.textContent = `Bot: ${label}${c.state === "running" && c.uptime !== "-" ? " · " + c.uptime : ""}`;
   const up = ["running","starting","restarting","stopping"].includes(c.state);
-  $("b-start").disabled = up; $("b-stop").disabled = !up; $("b-restart").disabled = c.state === "stopping";
+  const blocker = s.setup && s.setup.blocker;
+  $("b-start").disabled = up || !!blocker; $("b-start").title = blocker || "";
+  $("b-stop").disabled = !up; $("b-restart").disabled = c.state === "stopping" || (!up && !!blocker);
   const b = s.bot;
   $("meta").textContent = b ? `${b.account} · ${b.plan} · ${b.contract} ${b.timeframe}m · ${b.time}` : (c.telegram ? "Telegram control on" : "");
   const lp = $("logpill");
@@ -567,7 +739,17 @@ function renderTop(s) {
 
   // banner: anything you should know right now
   const bn = $("banner"); let html = "", cls = "";
-  if (!up) {
+  if (!up && blocker) {
+    cls = "warn";
+    html = `<b>${s.setup.configured ? "One more thing before the bot can start" : "Welcome! Set up the bot first"}</b>
+      <span class="meta">${esc(blocker)}</span><span class="spacer"></span>
+      <button class="small primary" onclick="openTab('setup')">Open Setup</button>`;
+  } else if (s.setup && s.setup.restart_needed) {
+    cls = "warn";
+    html = `<b>New setup saved</b><span class="meta">The bot is still running with the old settings. Restart it to use the new ones
+      (an open trade is closed first).</span><span class="spacer"></span>
+      <button class="small primary" onclick="document.getElementById('b-restart').click()">Restart bot</button>`;
+  } else if (!up) {
     const ex = c.last_exit;
     cls = c.state === "stopped" ? "warn" : "bad";
     html = `<b>The bot is ${esc(label.toLowerCase())}.</b><span class="meta">${ex ? `Last exit: ${esc(ex.reason)} (code ${ex.code}, ${esc(ex.at)})` : "Press Start to run it."}</span>
@@ -1049,7 +1231,8 @@ async function saveSetting(key, el) {
 function renderSettings(b) {
   const box = $("settings"), list = b && b.settings;
   $("reset").disabled = !list;
-  if (!list) { box.innerHTML = `<div class="empty">Start the bot to change its settings.</div>`; settingsBuilt = false; return; }
+  if (!list) { box.innerHTML = `<div class="empty">Start the bot to change these while it runs. Your account, market, strategy and
+    starting risk are on the <button class="link" onclick="openTab('setup')">Setup tab</button>.</div>`; settingsBuilt = false; return; }
   if (!settingsBuilt) {
     box.innerHTML = list.map(x => `<div class="setting"><div class="name">${esc(x.label)}<span class="changed" data-changed="${x.key}"></span>
       <small>${esc(x.help)}${x.min != null ? ` · ${x.min}–${x.max}` : ""}</small></div>${inputFor(x)}
@@ -1084,8 +1267,7 @@ function renderUpdates(u) {
   let html = "";
   if (u.busy === "installing") html = `<div class="summary"><b>Installing the update…</b> The bot is stopped meanwhile.</div>`;
   else if (u.busy === "restarting") html = `<div class="summary"><b>Restarting with the new version…</b> This page reloads by itself.</div>`;
-  else if (info && info.error) html = `<div class="blockmsg">${esc(u.headline)}</div>` +
-    (info.needs_token ? `<p class="hint">If the repository is private, run <b>start.bat update --token</b> on the PC (or menu: update) to give the bot a read-only GitHub token.</p>` : "");
+  else if (info && info.error) html = `<div class="blockmsg">${esc(u.headline)}</div>`;
   else if (ready) html = `<div class="summary"><b>${esc(u.headline)}</b>` +
     (info.exact ? "" : `<div class="meta" style="margin-top:4px">This copy was downloaded as a ZIP, so its exact version is unknown: installing makes it identical to the latest ${esc(u.branch)} (${plural(info.file_count, "file")} differ). The latest changes:</div>`) +
     (info.dependencies ? `<div class="warnline">It also installs new Python packages.</div>` : "") +
@@ -1093,6 +1275,7 @@ function renderUpdates(u) {
   else if (info) html = `<div class="summary">✅ Up to date.</div>`;
   if (u.message && !UPDATING) html += `<p class="hint">${esc(u.message)}</p>`;
   $("upd-state").innerHTML = html;
+  $("upd-token-box").hidden = !(info && info.needs_token) || !!u.busy;
   const shown = ready ? info.changes.slice(0, 15) : [];
   const more = ready && info.exact ? info.change_count - shown.length : 0;
   $("upd-changes").innerHTML = shown.map(c => `<li><time>${esc((c.date || "").slice(0, 10))}</time><span>${esc(c.title)}</span><code>${esc(c.short)}</code></li>`).join("")
@@ -1119,6 +1302,206 @@ function renderUpdates(u) {
   } else bn.hidden = true;
 }
 
+// ---- Setup tab: everything the console setup wizard used to ask (setup_service.py on the server)
+let SU = null, SU_DIRTY = false, SU_SUG = null, SU_BUSY = false;
+const F = {account_id: null, account_name: null, goal: "pass"};
+const su = id => $("su-" + id);
+function suMsg(id, text, ok) { const e = su(id); e.textContent = text || ""; e.className = "msg" + (text ? (ok === false ? " bad" : ok ? " ok" : "") : ""); }
+const option = (value, label, selected) => `<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+
+async function loadSetup(force) {
+  if (SU_BUSY || (SU_DIRTY && !force)) return;
+  SU_BUSY = true;
+  let d;
+  try { d = await post("setup/state"); } finally { SU_BUSY = false; }
+  if (d.ok === false) { suMsg("save-msg", d.message, false); return; }
+  SU = d; SU_DIRTY = false; fillSetup();
+}
+function suSuggestion() {
+  return SU.choices.suggested[`${su("plan").value}|${F.goal}|${su("dll").checked && su("stage").value !== "practice" ? 1 : 0}`];
+}
+function fillSetup() {
+  const v = SU.values, c = SU.choices;
+  su("welcome").hidden = SU.configured || !!SU.error;
+  su("problem").hidden = !SU.error; su("problem-text").textContent = SU.error || ""; su("fresh").checked = false;
+  su("user").value = SU.login.username; su("key").value = "";
+  su("key").placeholder = SU.login.api_key_saved ? "saved - leave empty to keep it" : "paste your API key";
+  su("plan").innerHTML = c.plans.map(p => option(p.name, `${p.name} account`, p.name === v.plan)).join("");
+  su("stage").innerHTML = c.stages.map(x => option(x.key, x.label, x.key === v.stage)).join("");
+  su("symbol").innerHTML = c.symbols.map(x => option(x.key, `${x.key} - ${x.label}`, x.key === v.symbol)).join("");
+  su("strategy").innerHTML = c.strategies.map(x => option(x.key, x.title, x.key === v.strategy)).join("");
+  su("payout").value = v.payout_path; su("dll").checked = v.topstep_dll;
+  F.account_id = v.account_id; F.account_name = v.account_name; F.goal = v.goal;
+  su("risk").value = v.risk_per_trade; su("daily").value = v.daily_loss_limit; su("trades").value = v.max_trades;
+  SU_SUG = suSuggestion();
+  su("path").textContent = SU.exists ? `Saved in ${SU.path}` : `Creates ${SU.path}`;
+  suMsg("save-msg", "");
+  renderAccounts(); renderAlerts(); renderAutostart(); suRender();
+}
+function renderAccounts() {
+  const box = su("accounts"), list = SU.accounts || [];
+  if (!list.length) {
+    box.innerHTML = F.account_id != null
+      ? `<button class="choice on" disabled><b>${esc(F.account_name || "Account " + F.account_id)}</b><small>id ${F.account_id} · press Connect to choose another</small></button>`
+      : `<div class="empty">${SU.login.api_key_saved ? "Press Connect to list your accounts." : "Connect your TopstepX login first (step 1)."}</div>`;
+    return;
+  }
+  box.innerHTML = list.map(a => `<button class="choice${a.id === F.account_id ? " on" : ""}" data-acct="${a.id}">
+    <b>${esc(a.name)}</b><small>${money(a.balance)} · ${a.can_trade ? "can trade" : "can't trade right now"}${a.plan || a.stage ? ` · looks like ${esc([a.plan, a.stage].filter(Boolean).join(" "))}` : ""}</small></button>`).join("");
+  box.querySelectorAll("[data-acct]").forEach(b => b.onclick = () => pickAccount(list.find(x => String(x.id) === b.dataset.acct)));
+}
+function pickAccount(a) {
+  if (!a) return;
+  F.account_id = a.id; F.account_name = a.name;
+  if (a.plan) su("plan").value = a.plan;  // guessed from the account name, e.g. 50KTC-V2-123 = 50K Combine
+  if (a.stage) su("stage").value = a.stage;
+  if (a.dll) su("dll").checked = true;
+  suChanged(); renderAccounts();
+}
+function suRender() {
+  const c = SU.choices, plan = c.plans.find(p => p.name === su("plan").value) || c.plans[0], stage = su("stage").value;
+  const learnable = stage === "combine" || stage === "practice";
+  if (!learnable) F.goal = "pass";
+  su("goal-row").hidden = !learnable;
+  document.querySelectorAll("[data-goal]").forEach(b => b.classList.toggle("on", b.dataset.goal === F.goal));
+  su("plan-help").textContent = `Profit target ${money0(plan.profit_target)} · Maximum Loss Limit ${money0(plan.max_loss_limit)} · up to ${plan.max_minis} minis`;
+  su("dll-row").hidden = stage === "practice";
+  su("dll-label").textContent = `I added Topstep's optional Daily Loss Limit (${money0(plan.daily_loss_limit)})`;
+  su("payout-row").hidden = stage !== "express";
+  const sym = c.symbols.find(x => x.key === su("symbol").value);
+  const blocked = sym && sym.blocked.includes(plan.name);
+  su("symbol-help").textContent = sym ? `${money(sym.tick_value)} per tick.` + (blocked ? ` Topstep doesn't currently allow ${sym.key} on a ${plan.name} account.`
+    : sym.key.startsWith("M") ? " A micro: the best way to start." : " A full-size contract: ten times a micro's risk per point.") : "";
+  su("symbol-help").className = "help" + (blocked ? " bad" : "");
+  const learn = F.goal === "learn";
+  if (learn) su("strategy").value = "adaptive";
+  su("strategy").disabled = learn;
+  const st = c.strategies.find(x => x.key === su("strategy").value);
+  su("strategy-help").textContent = learn ? "Learning accounts use Adaptive: it runs every strategy and learns from all of them."
+    : st ? st.description + (st.key === "adaptive" ? " Recommended." : "") : "";
+  // risk: the same limits config.yaml enforces, explained before Save
+  const sug = suSuggestion(), dll = su("dll").checked && stage !== "practice";
+  su("risk-intro").textContent = `Your Maximum Loss Limit is ${money0(plan.max_loss_limit)}. Suggested: risk ${money0(sug.risk_per_trade)} per trade and stop for the day after losing ${money0(sug.daily_loss_limit)}.`;
+  const risk = parseFloat(su("risk").value), daily = parseFloat(su("daily").value), trades = parseFloat(su("trades").value);
+  const ceiling = sug.daily_ceiling, why = dll && plan.daily_loss_limit < plan.max_loss_limit ? "your Topstep Daily Loss Limit" : "your Maximum Loss Limit";
+  let rh = "Lost if a trade hits its stop; the position size is worked out from this.", rc = "";
+  if (risk > daily) { rh = "Can't be more than the daily loss limit."; rc = " bad"; }
+  else if (risk > 0.15 * plan.max_loss_limit) { rh = `That is ${Math.round(100 * risk / plan.max_loss_limit)}% of the Maximum Loss Limit per trade - a few losses in a row would end the account.`; rc = " warn"; }
+  su("risk-help").textContent = rh; su("risk-help").className = "help" + rc;
+  let dh = "No new trades for the day after losing this much, open trades included.", dc = "";
+  if (daily >= ceiling) { dh = `Must be below ${money0(ceiling)} (${why}).`; dc = " bad"; }
+  su("daily-help").textContent = dh; su("daily-help").className = "help" + dc;
+  su("trades-help").textContent = learn ? "Learning trades more often: 8 or more is suggested." : "The bot stops opening trades after this many in a day.";
+}
+function suChanged() {
+  SU_DIRTY = true;
+  const next = suSuggestion();
+  if (SU_SUG) {  // fields still on the old suggestion follow the new one; typed values are kept
+    [["risk", "risk_per_trade"], ["daily", "daily_loss_limit"], ["trades", "max_trades"]].forEach(([id, key]) => {
+      if (su(id).value === "" || parseFloat(su(id).value) === SU_SUG[key]) su(id).value = next[key]; });
+  }
+  SU_SUG = next; suRender();
+}
+["plan", "stage", "symbol", "strategy", "payout", "dll"].forEach(id => su(id).addEventListener("change", suChanged));
+["risk", "daily", "trades"].forEach(id => su(id).addEventListener("input", () => { SU_DIRTY = true; suRender(); }));
+["user", "key"].forEach(id => su(id).addEventListener("input", () => SU_DIRTY = true));
+document.querySelectorAll("[data-goal]").forEach(b => b.onclick = () => { F.goal = b.dataset.goal; suChanged(); });
+su("suggest").onclick = () => { const g = suSuggestion(); su("risk").value = g.risk_per_trade; su("daily").value = g.daily_loss_limit;
+  su("trades").value = g.max_trades; SU_DIRTY = true; suRender(); };
+su("key").addEventListener("keydown", e => { if (e.key === "Enter") su("connect").click(); });
+
+su("connect").onclick = async () => {
+  if (!SU) return;
+  su("connect").disabled = true; suMsg("login-msg", "Checking with TopstepX…");
+  const d = await post("setup/login", {username: su("user").value.trim(), api_key: su("key").value.trim()});
+  su("connect").disabled = false;
+  suMsg("login-msg", d.message, d.ok === false ? false : (d.accounts || []).length ? true : null);
+  if (d.ok === false) return;
+  su("key").value = ""; su("key").placeholder = "saved - leave empty to keep it"; SU.login.api_key_saved = true;
+  SU.accounts = d.accounts || [];
+  if (SU.accounts.length === 1) pickAccount(SU.accounts[0]); else renderAccounts();
+  refresh();
+};
+
+su("save").onclick = async () => {
+  if (!SU) return;
+  if (SU.accounts && SU.accounts.length && F.account_id == null) { suMsg("save-msg", "Pick the account the bot should trade (step 2).", false); return; }
+  if (su("fresh").checked && !confirm("Replace config.yaml with a fresh one from this page? The old file is kept as config.yaml.bak.")) return;
+  su("save").disabled = true;
+  const d = await post("setup/save", {
+    account_id: F.account_id, account_name: F.account_name, plan: su("plan").value, stage: su("stage").value, goal: F.goal,
+    topstep_dll: su("dll").checked, payout_path: su("payout").value, symbol: su("symbol").value, strategy: su("strategy").value,
+    risk_per_trade: su("risk").value, daily_loss_limit: su("daily").value, max_trades: su("trades").value, fresh: su("fresh").checked});
+  su("save").disabled = false;
+  if (d.ok === false) { suMsg("save-msg", d.message, false); return; }
+  toast(d.message); SU_DIRTY = false;
+  await loadSetup(true); suMsg("save-msg", d.message, true);
+  await refresh();
+  su("start").hidden = !(S && S.setup && !S.setup.blocker && !["running", "starting", "restarting"].includes(S.controller.state));
+  su("start").textContent = S && S.controller.mode === "live" ? "Start the bot (LIVE)" : "Start the bot (Paper)";
+};
+su("start").onclick = async () => { await run("bot/start", {}, S && S.controller.mode === "live" ? "Start the bot in LIVE mode (real orders)?" : null);
+  su("start").hidden = true; openTab("overview"); };
+
+// alerts: Telegram and Discord (re-read on their own so an unsaved form above is kept)
+const TG = {chat: null};
+async function reloadAlerts() { const d = await post("setup/state"); if (d.ok !== false && SU) { SU.alerts = d.alerts; SU.autostart = d.autostart; renderAlerts(); renderAutostart(); } }
+function renderAlerts() {
+  const a = SU.alerts, on = a.telegram && !TG.changing;
+  su("tg-on").hidden = !on; su("tg-setup").hidden = on;
+  su("tg-chat").textContent = a.telegram ? `chat ${a.telegram_chat}${a.telegram_control ? (a.telegram_running ? " · remote control on" : " · remote control starting…") : " · alerts only"}` : "";
+  su("tg-ctl").checked = a.telegram_control;
+  su("dc-url").placeholder = a.discord ? "saved - paste a new link to replace it" : "https://discord.com/api/webhooks/…";
+  su("dc-help").textContent = a.discord ? "Discord alerts are on. Save an empty box to turn them off."
+    : "Trade alerts in a Discord channel: channel settings > Integrations > Webhooks > Copy Webhook URL.";
+}
+su("tg-find").onclick = async () => {
+  su("tg-find").disabled = true; suMsg("tg-msg", "Asking Telegram…");
+  const d = await post("setup/telegram/find", {token: su("tg-token").value.trim()});
+  su("tg-find").disabled = false;
+  suMsg("tg-msg", d.message, d.ok === false ? false : (d.chats || []).length ? true : null);
+  const chats = d.chats || [];
+  su("tg-chats-row").hidden = su("tg-save-row").hidden = su("tg-save-bar").hidden = !chats.length;
+  TG.chat = chats.length === 1 ? chats[0].id : null;
+  su("tg-chats").innerHTML = chats.map(c => `<button class="choice${c.id === TG.chat ? " on" : ""}" data-chat="${esc(c.id)}"><b>${esc(c.label)}</b><small>chat ${esc(c.id)}</small></button>`).join("");
+  su("tg-chats").querySelectorAll("[data-chat]").forEach(b => b.onclick = () => { TG.chat = b.dataset.chat;
+    su("tg-chats").querySelectorAll("[data-chat]").forEach(x => x.classList.toggle("on", x === b)); });
+};
+su("tg-save").onclick = async () => {
+  if (!TG.chat) { suMsg("tg-msg", "Pick your chat first.", false); return; }
+  su("tg-save").disabled = true; suMsg("tg-msg", "Sending a test message…");
+  const d = await post("setup/telegram/save", {token: su("tg-token").value.trim(), chat_id: TG.chat, control: su("tg-control").checked});
+  su("tg-save").disabled = false; suMsg("tg-msg", d.message, d.ok !== false);
+  if (d.ok !== false) { su("tg-token").value = ""; TG.changing = false; su("tg-chats-row").hidden = su("tg-save-row").hidden = su("tg-save-bar").hidden = true; reloadAlerts(); }
+};
+su("tg-test").onclick = async () => { const d = await post("setup/telegram/test"); suMsg("tg-msg", d.message, d.ok !== false); };
+su("tg-ctl").onchange = async () => { const d = await post("setup/telegram/control", {control: su("tg-ctl").checked}); suMsg("tg-msg", d.message, d.ok !== false); reloadAlerts(); };
+su("tg-change").onclick = () => { TG.changing = true; suMsg("tg-msg", ""); renderAlerts(); };
+su("tg-remove").onclick = async () => { if (!confirm("Remove Telegram? Alerts and remote control stop.")) return;
+  const d = await post("setup/telegram/remove"); suMsg("tg-msg", d.message, d.ok !== false); reloadAlerts(); };
+su("dc-save").onclick = async () => {
+  su("dc-save").disabled = true; suMsg("dc-msg", su("dc-url").value.trim() ? "Sending a test message…" : "");
+  const d = await post("setup/discord", {url: su("dc-url").value.trim()});
+  su("dc-save").disabled = false; suMsg("dc-msg", d.message, d.ok !== false);
+  if (d.ok !== false) { su("dc-url").value = ""; reloadAlerts(); }
+};
+
+// start with Windows
+function renderAutostart() {
+  const a = SU.autostart; su("auto").checked = a.enabled; su("auto").disabled = !a.supported;
+  if (!a.supported) suMsg("auto-msg", "Only available on Windows.");
+}
+su("auto").onchange = async () => {
+  const on = su("auto").checked; let confirmText = "";
+  if (on && S && S.controller.mode === "live") {
+    confirmText = prompt("You're in LIVE mode: after every Windows sign-in the bot would start trading real orders by itself.\n\nType LIVE to confirm:");
+    if (confirmText === null) { su("auto").checked = false; return; }
+  }
+  const d = await post("setup/autostart", {enabled: on, confirm: confirmText});
+  suMsg("auto-msg", d.message, d.ok !== false);
+  if (d.ok === false) su("auto").checked = !on;
+};
+
 function renderLogs(s) {
   $("ctlevents").innerHTML = (s.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(5, 16))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">No events yet.</div>`;
 }
@@ -1134,7 +1517,10 @@ async function loadLogs() {
 }
 
 function render(s) {
+  const first = S === null;
   S = s;
+  if (s.setup) $("setupflag").hidden = s.setup.configured && !s.setup.error;
+  if (first && s.setup && !s.setup.configured && !ASKED_TAB) showTab("setup");  // first run: straight to setup
   renderTop(s); renderUpdates(s.updates); renderClock(s.clock); renderOverview(s.bot); renderSetups(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
   if (tabOpen("knowledge")) loadInsights(false);
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
@@ -1150,7 +1536,8 @@ async function refresh() {
     o.textContent = UPDATING ? "Restarting with the new version… this page reloads by itself when it is back." : OFFLINE_TEXT;
   }
 }
-showTab(location.hash.slice(1) || store.get("tsb-tab") || "overview");
+const ASKED_TAB = location.hash.slice(1);  // a link to a tab wins over the first-run jump to Setup
+showTab(ASKED_TAB || store.get("tsb-tab") || "overview");
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => store.set("tsb-tab", b.dataset.tab)));
 refresh(); setInterval(refresh, 2000);
 setInterval(() => { if (tabOpen("logs")) loadLogs(); }, 10000);

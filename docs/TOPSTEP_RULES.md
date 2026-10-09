@@ -64,7 +64,7 @@ later. When your day's P&L reaches it, Topstep flattens the account and blocks t
 
 **The bot:**
 - Tell it whether your account has one: `account.topstep_daily_loss_limit: true` (uses your plan's
-  amount) or leave it empty. The setup wizard asks you.
+  amount) or leave it empty. The dashboard's Setup tab asks you.
 - Stops new trades at 90% of the DLL and closes an open trade at 95%, so Topstep's limit is never
   the one that fires.
 - Always has its own, lower limit too (`risk.personal_daily_loss_limit`, $500 by default). The bot

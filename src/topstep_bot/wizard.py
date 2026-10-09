@@ -1,4 +1,7 @@
-"""Interactive first-time setup: credentials, account, instrument, strategy and risk."""
+"""Setup in the console window (start.bat setup): credentials, account, instrument, strategy and risk.
+
+The dashboard's Setup tab (setup_service.py) does the same from the browser and is what
+start.bat opens by default; both write the same config.yaml and .env."""
 
 from __future__ import annotations
 
@@ -161,11 +164,11 @@ async def _fetch_accounts(username: str, api_key: str) -> list:
         return await client.search_accounts(only_active=True)
 
 
-async def detect_telegram_chat(token: str) -> list[tuple[str, str]]:
+async def detect_telegram_chat(token: str, api_base: str = "https://api.telegram.org") -> list[tuple[str, str]]:
     """Chats that recently messaged the bot, as (chat_id, description). Also validates the token."""
     import httpx
 
-    async with httpx.AsyncClient(base_url=f"https://api.telegram.org/bot{token}/", timeout=15) as client:
+    async with httpx.AsyncClient(base_url=f"{api_base}/bot{token}/", timeout=15) as client:
         me = (await client.post("getMe")).json()
         if not me.get("ok"):
             raise ValueError(me.get("description", "invalid bot token"))
@@ -416,7 +419,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
             and not repo_is_public(UpdatesConfig().repo)):
         console.print("\n[bold cyan]8. Updates (optional)[/]\nThe bot can check GitHub for new versions and tell you "
                       "(it only installs when you confirm).")
-        if Confirm.ask("Set up update checks now? (You can do it later from the menu: update)", default=True):
+        if Confirm.ask("Set up update checks now? (You can do it later on the dashboard: Settings, Updates)", default=True):
             setup_github_token(env_path, UpdatesConfig().repo)
 
     config_path.write_text(
@@ -429,13 +432,10 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
     console.print(
         Panel.fit(
             f"[green bold]Saved {config_path}[/]\n\n"
-            "Next steps:\n"
-            "  1. [bold]Train[/] the bot (menu): it learns which strategy works when from recent real data.\n"
-            "     ([bold]Tune[/] instead tests each strategy on days it never saw and can save the best settings.)\n"
-            "  2. [bold]Backtest[/] (menu) and read the report.\n"
-            "  3. [bold]Start in paper mode[/] (menu): real prices, simulated orders, with the dashboard. Or\n"
-            "     [bold]Start trading today[/] to run every safety check and go live; the first live days trade\n"
-            "     at reduced risk. Later, the dashboard's [bold]Paper | Live[/] switch flips between them.\n"
+            "Next: double-click [bold]start.bat[/]. The dashboard opens in your browser; press [bold]Start[/] to\n"
+            "run the bot in [bold]Paper[/] mode (real prices, simulated orders). Every setting from this wizard\n"
+            "can be changed later on the dashboard's [bold]Setup[/] tab. When you're ready, flip [bold]Paper | Live[/]\n"
+            "there - the first live days trade at reduced risk.\n"
             "  Start on a Combine or practice account, never one you can't afford to lose.",
             border_style="green",
         )
