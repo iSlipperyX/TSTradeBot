@@ -371,6 +371,12 @@ class ProxyActions:
     async def train(self, source: str) -> str:
         return await self._msg("train", source)
 
+    async def check_update(self, source: str) -> dict:
+        return await self.ctl.updates.telegram_check(source)
+
+    async def install_update(self, source: str, when: str = "now") -> str:
+        return await self.ctl.updates.install(source, when)
+
     async def preview_setting(self, key: str, value: Any) -> dict:
         return await self.bot.action("preview_setting", {"key": key, "value": value})
 
@@ -425,10 +431,19 @@ class Controller:
                 ("POST", "/api/bot/restart", lambda r: self.bot.restart("dashboard")),
                 ("POST", "/api/mode", self._mode),
                 ("POST", "/api/action/*", self._proxy),
+                ("POST", "/api/updates/check", lambda r: self.updates.check_text("dashboard")),
+                ("POST", "/api/updates/install", lambda r: self.updates.install("dashboard", str(r.json().get("when", "now")))),
+                ("POST", "/api/updates/cancel", lambda r: self.updates.cancel("dashboard")),
             ],
             token=self.token,
             name="dashboard",
         )
+        self.instance = pysecrets.token_hex(4)  # changes on every start: an open dashboard reloads itself
+        self.exit_code = 0
+        self._exit = asyncio.Event()
+        from topstep_bot.update_service import UpdateService
+
+        self.updates = UpdateService(self)
 
     # ---------------------------------------------------------------- dashboard routes
 
@@ -442,6 +457,8 @@ class Controller:
             "bot": data.get("bot") if data else None,
             "log": data.get("log") if data else None,
             "events": list(self.events)[:30],
+            "instance": self.instance,
+            "updates": self.updates.status(),
             # market / trading-day countdowns: computed here so they show even while the bot is stopped
             "clock": self._clock(),
         }
@@ -550,12 +567,18 @@ class Controller:
         await self.start_telegram()
         if start_bot:
             await self.bot.start("controller start")
+        await self.updates.start()
         if open_browser and self.cfg.dashboard.open_browser:
             webbrowser.open(self.server.url)
         try:
-            await asyncio.Event().wait()
+            await self._exit.wait()
         finally:
             await self.shutdown()
+
+    def request_exit(self, code: int) -> None:
+        """End run() (used to restart with a newly installed update)."""
+        self.exit_code = code
+        self._exit.set()
 
     async def shutdown(self) -> None:
         log.info("Controller shutting down")
@@ -578,7 +601,8 @@ def run_controller(cfg: BotConfig, secrets: Secrets, *, config_path: str | None,
     console = Console()
     setup_logging(cfg.log_dir, "INFO", console=console, file_prefix="controller", shared_files=False,
                   retention_days=cfg.log_retention_days,
-                  secrets=[secrets.api_key, secrets.telegram_bot_token, secrets.discord_webhook_url])
+                  secrets=[secrets.api_key, secrets.telegram_bot_token, secrets.discord_webhook_url,
+                           secrets.github_token])
     cfg.mode = mode
     log_startup(cfg, f"controller ({mode})")
     state = load_state(cfg)
@@ -594,4 +618,8 @@ def run_controller(cfg: BotConfig, secrets: Secrets, *, config_path: str | None,
         return 1
     except KeyboardInterrupt:
         console.print("Stopped.")
+    if ctl.exit_code:
+        from topstep_bot.update_service import relaunch
+
+        return relaunch(cfg, config_path, ctl.exit_code, secrets, out=console.print)
     return 0

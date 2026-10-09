@@ -13,7 +13,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from topstep_bot import __version__
@@ -35,7 +35,7 @@ def setup_logging(cfg: BotConfig, command: str, console_level: str | None = None
     s = load_secrets()
     log_dir = _setup(
         cfg.log_dir, console_level or cfg.log_level, console=console, retention_days=cfg.log_retention_days,
-        secrets=[s.api_key, s.telegram_bot_token, s.discord_webhook_url], file_prefix=file_prefix,
+        secrets=[s.api_key, s.telegram_bot_token, s.discord_webhook_url, s.github_token], file_prefix=file_prefix,
     )
     log_startup(cfg, command)
     return log_dir
@@ -821,6 +821,114 @@ def cmd_telegram_test(args: argparse.Namespace) -> int:
         return 1
 
 
+def _controller_running(cfg: BotConfig) -> bool:
+    """Is the dashboard/controller already running on this PC?"""
+    import socket
+
+    with contextlib.suppress(OSError), socket.create_connection(("127.0.0.1", cfg.dashboard.port), timeout=0.5):
+        return True
+    return False
+
+
+def _print_update(info, method: str) -> None:
+    from topstep_bot.updater import version_label
+
+    if info.error:
+        console.print(f"[red]Could not check for updates:[/] {info.error}")
+        return
+    where = "git" if method == "git" else "GitHub download"
+    console.print(f"Installed: [bold]{version_label(info.version, info.current)}[/]"
+                  + (f" ({info.current_date[:10]})" if info.current_date else "")
+                  + f"   ·   following [bold]{info.branch}[/] ({where})")
+    if not info.available:
+        console.print("[green]Topstep Bot is up to date.[/]")
+        return
+    console.print(f"[bold cyan]{info.headline()}[/]")
+    if not info.exact:
+        console.print("[dim]This copy was downloaded as a ZIP, so its exact version is unknown: installing makes it "
+                      f"identical to the latest {info.branch} ({info.file_count} files differ). The latest changes:[/]")
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("Date", no_wrap=True)
+    table.add_column("Change")
+    table.add_column("Commit", style="dim", no_wrap=True)
+    for c in info.changes[:15]:
+        table.add_row(c.date[:10], c.title, c.short)
+    console.print(table)
+    if info.change_count > 15 and info.exact:
+        console.print(f"[dim]...and {info.change_count - 15} more.[/]")
+    if info.dependencies:
+        console.print("[yellow]It also installs new Python packages (needs the internet for a minute).[/]")
+    if info.problem:
+        console.print(Panel(f"Can't install it yet: {info.problem}.", border_style="yellow"))
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Check GitHub for a newer version of the bot, show what changed, and install it if you say so."""
+    from topstep_bot.updater import UpdateError, Updater, load_state
+    from topstep_bot.wizard import setup_github_token
+
+    cfg = _load(args)
+    env_path = Path(args.config or "config.yaml").parent / ".env"
+    if args.token and not setup_github_token(env_path, cfg.updates.repo):
+        return 1
+    updater = Updater.for_config(cfg, token=load_secrets().github_token)
+    if updater is None:
+        console.print("[yellow]This copy was installed as a Python package, not from the bot folder - update it with pip.[/]")
+        return 1
+    try:
+        if args.undo:
+            last = load_state(Path(cfg.data_dir)).get("last_install")
+            if not last or last.get("status") == "rolled_back":
+                console.print("There is no update to undo.")
+                return 0
+            if _controller_running(cfg):
+                console.print("[yellow]Close the bot (its window) first, then run this again.[/]")
+                return 1
+            if not args.yes and not Confirm.ask(f"Go back to the version from before the update of {last.get('at', '?')[:16]}?",
+                                                default=False):
+                return 0
+            rec = updater.rollback()
+            console.print(f"[green]Done - back to {(rec.get('from') or 'the previous files')[:7]}.[/] "
+                          "Start the bot again from the menu.")
+            return 0
+        with console.status("Checking GitHub for updates..."):
+            info = updater.check()
+        if info.error and updater.method == "download" and not updater.token and not args.check and sys.stdin.isatty():
+            console.print(f"[yellow]{info.error}.[/]")
+            if Confirm.ask("Set up a GitHub token now?", default=True) and setup_github_token(env_path, cfg.updates.repo):
+                updater.close()
+                updater = Updater.for_config(cfg, token=load_secrets().github_token)
+                with console.status("Checking GitHub for updates..."):
+                    info = updater.check()
+        _print_update(info, updater.method)
+        if info.error or info.problem:
+            return 1
+        if not info.available or args.check:
+            return 0
+        if _controller_running(cfg):
+            console.print(Panel(
+                "The bot is running. Install the update from the dashboard ([bold]Settings[/] tab -> Updates) or with "
+                "[bold]/update[/] in Telegram: they install it only while no trade is open, then restart the bot with "
+                "the new version by themselves.", border_style="cyan"))
+            return 0
+        if not args.yes and not Confirm.ask("Install it now?", default=True):
+            console.print("Not installed. Run this again any time.")
+            return 0
+        with console.status("Installing...") as status:
+            record = updater.install(info, args.config, progress=lambda m: status.update(m))
+        console.print(Panel(
+            f"[green bold]Updated to {record['to'][:7]}.[/]\n"
+            "Your settings, API keys, trades and what the bot has learned were kept.\n"
+            "Start the bot again: option 6 (paper) or 7 (live). Changed your mind? topstep-bot update --undo",
+            border_style="green"))
+        return 0
+    except UpdateError as exc:
+        console.print(f"[red]{exc}[/]")
+        return 1
+    finally:
+        updater.close()
+
+
 # ------------------------------------------------------------------------ menu
 
 MENU = [
@@ -841,7 +949,18 @@ MENU = [
     ("tune", "TUNE: test every strategy on unseen real data and pick the settings that held up"),
     ("rules", "Show Topstep's rules for your account and how the bot stays inside them"),
     ("insights", "What the bot has LEARNED: results after costs, real fills, market conditions"),
+    ("update", "UPDATE: check GitHub for a newer version of the bot and install it"),
 ]
+
+
+def _menu_update_line(cfg: BotConfig) -> None:
+    """'Update available' from the last check (no network: the menu must open instantly)."""
+    from topstep_bot.updater import cached_info
+
+    info = cached_info(Path(cfg.data_dir))
+    if info and info.available and not info.error:
+        number = next(i for i, (name, _) in enumerate(MENU, start=1) if name == "update")
+        console.print(f"[cyan]⬆ {info.headline()} Choose {number} to see what changed.[/]")
 
 
 def interactive_menu(parser: argparse.ArgumentParser) -> int:
@@ -856,6 +975,8 @@ def interactive_menu(parser: argparse.ArgumentParser) -> int:
                           f"strategy {cfg.strategy.name}, {cfg.mode.upper()} mode, ${cfg.risk.risk_per_trade:,.0f} per trade[/]")
         except Exception as exc:  # noqa: BLE001 - the menu must open even with a broken config
             console.print(f"[red]config.yaml has a problem:[/] {exc}\n[yellow]Fix it or run option 1 (setup) again.[/]")
+        else:
+            _menu_update_line(cfg)
     for i, (_, desc) in enumerate(MENU, start=1):
         console.print(f"  [bold]{i}[/]  {desc}")
     console.print("  [bold]0[/]  Quit")
@@ -965,6 +1086,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("insights", help="what the bot has learned: results after costs, real fills, market conditions")
     p.add_argument("--csv", metavar="FILE", help="save every observation to a CSV file (opens in Excel) instead")
     p.set_defaults(func=cmd_insights, csv=None)
+
+    p = sub.add_parser("update", help="check GitHub for a newer version of the bot and install it")
+    p.add_argument("--check", action="store_true", help="only show whether an update is available")
+    p.add_argument("--yes", action="store_true", help="install without asking")
+    p.add_argument("--token", action="store_true", help="set up (or replace) the GitHub token used for update checks")
+    p.add_argument("--undo", action="store_true", help="go back to the version from before the last update")
+    p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("journal", help="show recent trades and daily results")
     p.add_argument("--mode", choices=["paper", "live"])

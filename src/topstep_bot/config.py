@@ -273,6 +273,16 @@ class ServiceConfig(_Section):
         return v.strftime("%H:%M") if v else None
 
 
+class UpdatesConfig(_Section):
+    """Checks GitHub for newer versions of the bot. Nothing is installed until you confirm."""
+
+    enabled: bool = Field(default=True, description="Check for updates automatically.")
+    check_every_hours: float = Field(default=6, ge=1, le=168)
+    notify: bool = Field(default=True, description="Tell you (Telegram/Discord) once when a new version appears.")
+    repo: str = Field(default="iSlipperyX/TSTradeBot", pattern=r"^[\w.-]+/[\w.-]+$", description="GitHub owner/name.")
+    branch: str = Field(default="main", min_length=1, description="The branch the bot follows.")
+
+
 class DashboardConfig(_Section):
     enabled: bool = True
     host: str = "127.0.0.1"
@@ -305,6 +315,7 @@ class BotConfig(_Section):
     news: NewsConfig = Field(default_factory=NewsConfig)
     recommendations: RecommendationsConfig = Field(default_factory=RecommendationsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
 
@@ -364,6 +375,7 @@ class Secrets(BaseModel):
     discord_webhook_url: str | None = None
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+    github_token: str | None = None  # read-only token for update checks (the repository is private)
 
     @property
     def has_credentials(self) -> bool:
@@ -391,6 +403,7 @@ def load_secrets() -> Secrets:
         discord_webhook_url=os.environ.get("DISCORD_WEBHOOK_URL") or None,
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
+        github_token=os.environ.get("GITHUB_TOKEN") or None,
     )
 
 

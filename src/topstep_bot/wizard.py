@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from rich.console import Console
@@ -210,6 +211,49 @@ def setup_telegram(env_path: Path) -> bool:
     return True
 
 
+def check_github_token(token: str, repo: str) -> str | None:
+    """None if the token can read the repository, otherwise what is wrong (in plain words)."""
+    import httpx
+
+    try:
+        r = httpx.get(f"https://api.github.com/repos/{repo}", timeout=20,
+                      headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
+    except httpx.HTTPError as exc:
+        return f"could not reach GitHub ({type(exc).__name__})"
+    if r.status_code == 401:
+        return "GitHub rejected the token - copy the whole token and try again"
+    if r.status_code in (403, 404):
+        return f"the token can't see {repo} - give it access to that repository (Contents: Read-only)"
+    return None if r.status_code == 200 else f"GitHub answered {r.status_code}"
+
+
+def setup_github_token(env_path: Path, repo: str) -> bool:
+    """Store a read-only GitHub token in .env, so the bot can check for updates in its private repository."""
+    console.print(
+        f"The bot's code lives in the private GitHub repository [bold]{repo}[/]. To check it for updates, the bot needs\n"
+        "a GitHub token that can only [bold]read[/] it (it can't change anything):\n"
+        "  1. Open [bold]https://github.com/settings/personal-access-tokens/new[/] (signed in to GitHub).\n"
+        "  2. Token name: [bold]Topstep Bot updates[/]. Expiration: 1 year (you'll be reminded to renew it).\n"
+        f"  3. Repository access: [bold]Only select repositories[/] -> {repo.split('/')[-1]}.\n"
+        "  4. Permissions -> Repository permissions -> [bold]Contents: Read-only[/]. Leave everything else.\n"
+        "  5. Generate token, copy it (starts with github_pat_) and paste it here."
+    )
+    for _ in range(3):
+        token = Prompt.ask("GitHub token (input hidden, leave empty to skip)", password=True, default="",
+                           show_default=False).strip()
+        if not token:
+            return False
+        with console.status("Testing the token..."):
+            problem = check_github_token(token, repo)
+        if problem is None:
+            update_env_file(env_path, {"GITHUB_TOKEN": token})
+            os.environ["GITHUB_TOKEN"] = token
+            console.print(f"[green]Token works and is saved in {env_path}.[/] The bot can now check for updates.")
+            return True
+        console.print(f"[red]{problem}.[/]")
+    return False
+
+
 def run_wizard(config_path: Path, env_path: Path) -> bool:
     console.print(
         Panel.fit(
@@ -338,6 +382,18 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         url = Prompt.ask("Discord webhook URL").strip()
         if url:
             update_env_file(env_path, {"DISCORD_WEBHOOK_URL": url})
+
+    # ---- updates (a git folder uses your git login instead; a ZIP download needs a token)
+    from topstep_bot.updater import project_root
+
+    root = project_root()
+    if root is not None and not (root / ".git").exists() and not os.environ.get("GITHUB_TOKEN"):
+        console.print("\n[bold cyan]8. Updates (optional)[/]\nThe bot can check GitHub for new versions and tell you "
+                      "(it only installs when you confirm).")
+        if Confirm.ask("Set up update checks now? (You can do it later from the menu: update)", default=True):
+            from topstep_bot.config import UpdatesConfig
+
+            setup_github_token(env_path, UpdatesConfig().repo)
 
     config_path.write_text(
         render_config(

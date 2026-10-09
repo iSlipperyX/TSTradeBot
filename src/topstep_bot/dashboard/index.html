@@ -198,6 +198,13 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
 .clock .soon .cv { color:var(--warn); }
 .clock .holiday { grid-column:1 / -1; font-size:12px; color:var(--warn); padding:2px 2px 0; }
 .offline { display:none; margin-top:12px; background:var(--crit); color:#fff; padding:10px 14px; border-radius:10px; font-weight:600; }
+.offline.updating { background:var(--accent); }
+/* updates */
+.changes { list-style:none; margin:10px 0 0; padding:0; font-size:13px; }
+.changes li { padding:6px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:baseline; }
+.changes time { color:var(--muted); font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.changes code { color:var(--muted); font-size:11.5px; margin-left:auto; padding-left:8px; }
+.changes .more { color:var(--muted); }
 </style>
 </head>
 <body>
@@ -221,6 +228,7 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
   <div class="offline" id="offline">The dashboard lost contact with the controller. Is the Topstep Bot window still open on your PC?</div>
   <div class="clock" id="clock" aria-label="Market clock"></div>
   <div class="banner" id="banner" hidden></div>
+  <div class="banner ok" id="updbanner" hidden></div>
 
   <nav class="tabs">
     <button data-tab="overview" class="on">Overview</button>
@@ -406,6 +414,20 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
         config.yaml is never rewritten — “Undo all changes” goes back to it. Topstep's own rules, the account and the symbol
         can only be changed on your PC.</p>
     </div>
+    <div class="panel" style="margin-top:12px" id="updates">
+      <div class="row"><h2 style="margin:0">Updates</h2><span class="spacer"></span><button class="small" id="upd-check">Check now</button></div>
+      <div id="upd-meta" class="meta" style="margin:6px 0 0"></div>
+      <div id="upd-state"></div>
+      <ul id="upd-changes" class="changes"></ul>
+      <div class="row" id="upd-actions" style="margin-top:12px" hidden>
+        <button class="small primary" id="upd-now">Install now</button>
+        <button class="small" id="upd-tonight">Install after the close</button>
+      </div>
+      <div class="row" id="upd-sched" style="margin-top:12px" hidden>
+        <span class="meta" id="upd-sched-txt"></span><button class="small" id="upd-cancel">Cancel</button>
+      </div>
+      <p class="hint" id="upd-hint"></p>
+    </div>
   </section>
 
   <!-- LOGS -->
@@ -496,6 +518,12 @@ $("resume").onclick = () => run("action/resume");
 $("flatten").onclick = () => run("action/flatten", {}, "Close the position, cancel orders and HALT trading until the bot is restarted?\n\n(To close just this trade and keep the bot running, use Close trade instead.)");
 $("reset").onclick = () => { settingsBuilt = false; run("action/reset_settings", {}, "Undo every setting changed here or in Telegram (back to config.yaml)?"); };
 $("logpill").onclick = () => openTab("logs");
+$("upd-check").onclick = async () => { $("upd-check").disabled = true; toast("Checking GitHub…"); await run("updates/check"); $("upd-check").disabled = false; };
+$("upd-now").onclick = () => run("updates/install", {when: "now"}, S && S.updates && S.updates.quiet
+  ? "Install the update now?\n\nThe bot makes sure no trade or order is open, stops for about a minute while it updates, and starts again with the new version."
+  : "Install the update now, during trading hours?\n\nThe bot pauses, makes sure no trade or order is open, and stops for about a minute while it updates. 'Install after the close' waits until trading is done instead.");
+$("upd-tonight").onclick = () => run("updates/install", {when: "tonight"});
+$("upd-cancel").onclick = () => run("updates/cancel", {}, "Cancel the update scheduled for after the close?");
 $("reloadlogs").onclick = loadLogs;
 $("newtrade").onclick = () => openTab("trade");
 $("ins-csv").onclick = async () => {
@@ -1037,6 +1065,58 @@ function renderSettings(b) {
   }
 }
 
+// ---- updates from GitHub (Settings tab, plus a banner while one is waiting)
+let INSTANCE = null, UPDATING = false;
+const OFFLINE_TEXT = $("offline").textContent;
+const when = iso => { const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}); };
+function renderUpdates(u) {
+  if (!u) return;
+  UPDATING = u.busy === "installing" || u.busy === "restarting";
+  const info = u.info, ready = info && info.available && !info.error;
+  if (!u.supported) {
+    $("upd-meta").textContent = "This copy was installed as a Python package, so it can't update itself - update it with pip.";
+    ["upd-check", "upd-actions", "upd-sched", "upd-changes"].forEach(id => $(id).hidden = true); return;
+  }
+  const version = info && info.current ? `${u.version} · ${info.current.slice(0, 7)}` : u.version;
+  $("upd-meta").textContent = `Version ${version} · follows ${u.branch} on GitHub · ` +
+    (info && info.checked_at ? `checked ${when(info.checked_at)}` : "not checked yet") +
+    (u.auto_check && u.next_check ? ` · next check ${when(u.next_check)}` : u.auto_check ? "" : " · automatic checks off");
+  let html = "";
+  if (u.busy === "installing") html = `<div class="summary"><b>Installing the update…</b> The bot is stopped meanwhile.</div>`;
+  else if (u.busy === "restarting") html = `<div class="summary"><b>Restarting with the new version…</b> This page reloads by itself.</div>`;
+  else if (info && info.error) html = `<div class="blockmsg">${esc(u.headline)}</div>` +
+    (u.method === "download" && !u.token ? `<p class="hint">On the PC, run <b>start.bat update --token</b> (or menu: update) to give the bot a read-only GitHub token.</p>` : "");
+  else if (ready) html = `<div class="summary"><b>${esc(u.headline)}</b>` +
+    (info.exact ? "" : `<div class="meta" style="margin-top:4px">This copy was downloaded as a ZIP, so its exact version is unknown: installing makes it identical to the latest ${esc(u.branch)} (${plural(info.file_count, "file")} differ). The latest changes:</div>`) +
+    (info.dependencies ? `<div class="warnline">It also installs new Python packages.</div>` : "") +
+    (info.problem ? `<div class="warnline">Can't install it yet: ${esc(info.problem)}.</div>` : "") + `</div>`;
+  else if (info) html = `<div class="summary">✅ Up to date.</div>`;
+  if (u.message && !UPDATING) html += `<p class="hint">${esc(u.message)}</p>`;
+  $("upd-state").innerHTML = html;
+  const shown = ready ? info.changes.slice(0, 15) : [];
+  const more = ready && info.exact ? info.change_count - shown.length : 0;
+  $("upd-changes").innerHTML = shown.map(c => `<li><time>${esc((c.date || "").slice(0, 10))}</time><span>${esc(c.title)}</span><code>${esc(c.short)}</code></li>`).join("")
+    + (more > 0 ? `<li class="more">…and ${more} more</li>` : "");
+  $("upd-actions").hidden = !(ready && !info.problem && !u.busy && !u.scheduled);
+  $("upd-tonight").hidden = u.quiet;
+  $("upd-now").className = "small" + (u.quiet ? " primary" : ""); $("upd-tonight").className = "small" + (u.quiet ? "" : " primary");
+  $("upd-sched").hidden = !u.scheduled || UPDATING;
+  if (u.scheduled) $("upd-sched-txt").textContent = `Scheduled to install after the close (asked by ${u.scheduled.by}, ${when(u.scheduled.at)}). It waits until the bot is flat.`;
+  $("upd-hint").textContent = (u.auto_check ? `The bot checks GitHub every ${u.every_hours} hours and tells you once when there is something new. ` : "") +
+    "Nothing installs without you. Installing pauses the bot, makes sure no trade or order is open, then restarts it with the new version (about 30 seconds). " +
+    "If the new version doesn't start, the previous one comes back by itself. Your settings, keys, trades and what the bot learned are kept.";
+  // banner on every tab while an update waits (hidden for this version once you press Later)
+  const bn = $("updbanner");
+  if (UPDATING) { bn.hidden = false; bn.innerHTML = `<b>${u.busy === "installing" ? "Installing the update…" : "Restarting with the new version…"}</b><span class="meta">The dashboard reloads by itself when it is back.</span>`; }
+  else if (ready && !u.scheduled && store.get("tsb-upd-later") !== info.latest) {
+    bn.hidden = false;
+    bn.innerHTML = `<b>⬆ Update available</b><span class="meta">${esc(u.headline)}</span><span class="spacer"></span>
+      <button class="small primary" id="upd-see">See what's new</button><button class="small" id="upd-later">Later</button>`;
+    $("upd-see").onclick = () => { openTab("settings"); $("updates").scrollIntoView({behavior: "smooth"}); };
+    $("upd-later").onclick = () => { store.set("tsb-upd-later", info.latest); bn.hidden = true; };
+  } else bn.hidden = true;
+}
+
 function renderLogs(s) {
   $("ctlevents").innerHTML = (s.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(5, 16))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">No events yet.</div>`;
 }
@@ -1053,13 +1133,20 @@ async function loadLogs() {
 
 function render(s) {
   S = s;
-  renderTop(s); renderClock(s.clock); renderOverview(s.bot); renderSetups(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
+  renderTop(s); renderUpdates(s.updates); renderClock(s.clock); renderOverview(s.bot); renderSetups(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
   if (tabOpen("knowledge")) loadInsights(false);
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
 }
 async function refresh() {
-  try { const r = await fetch("/api/status", {cache:"no-store"}); render(await r.json()); $("offline").style.display = "none"; }
-  catch (e) { $("offline").style.display = "block"; }
+  try {
+    const r = await fetch("/api/status", {cache:"no-store"}), s = await r.json();
+    if (INSTANCE && s.instance && s.instance !== INSTANCE) { location.reload(); return; }  // restarted (e.g. after an update)
+    INSTANCE = s.instance || INSTANCE;
+    render(s); $("offline").style.display = "none";
+  } catch (e) {
+    const o = $("offline"); o.style.display = "block"; o.classList.toggle("updating", UPDATING);
+    o.textContent = UPDATING ? "Restarting with the new version… this page reloads by itself when it is back." : OFFLINE_TEXT;
+  }
 }
 showTab(location.hash.slice(1) || store.get("tsb-tab") || "overview");
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => store.set("tsb-tab", b.dataset.tab)));
