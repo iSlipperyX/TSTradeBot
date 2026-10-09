@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 
 from topstep_bot.indicators import ATR
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Strategy, StrategyContext, parse_hhmm
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext, parse_hhmm
 
 
 class LateDayMomentum(Strategy):
@@ -90,6 +90,32 @@ class LateDayMomentum(Strategy):
         stop = bar.close - distance if long else bar.close + distance
         return Signal("long" if long else "short", stop, None,
                       f"morning move {move * 100:+.2f}% (previous close -> {self.signal_end:%H:%M})")
+
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        if self.done or not self.in_rth(now) or now.time() >= self.entry_time or self.atr.value is None or price is None:
+            return []
+        move = self.morning_move
+        measured = move is not None
+        if not measured:
+            if now.time() >= self.signal_end or not self.prev_close:
+                return []  # the morning move couldn't be measured today
+            move = price / self.prev_close - 1.0  # so far
+        if move == 0:
+            return []
+        long = move > 0
+        side = "long" if long else "short"
+        if not self.allows(side):
+            return []
+        conds = [(f"Morning move measured at {self.signal_end:%H:%M} CT ({move * 100:+.2f}%{'' if measured else ' so far'})", measured)]
+        if self.p["min_move_pct"]:
+            conds.append((f"Move at least {self.p['min_move_pct']}%", abs(move) * 100 >= self.p["min_move_pct"]))
+        if self.p["confirm_with_12th"]:
+            agrees = self.close_1400 is not None and (price > self.close_1400 if long else price < self.close_1400)
+            conds.append(("The move since 14:00 CT agrees", agrees))
+        conds.append((f"Entry time {self.entry_time:%H:%M} CT", False))
+        distance = self.p["stop_atr"] * self.atr.value
+        stop = price - distance if long else price + distance
+        return [Setup(side, conds, None, stop, None, f"enters at the {self.entry_time:%H:%M} CT close, exits at the session flatten")]
 
     def state(self) -> dict:
         return {"previous_close": self.prev_close,

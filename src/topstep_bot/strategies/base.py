@@ -10,7 +10,7 @@ so a strategy only decides *when* and *where* (stop/target) - never *how much*.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any, ClassVar
 
@@ -26,6 +26,29 @@ class StrategyContext:
     entry_price: float | None
     stop_price: float | None
     warmup: bool = False
+
+
+@dataclass
+class Setup:
+    """A trade a strategy is building toward, for the dashboard's Setups panel.
+
+    ``conditions`` are the entry rules in plain words with whether each is met right now (the
+    live price stands in for the next bar's close). ``entry`` is the price the trigger needs (None
+    when the trigger is a time or an event rather than a level); ``stop`` / ``target`` are what the
+    signal would carry if it fired at ``entry`` (or the current price).
+    """
+
+    side: str  # long | short
+    conditions: list[tuple[str, bool]] = field(default_factory=list)
+    entry: float | None = None
+    stop: float | None = None
+    target: float | None = None
+    note: str = ""  # e.g. "decides at the 10:30 checkpoint"
+    strategy: str = ""  # filled in by the adaptive strategy for its sub-strategies
+
+    @property
+    def progress(self) -> float:
+        return sum(1 for _, met in self.conditions if met) / len(self.conditions) if self.conditions else 0.0
 
 
 def parse_hhmm(value: str | time) -> time:
@@ -81,6 +104,14 @@ class Strategy(ABC):
         """Key levels to show on the dashboard."""
         return {}
 
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        """Entries this strategy is building toward right now (``now`` in exchange time).
+
+        Purely informational - the dashboard shows them so you can watch a trade form. Return []
+        when nothing more can happen today (traded out, past the cutoff, outside its hours).
+        """
+        return []
+
     @property
     def warmup_days(self) -> int:
         """Trading days of history needed before the strategy's signals are meaningful."""
@@ -97,6 +128,21 @@ class Strategy(ABC):
         return start.date() == ctx.local_close.date() and self.rth_open <= start.time() and (
             ctx.local_close.time() <= self.rth_close
         )
+
+    def in_rth(self, now: datetime) -> bool:
+        return self.rth_open <= now.time() < self.rth_close
+
+    def rth_minutes(self, now: datetime) -> int:
+        """Minutes since today's regular-hours open at ``now`` (exchange time)."""
+        return (now.hour * 60 + now.minute) - (self.rth_open.hour * 60 + self.rth_open.minute)
+
+    def rth_time(self, minutes: int) -> str:
+        """HH:MM of ``minutes`` after the regular-hours open."""
+        total = self.rth_open.hour * 60 + self.rth_open.minute + minutes
+        return f"{total // 60:02d}:{total % 60:02d}"
+
+    def fmt(self, price: float | None) -> str:
+        return "-" if price is None else f"{price:.{self.contract.price_decimals}f}"
 
     def minutes_since_open(self, ctx: StrategyContext) -> int:
         open_dt = ctx.local_close.replace(hour=self.rth_open.hour, minute=self.rth_open.minute, second=0, microsecond=0)

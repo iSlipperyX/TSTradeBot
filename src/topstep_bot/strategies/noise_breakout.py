@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections import deque
-from datetime import date
+from datetime import date, datetime
 
 from topstep_bot.indicators import ATR, SessionVWAP
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Strategy, StrategyContext
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext
 
 
 class NoiseAreaMomentum(Strategy):
@@ -151,6 +151,35 @@ class NoiseAreaMomentum(Strategy):
         if self.upper is None or ctx.position == 0 or self.p["exit_mode"] == "checkpoint":
             return None  # checkpoint mode exits by signal at checkpoints; the safety stop stays put
         return self._trail_level(long=ctx.position > 0)
+
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        if not self.in_rth(now) or self.upper is None or self.trades >= self.p["max_trades_per_day"]:
+            return []
+        minutes, first, every = self.rth_minutes(now), self.p["first_check_minutes"], self.p["check_every_minutes"]
+        nxt = max(first, (minutes // every + 1) * every)
+        if nxt > self.rth_minutes(now.replace(hour=self.rth_close.hour, minute=self.rth_close.minute)):
+            return []
+        at = self.rth_time(nxt)
+        left = self.p["max_trades_per_day"] - self.trades
+        out = []
+        for side in ("long", "short"):
+            if not self.allows(side):
+                continue
+            long = side == "long"
+            band = self.upper if long else self.lower
+            beyond = price is not None and (price > band if long else price < band)
+            conds = [(f"Price {'above the upper' if long else 'below the lower'} noise band ({self.fmt(band)})", beyond),
+                     (f"Still there at a checkpoint close (next {at} CT)", False)]
+            stop = None
+            ref = price if beyond else band  # the checkpoint close it would enter at
+            if self.p["exit_mode"] == "trail":
+                stop = self._trail_level(long)
+            elif self.atr.value is not None:
+                distance = self.p["stop_atr"] * self.atr.value
+                trail = self._trail_level(long)
+                stop = min(trail, ref - distance) if long else max(trail, ref + distance)
+            out.append(Setup(side, conds, ref, stop, None, f"decides at the {at} CT checkpoint; {left} of {self.p['max_trades_per_day']} trades left today"))
+        return out
 
     def state(self) -> dict:
         return {"upper_band": self.upper, "lower_band": self.lower, "vwap": self.vwap.value}

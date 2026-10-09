@@ -7,18 +7,26 @@ The adaptive strategy (strategies/adaptive.py) asks this base before taking a si
 trades what has been working at this time of day in this kind of market and stays out of what
 hasn't. It learns from signals it did not trade too, so it never has to "try" a bad idea.
 
-Three sources of observations are kept apart:
+Four sources of observations are kept apart:
   train   replayed from recent history by ``topstep-bot train`` (and automatically at startup
           when the base is stale - normally once a day after the close)
   shadow  hypothetical outcomes observed while running (stop / target / session end on real bars)
   real    the bot's own closed trades, which count double
+  manual  trades you opened yourself from the dashboard's trade ticket (strategy "manual"). They
+          never switch a strategy on or off; the ticket uses them to show your own record by time
+          of day and regime next to what the strategies have done.
 
 Observations fade with age (half-life ``half_life_days``), so the base keeps adapting as the
 market changes. Retraining replaces the "train" layer and drops shadow observations the new
-training already covers, so nothing is counted twice. Real trades are never dropped.
+training already covers, so nothing is counted twice. Real and manual trades are never dropped.
 
 Time slots (Chicago time): open 08:30-10:00, midday 10:00-13:00, close 13:00-15:10.
 Regime: "volatile" when the 14-bar ATR (regular hours) is 20% or more above its multi-day average, else "calm".
+
+Each observation also keeps what the decisions don't use yet: a market snapshot at signal time
+(``ctx``, market_context.py), how far it went for and against it (MFE / MAE in R), how long it
+lasted, its costs in R and, for real fills, the slippage. insights.py turns these into the
+"What the bot learned" report. Files from before these fields existed still load.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ import json
 import logging
 import os
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -49,7 +57,9 @@ SLOTS: tuple[tuple[str, time, time], ...] = (
 )
 SLOT_NAMES = tuple(name for name, _, _ in SLOTS)
 REGIMES = ("calm", "volatile")
-SOURCES = ("train", "shadow", "real")
+SOURCES = ("train", "shadow", "real", "manual")
+KEPT_SOURCES = ("real", "manual")  # actual fills: never pruned or replaced by retraining
+MANUAL = "manual"  # strategy name of trades opened from the dashboard's trade ticket
 VOLATILE_RATIO = 1.2
 UNINFORMATIVE_EXITS = ("bot shutdown", "halted", "flatten requested", "daily maintenance", "expired", "entry not filled")
 
@@ -104,8 +114,29 @@ class Observation:
     regime: str
     r: float  # result in R (risk multiples)
     usd: float | None
-    source: str  # train | shadow | real
+    source: str  # train | shadow | real | manual
     why: str = ""  # how it ended (stop hit, target hit, session end, ...)
+    ctx: dict | None = None  # market snapshot at signal time (market_context.FEATURES)
+    mfe_r: float | None = None  # furthest it went in its favour, in R (>= 0)
+    mae_r: float | None = None  # furthest it went against it, in R (<= 0)
+    bars: int | None = None  # bars it lasted
+    cost_r: float | None = None  # costs not already in ``r``, in R: fees (+ assumed slippage for ideas)
+    slip_in: float | None = None  # real fills: entry slippage in ticks (positive = worse than expected)
+    slip_out: float | None = None  # real fills: exit slippage in ticks
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Observation:
+        """Build from a saved record, ignoring fields this version doesn't know (a newer file)."""
+        return cls(**{k: v for k, v in d.items() if k in _OBS_FIELDS})
+
+    @property
+    def net_r(self) -> float:
+        """Result after the costs not already in ``r``."""
+        return self.r - (self.cost_r or 0.0)
+
+
+_OBS_FIELDS = frozenset(f.name for f in fields(Observation))
+_OPTIONAL = frozenset({"ctx", "mfe_r", "mae_r", "bars", "cost_r", "slip_in", "slip_out"})
 
 
 @dataclass
@@ -189,16 +220,16 @@ class KnowledgeBase:
         except (OSError, ValueError):
             return
         try:
-            self.obs = [Observation(**o) for o in raw.get("observations", [])]
+            self.obs = [Observation.from_dict(o) for o in raw.get("observations", [])]
             self.trained = raw.get("trained")
-        except TypeError:
+        except (TypeError, AttributeError):
             log.warning("Knowledge file %s has an unexpected format - starting fresh", self.path)
             self.obs, self.trained = [], None
 
     def save(self) -> None:
         if not self.path:
             return
-        data = {"version": 1, "trained": self.trained, "observations": [asdict(o) for o in self.obs]}
+        data = {"version": 2, "trained": self.trained, "observations": [_compact(o) for o in self.obs]}
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
@@ -214,8 +245,8 @@ class KnowledgeBase:
             o.source = self.source
         self.obs.append(o)
         if len(self.obs) > self.max_observations:  # drop the oldest hypothetical observations first
-            keep_real = [x for x in self.obs if x.source == "real"]
-            others = [x for x in self.obs if x.source != "real"]
+            keep_real = [x for x in self.obs if x.source in KEPT_SOURCES]
+            others = [x for x in self.obs if x.source not in KEPT_SOURCES]
             self.obs = sorted(others[-(self.max_observations - len(keep_real)):] + keep_real, key=lambda x: (x.day, x.time))
         self.updated += 1
         if save:
@@ -225,7 +256,7 @@ class KnowledgeBase:
                          bars: int, symbol: str, timeframe: int, at: datetime | None = None) -> int:
         """Swap in a fresh training layer; shadow observations the training covers are dropped."""
         last = last_day.isoformat()
-        kept = [o for o in self.obs if o.source == "real" or (o.source == "shadow" and o.day > last)]
+        kept = [o for o in self.obs if o.source in KEPT_SOURCES or (o.source == "shadow" and o.day > last)]
         new = [Observation(**{**asdict(o), "source": "train"}) for o in observations]
         self.obs = sorted(kept + new, key=lambda x: (x.day, x.time))
         self.trained = {"at": (at or datetime.now(UTC)).isoformat(timespec="seconds"), "from": first_day.isoformat(),
@@ -253,13 +284,22 @@ class KnowledgeBase:
             age = max(0, (today - date.fromisoformat(o.day)).days)
         except ValueError:
             age = 0
-        return (0.5 ** (age / self.half_life_days)) * (self.real_weight if o.source == "real" else 1.0)
+        return (0.5 ** (age / self.half_life_days)) * (self.real_weight if o.source in KEPT_SOURCES else 1.0)
 
     def stats(self, strategy: str, slot: str | None = None, regime: str | None = None, today: date | None = None) -> Stats:
         today = today or datetime.now(UTC).date()
         s = Stats()
         for o in self.obs:
             if o.strategy == strategy and (slot is None or o.slot == slot) and (regime is None or o.regime == regime):
+                s.add(o, self.weight(o, today))
+        return s
+
+    def side_stats(self, side: str, slot: str, regime: str, today: date | None = None) -> Stats:
+        """Every strategy's signals on one side (LONG / SHORT) at this slot and regime - your manual trades excluded."""
+        today = today or datetime.now(UTC).date()
+        s = Stats()
+        for o in self.obs:
+            if o.side == side and o.slot == slot and o.regime == regime and o.strategy != MANUAL:
                 s.add(o, self.weight(o, today))
         return s
 
@@ -299,17 +339,26 @@ class KnowledgeBase:
                          "slots": {sl: self.stats(name, sl, None, today).to_dict(self.min_samples) for sl in SLOT_NAMES},
                          "cells": cells, "allowed_now": cells[f"{slot}|{regime}"]["allowed"] if slot in SLOT_NAMES else False})
         return {
-            "trained": self.trained, "counts": self.counts(), "total": len(self.obs),
+            "trained": self.trained, "counts": self.counts(), "total": len(self.obs), "manual": self.manual_summary(today),
             "now": {"slot": slot, "regime": regime}, "slots": list(SLOT_NAMES), "regimes": list(REGIMES),
             "params": {"min_samples": self.min_samples, "min_edge_r": self.min_edge_r, "half_life_days": self.half_life_days},
             "strategies": rows,
         }
 
+    def manual_summary(self, today: date | None = None, recent: int = 8) -> dict[str, Any]:
+        """Your manual trades: overall, per slot x regime, and the latest few."""
+        today = today or datetime.now(UTC).date()
+        mine = [o for o in self.obs if o.strategy == MANUAL]
+        cells = {f"{sl}|{rg}": self.stats(MANUAL, sl, rg, today).to_dict(self.min_samples) for sl in SLOT_NAMES for rg in REGIMES}
+        return {"overall": self.stats(MANUAL, None, None, today).to_dict(self.min_samples), "cells": cells,
+                "recent": [asdict(o) for o in mine[-recent:][::-1]]}
+
     def text(self, strategies: list[tuple[str, str]], *, today: date | None = None, slot: str = "", regime: str = "") -> str:
         """Plain-text summary for Telegram."""
         s = self.summary(strategies, today=today, slot=slot, regime=regime)
         c = s["counts"]
-        lines = [f"Knowledge base: {s['total']} observations (train {c['train']}, live ideas {c['shadow']}, real trades {c['real']})."]
+        lines = [f"Knowledge base: {s['total']} observations (train {c['train']}, live ideas {c['shadow']}, "
+                 f"real trades {c['real']}, your manual trades {c['manual']})."]
         if s["trained"]:
             t = s["trained"]
             lines.append(f"Trained {t['at'][:16].replace('T', ' ')} on {t['days']} days ({t['from']} to {t['to']}).")
@@ -328,8 +377,16 @@ class KnowledgeBase:
                 parts.append(f"{sl} {''.join(marks)}")
             o = row["overall"]
             lines.append(f"{row['title']}: {o['mean_r']:+.2f}R avg over {o['n']} | " + ", ".join(parts))
+        m = s["manual"]["overall"]
+        if m["n"]:
+            lines.append(f"Your manual trades: {m['n']}, {m['wins']} won, {m['mean_r']:+.2f}R avg.")
         lines.append("c = calm, v = volatile. ✅ trades now, ❌ switched off (losing), ❔ not enough evidence yet.")
         return "\n".join(lines)
+
+
+def _compact(o: Observation) -> dict[str, Any]:
+    """An observation as saved: the optional learning fields are left out while empty (smaller file)."""
+    return {k: v for k, v in asdict(o).items() if v is not None or k not in _OPTIONAL}
 
 
 # --------------------------------------------------------------------------- training

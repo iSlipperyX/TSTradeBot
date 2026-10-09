@@ -17,11 +17,11 @@ import logging
 from collections import deque
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 
 from topstep_bot.knowledge import KnowledgeBase, Verdict, slot_for
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Strategy, StrategyContext
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext
 
 log = logging.getLogger("topstep_bot.adaptive")
 
@@ -158,6 +158,18 @@ class AdaptiveAllDay(Strategy):
         names = [s.name for s in self.subs if self._verdict(s.name, slot, regime, day).allowed]
         self._allowed_cache = (key, names)
         return names
+
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        """Every sub-strategy's setups, plus whether the knowledge base would let it trade now."""
+        slot, regime = slot_for(now.time()), self.regime_fn()
+        allowed = set(self.allowed_now(slot, regime, now.date()))
+        out = []
+        for s in self.subs:
+            for st in s.setups(price, now):
+                st.strategy = s.name
+                st.conditions.append((f"Knowledge base allows it at {slot}/{regime}", s.name in allowed))
+                out.append(st)
+        return out
 
     def _owner_strategy(self) -> Strategy | None:
         return next((s for s in self.subs if s.name == self.owner), None)

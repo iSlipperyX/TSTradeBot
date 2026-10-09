@@ -195,6 +195,7 @@ class LiveRunner:
         from topstep_bot.remote import RemoteControl
 
         core.remote = RemoteControl(core, cfg.data_path / "remote_settings.json")
+        core.setups.enabled = True  # the dashboard's Setups panel: note setups forming, firing, cancelled
         for change in core.remote.load_saved():
             log.info("Re-applied remote setting: %s", change)
         await self._setup_knowledge()

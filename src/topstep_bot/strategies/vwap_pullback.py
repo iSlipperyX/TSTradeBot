@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections import deque
-from datetime import date
+from datetime import date, datetime
 
 from topstep_bot.indicators import ATR, EMA, SessionVWAP
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Strategy, StrategyContext, parse_hhmm
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext, parse_hhmm
 
 
 class VwapPullback(Strategy):
@@ -98,6 +98,36 @@ class VwapPullback(Strategy):
             self.pullback_high = None
             return Signal("short", stop, target, f"pullback to VWAP {vwap:.2f} in a downtrend resumed at {bar.close:.2f}")
         return None
+
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        ema, atr, vwap, prev = self.ema.value, self.atr.value, self.vwap.value, self.prev_bar
+        if (None in (ema, atr, vwap, prev, price) or len(self.ema_hist) < self.ema_hist.maxlen or not self.in_rth(now)
+                or now.time() > self.cutoff or self.trades >= self.p["max_trades_per_day"]):
+            return []
+        out = []
+        for side in ("long", "short"):
+            if not self.allows(side):
+                continue
+            long = side == "long"
+            trending = ema > self.ema_hist[0] if long else ema < self.ema_hist[0]
+            extreme = self.pullback_low if long else self.pullback_high
+            trigger = prev.high if long else prev.low
+            conds = [(f"{'Up' if long else 'Down'}trend: the {self.p['trend_ema']}-bar EMA is {'rising' if long else 'falling'}", trending),
+                     ("Price pulled back into the VWAP band", extreme is not None),
+                     (f"Closes {'above' if long else 'below'} VWAP ({self.fmt(vwap)})", price > vwap if long else price < vwap),
+                     (f"Closes {'above the last bar high' if long else 'below the last bar low'} ({self.fmt(trigger)})",
+                      price > trigger if long else price < trigger)]
+            if self.rth_minutes(now) < self.p["min_minutes_after_open"]:
+                conds.append((f"{self.p['min_minutes_after_open']} minutes after the open", False))
+            if not trending and extreme is None:
+                continue  # no trend in this direction: nothing is forming
+            entry = max(vwap, trigger) if long else min(vwap, trigger)
+            stop = target = None
+            if extreme is not None:
+                stop = extreme - self.p["stop_atr_mult"] * atr if long else extreme + self.p["stop_atr_mult"] * atr
+                target = entry + self.p["target_r"] * (entry - stop) if long else entry - self.p["target_r"] * (stop - entry)
+            out.append(Setup(side, conds, entry, stop, target, "enters when the pullback turns back with the trend"))
+        return out
 
     def state(self) -> dict:
         return {"vwap": self.vwap.value, "ema_trend": self.ema.value,

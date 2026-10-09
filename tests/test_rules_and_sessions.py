@@ -104,3 +104,31 @@ def test_flatten_time_after_topstep_deadline_is_rejected():
 def test_unknown_config_keys_are_rejected():
     with pytest.raises(ValueError):
         BotConfig.model_validate({"risk": {"risk_per_trad": 100}})
+
+
+def test_market_clock_counts_down_to_the_next_open_and_close():
+    from topstep_bot.config import SessionConfig
+    from topstep_bot.sessions import SessionSchedule
+
+    s = SessionSchedule(SessionConfig(no_trade_dates=["2026-11-26"]))
+
+    def events(*t):
+        c = s.clock(ct(*t))
+        return c, {e["key"]: (e["label"], e["local"]) for e in c["events"]}
+
+    c, e = events(2026, 10, 8, 9, 0)  # Thursday morning
+    assert c["market_open"] and c["in_entry_window"] and c["holiday"] is None
+    assert e["market"] == ("Market closes", "16:00 CT") and e["rth"] == ("Regular hours close", "15:00 CT")
+    assert e["entries"] == ("Last new entry", "14:30 CT") and e["flatten"] == ("Bot closes all trades", "15:00 CT")
+    assert e["topstep"] == ("Topstep flat-by", "15:10 CT")
+    c, e = events(2026, 10, 8, 16, 30)  # the daily break
+    assert not c["market_open"] and e["market"] == ("Market opens", "17:00 CT")
+    assert e["entries"] == ("Bot starts trading", "Fri 08:30 CT")
+    c, e = events(2026, 10, 9, 16, 30)  # Friday after the close: the weekend
+    assert e["market"] == ("Market opens", "Sun 17:00 CT") and e["entries"][1] == "Mon 08:30 CT"
+    c, e = events(2026, 11, 26, 10, 0)  # a no-trade date (holiday)
+    assert c["holiday"] and not c["in_entry_window"] and e["entries"] == ("Bot starts trading", "Fri 08:30 CT")
+    oil = {e["key"]: e for e in s.clock(ct(2026, 10, 8, 9, 0), (time(8, 0), time(13, 30)), "CL")["events"]}
+    assert oil["rth"]["local"] == "13:30 CT" and "CL regular hours 08:00-13:30" in oil["rth"]["detail"]
+    first = s.clock(ct(2026, 10, 8, 9, 0))["events"][0]["at"]
+    assert first.endswith("+00:00") and first.startswith("2026-10-08T21:00")  # 16:00 CT in UTC

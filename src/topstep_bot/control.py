@@ -135,6 +135,22 @@ class BotActions:
     async def take_idea(self, rec_id: str, source: str, size: int | None = None) -> str:
         return await self._remote().take_idea(rec_id, source, size)
 
+    # ------------------------------------------------------------------ manual trades (dashboard trade ticket)
+
+    def trade_ticket(self, payload: dict) -> dict:
+        """Preview a manual trade: size, risk, rule checks and what the bot knows. Places nothing."""
+        return self.core.manual.ticket(payload.get("side"), payload.get("stop"), payload.get("target"), payload.get("size"))
+
+    async def manual_trade(self, payload: dict, source: str) -> str:
+        return await self.core.manual.open(payload.get("side"), payload.get("stop"), payload.get("target"),
+                                           payload.get("size"), source, str(payload.get("note") or ""))
+
+    async def close_trade(self, source: str) -> str:
+        return await self.core.manual.close(source)
+
+    async def stop_breakeven(self, source: str) -> str:
+        return await self.core.manual.stop_to_breakeven(source)
+
     def open_ideas(self, limit: int = 4) -> list[dict]:
         """Recommendations that can still be taken (newest first)."""
         from topstep_bot.remote import IDEA_MAX_AGE
@@ -167,6 +183,20 @@ class BotActions:
     def knowledge_text(self) -> str:
         return self.core.knowledge_text()
 
+    def insights(self) -> dict:
+        """The "What the bot learned" report for the dashboard's Knowledge tab."""
+        return {"report": self.core.insights()}
+
+    def insights_csv(self) -> dict:
+        """Every observation as CSV (the Knowledge tab's Download button)."""
+        from topstep_bot.insights import csv_text
+
+        kb = self.core.knowledge
+        if kb is None:
+            raise RuntimeError("The knowledge base is turned off (knowledge.enabled: false)")
+        name = kb.path.stem if kb.path else "knowledge"
+        return {"csv": csv_text(kb), "filename": f"{name}.csv"}
+
     async def train(self, source: str) -> str:
         """Rebuild the knowledge base from recent history (the bot keeps trading meanwhile)."""
         if self._retrain is None:
@@ -189,6 +219,14 @@ class BotActions:
             return self.change_setting(payload.get("key", ""), payload.get("value"), source)
         if name == "reset_settings":
             return self.reset_settings(source)
+        if name == "trade_ticket":
+            return {"ticket": self.trade_ticket(payload)}
+        if name == "manual_trade":
+            return await self.manual_trade(payload, source)
+        if name == "close_trade":
+            return await self.close_trade(source)
+        if name == "stop_breakeven":
+            return await self.stop_breakeven(source)
         if name == "take_idea":
             size = payload.get("size")
             return await self.take_idea(str(payload.get("id", "")), source, int(size) if size else None)
@@ -196,6 +234,10 @@ class BotActions:
                  "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text}
         if name in texts:
             return {"text": texts[name]()}
+        if name == "insights":
+            return self.insights()
+        if name == "insights_csv":
+            return self.insights_csv()
         if name == "open_ideas":
             return {"items": self.open_ideas()}
         if name == "find_idea":

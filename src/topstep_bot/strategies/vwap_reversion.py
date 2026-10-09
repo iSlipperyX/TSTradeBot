@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from topstep_bot.indicators import ATR, RSI, SessionVWAP
 from topstep_bot.models import Bar, Signal
-from topstep_bot.strategies.base import Strategy, StrategyContext, parse_hhmm
+from topstep_bot.strategies.base import Setup, Strategy, StrategyContext, parse_hhmm
 
 
 class VwapReversion(Strategy):
@@ -63,6 +63,34 @@ class VwapReversion(Strategy):
         elif ctx.position > 0 and bar.close >= vwap or ctx.position < 0 and bar.close <= vwap:
             return Signal("exit", reason="back at VWAP")
         return None
+
+    def setups(self, price: float | None, now: datetime) -> list[Setup]:
+        rsi, atr, vwap = self.rsi.value, self.atr.value, self.vwap.value
+        if None in (rsi, atr, vwap) or price is None or not self.in_rth(now) or now.time() > self.cutoff:
+            return []
+        lower, upper = self.vwap.band(self.p["band_k"])
+        min_target = self.tick(self.p["min_target_ticks"])
+        early = self.rth_minutes(now) < self.p["min_minutes_after_open"]
+        out = []
+        for side in ("long", "short"):
+            if not self.allows(side):
+                continue
+            long = side == "long"
+            band = lower if long else upper
+            beyond = price < band if long else price > band
+            ref = price if beyond else band  # where it would enter
+            conds = [(f"Price {'below the lower' if long else 'above the upper'} VWAP band ({self.fmt(band)})", beyond),
+                     (f"RSI {'below ' + str(self.p['rsi_low']) if long else 'above ' + str(self.p['rsi_high'])} (now {rsi:.0f})",
+                      rsi < self.p["rsi_low"] if long else rsi > self.p["rsi_high"]),
+                     (f"At least {self.p['min_target_ticks']} ticks from VWAP ({self.fmt(vwap)})", (vwap - price if long else price - vwap) >= min_target),
+                     (f"A {'bullish' if long else 'bearish'} reversal bar", False)]
+            if early:
+                conds.append((f"{self.p['min_minutes_after_open']} minutes after the open", False))
+            if band == vwap:
+                continue  # no spread around VWAP yet: the bands aren't meaningful
+            stop = ref - self.p["stop_atr_mult"] * atr if long else ref + self.p["stop_atr_mult"] * atr
+            out.append(Setup(side, conds, ref, stop, vwap, "targets a return to VWAP"))
+        return out
 
     def state(self) -> dict:
         return {"vwap": self.vwap.value, "rsi": self.rsi.value}
