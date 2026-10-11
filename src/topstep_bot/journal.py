@@ -6,6 +6,7 @@ Persisted state lets the bot survive restarts mid-day (trade counts, the MLL flo
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -94,13 +95,38 @@ class Journal:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path))
-        self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
-        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(trades)")}
-        for name, kind in TRADE_EXTRA_COLUMNS.items():
-            if name not in have:
-                self.conn.execute(f"ALTER TABLE trades ADD COLUMN {name} {kind}")
-        self.conn.commit()
+        try:
+            self.conn.row_factory = sqlite3.Row
+            self.conn.executescript(SCHEMA)
+            have = {r["name"] for r in self.conn.execute("PRAGMA table_info(trades)")}
+            for name, kind in TRADE_EXTRA_COLUMNS.items():
+                if name not in have:
+                    self.conn.execute(f"ALTER TABLE trades ADD COLUMN {name} {kind}")
+            self.conn.commit()
+        except BaseException:
+            self.conn.close()  # Windows can't rename a file that is still open
+            raise
+
+    @classmethod
+    def open_or_recover(cls, path: Path | str) -> tuple[Journal, Path | None]:
+        """Open the journal. A damaged file (not a database, or a malformed one) is set aside as
+        ``<name>.damaged-<time>`` and a new journal started, so the bot can still run; returns where
+        the damaged one went. A journal that is merely locked by another program is not touched."""
+        try:
+            return cls(path), None
+        except sqlite3.OperationalError:
+            raise
+        except sqlite3.DatabaseError:
+            if str(path) == ":memory:":
+                raise
+        path = Path(path)
+        damaged = path.with_name(f"{path.name}.damaged-{datetime.now():%Y%m%d-%H%M%S}")
+        os.replace(path, damaged)
+        for suffix in ("-wal", "-shm", "-journal"):
+            side = path.with_name(path.name + suffix)
+            if side.exists():
+                os.replace(side, damaged.with_name(damaged.name + suffix))
+        return cls(path), damaged
 
     def close(self) -> None:
         self.conn.close()

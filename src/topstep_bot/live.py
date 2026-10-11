@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
+
 from topstep_bot.api.realtime import MarketStream
 from topstep_bot.api.rest import ProjectXClient, ProjectXError
 from topstep_bot.bars import floor_time
@@ -47,6 +49,18 @@ log = logging.getLogger(__name__)
 UTC = timezone.utc
 KILL_FILE = Path("KILL")
 LEARN_CHECK_SECONDS = 300  # how often the learning loop checks whether the long-run memory is due
+
+
+PREPARE_RETRY_FIRST = 15  # seconds before trying TopstepX again after it couldn't be reached at startup
+PREPARE_RETRY_MAX = 300
+
+
+def unreachable(exc: BaseException) -> bool:
+    """A connection problem (network down, timeout, TopstepX answering 5xx or 429), not a refusal or a bug."""
+    if isinstance(exc, httpx.TransportError | TimeoutError | ConnectionError):
+        return True
+    return isinstance(exc, ProjectXError) and exc.payload.get("success") is None and (exc.code or 0) in (
+        429, *range(500, 600))
 
 
 class SetupError(Exception):
@@ -103,7 +117,7 @@ class LiveRunner:
         self.secrets = secrets
         self.controls = controls or Controls()
         self.client = ProjectXClient(secrets.username, secrets.api_key, cfg.api.base_url, cfg.api.timeout_seconds)
-        self.journal = Journal(cfg.journal_path)
+        self.journal, self.journal_damaged = Journal.open_or_recover(cfg.journal_path)
         who = f"{cfg.active_account}, {cfg.mode}" if cfg.active_account else cfg.mode
         self.notifier = Notifier(cfg.notifications, secrets, prefix=f"Topstep Bot ({who})")
         self.positions: PositionBook | None = None  # cross-account hedge guard
@@ -215,6 +229,7 @@ class LiveRunner:
         core.setups.enabled = True  # the dashboard's Setups panel: note setups forming, firing, cancelled
         for change in core.remote.load_saved():
             log.info("Re-applied remote setting: %s", change)
+        self._report_damaged_journal()
         self._setup_memory()
         await self._setup_knowledge()
         self._catch_up()
@@ -223,6 +238,20 @@ class LiveRunner:
         self._apply_ramp_up()
         self._setup_hedge_guard()
         return core
+
+    def _report_damaged_journal(self) -> None:
+        """The journal holds the trailing MLL floor: if it was damaged, say so loudly and (live) pause new trades."""
+        if self.journal_damaged is None or self.core is None:
+            return
+        core = self.core
+        text = (f"The trade journal was damaged and has been set aside as {self.journal_damaged.name}; a new one was "
+                f"started. The bot's record of the trailing Maximum Loss Limit is gone (it now assumes "
+                f"${core.tracker.floor:,.2f}): compare it with the MLL on TopstepX and, if it differs, set "
+                "account.mll_floor_override in config.yaml.")
+        if self.cfg.mode == "live":
+            core.risk.paused = True
+            text += " New trades are paused until you resume them."
+        core.event("critical", text, "error")
 
     def _best_prior_day(self, label: str, today: date, start: float) -> float:
         """Best finished day since the account started (or was last reset), for the Consistency Target."""
@@ -548,9 +577,14 @@ class LiveRunner:
     async def run(self, on_ready: Callable[[TradingCore], Awaitable[None]] | None = None) -> None:
         asyncio.get_running_loop().set_exception_handler(asyncio_exception_handler)
         log.info("Preparing: connecting to TopstepX and loading history")
-        core = await self.prepare()
-        assert self.broker and self.contract
         self.notifier.start()
+        core = await self._prepare_when_reachable()
+        if core is None:  # stopped while waiting for TopstepX
+            await self.notifier.stop()
+            await self.client.close()
+            self.journal.close()
+            return
+        assert self.broker and self.contract
         await self.broker.start()
         if hasattr(self.broker, "stream"):
             self.broker.stream.hub.on_connected(self._safe_reconcile)
@@ -589,6 +623,33 @@ class LiveRunner:
         finally:
             log.warning("Shutting down. Reason: %s", self.controls.stop_reason or "unknown")
             await self.shutdown()
+
+    async def _prepare_when_reachable(self) -> TradingCore | None:
+        """prepare(), retried while TopstepX can't be reached (internet down, TopstepX maintenance), so a
+        start during an outage waits for it instead of crashing until the controller gives up."""
+        delay, told = PREPARE_RETRY_FIRST, False
+        while True:
+            self.started_at = self.now()
+            try:
+                return await self.prepare()
+            except Exception as exc:  # noqa: BLE001 - only connection problems are retried
+                if not unreachable(exc):
+                    raise
+                problem = exc
+            text = f"TopstepX can't be reached ({problem}); the bot keeps trying and starts as soon as it answers."
+            log.warning("%s Next try in %ds.", text, delay)
+            if not told:
+                told = True
+                self.notifier.notify("error", text)
+            waited = 0
+            while waited < delay:  # wait in short steps: keep the heartbeat fresh and notice a stop at once
+                self._beat()
+                try:
+                    await asyncio.wait_for(self.controls.stop.wait(), timeout=min(10, delay - waited))
+                    return None
+                except TimeoutError:
+                    waited += 10
+            delay = min(delay * 2, PREPARE_RETRY_MAX)
 
     async def shutdown(self) -> None:
         core = self.core

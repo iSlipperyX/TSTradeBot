@@ -209,7 +209,7 @@ class ResearchLibrary:
         try:
             raw = json.loads(self.daily_path(root).read_text(encoding="utf-8"))
             return [DailyBar(**b) for b in raw.get("bars", [])]
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, AttributeError):
             return []
 
     # ---------------------------------------------------------------- watched pages

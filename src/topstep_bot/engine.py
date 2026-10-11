@@ -194,7 +194,10 @@ class TradingCore:
         local = self.schedule.local(self.clock()).isoformat(timespec="seconds")
         self.events.appendleft({"ts": local, "level": level, "message": message})
         if self.journal:
-            self.journal.log_event(level, message)
+            try:
+                self.journal.log_event(level, message)
+            except Exception as exc:  # noqa: BLE001 - e.g. the journal is locked by another program
+                event_log.warning("Could not write to the journal: %s", exc)
         if kind and self.notifier:
             self.notifier.notify(kind, message)
 
@@ -231,9 +234,13 @@ class TradingCore:
         if rec.trades:
             self.risk.best_prior_day = max(self.risk.best_prior_day, rec.pnl)
         if self.journal:
-            self.journal.record_day(rec.day, self.account_label, rec.start_balance, rec.end_balance, rec.trades, floor)
-            self.journal.set_state(f"mll_floor:{self.account_label}", floor)
-            self.journal.set_state(f"last_eod:{self.account_label}", rec.day.isoformat())
+            try:
+                self.journal.record_day(rec.day, self.account_label, rec.start_balance, rec.end_balance, rec.trades, floor)
+                self.journal.set_state(f"mll_floor:{self.account_label}", floor)
+                self.journal.set_state(f"last_eod:{self.account_label}", rec.day.isoformat())
+            except Exception as exc:  # noqa: BLE001 - the new day must still begin (fresh limits, counts)
+                self.event("error", f"Could not save the day's results to the journal ({exc}); the MLL floor is "
+                                    f"${floor:,.2f}", "error")
         if rec.trades:
             self.event(
                 "info",

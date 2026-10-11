@@ -81,15 +81,18 @@ def _free_port() -> int:
 
 def load_state(cfg: BotConfig) -> dict:
     try:
-        return json.loads((Path(cfg.data_dir) / STATE_FILE).read_text(encoding="utf-8"))
+        state = json.loads((Path(cfg.data_dir) / STATE_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    return state if isinstance(state, dict) else {}
 
 
 def save_state(cfg: BotConfig, state: dict) -> None:
     path = Path(cfg.data_dir) / STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    tmp = path.with_suffix(".tmp")  # a crash or power cut mid-write must not lose the saved modes
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def account_list(cfg: BotConfig) -> list[str]:

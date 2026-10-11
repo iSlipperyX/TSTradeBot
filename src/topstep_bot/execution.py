@@ -32,6 +32,18 @@ log = logging.getLogger(__name__)
 MAX_STOP_FAILURES = 2
 EXIT_RETRY_AFTER = timedelta(seconds=10)
 _OWN_TAG = re.compile(r"^(tsb[0-9a-f]{10})-(S\d+|T)$")
+_ANY_OWN_TAG = re.compile(r"^(tsb[0-9a-f]{10})-")
+
+
+def may_have_reached_broker(exc: BaseException) -> bool:
+    """Whether a failed order request may still have been carried out: a network error, a timeout or a
+    server error. A refusal (the broker answered no, or the order itself was invalid) means it was not."""
+    if isinstance(exc, ValueError):
+        return False
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):  # ProjectXError: TopstepX answered
+        return payload.get("success") is None and (getattr(exc, "code", None) or 0) >= 500
+    return True
 
 
 class TradeState(str, Enum):
@@ -65,6 +77,7 @@ class ManagedTrade:
     planned_risk: float | None = None  # dollars at risk when the trade was sized
     exit_sent_at: datetime | None = None
     exit_fills: list[tuple[float, int]] = field(default_factory=list)
+    exit_fill_ids: set[int] = field(default_factory=set)
     exit_price: float | None = None
     exit_reason: str = ""
     closed_at: datetime | None = None
@@ -184,6 +197,9 @@ class OrderManager:
         # Last-line Topstep guard (position cap, order-rate breaker); set by the factory.
         self.guard: OrderGuard | None = None
         self._lock = asyncio.Lock()
+        # Orders a cancel request may not have reached (network error): until reconcile sees they are no
+        # longer working, no new entry is sent, so an old stop or target can't fill into the next trade.
+        self._leftovers: set[int] = set()
         # Bumped on every change to our trade/orders/position. reconcile() fetches the broker's view
         # without holding the lock, and discards that view if anything changed while it was fetching
         # (otherwise a fill arriving mid-fetch looks like "position closed" or "stop missing").
@@ -197,7 +213,10 @@ class OrderManager:
     def _event(self, level: str, message: str) -> None:
         getattr(log, "critical" if level == "critical" else level, log.info)(message)
         if self.on_event:
-            self.on_event(level, message)
+            try:
+                self.on_event(level, message)
+            except Exception:  # noqa: BLE001 - reporting (journal, alerts) must never stop a stop or a flatten
+                log.exception("Could not record order event")
 
     def _count_action(self) -> None:
         """Every order action goes through the rate breaker (it never blocks exits, only reports)."""
@@ -236,7 +255,13 @@ class OrderManager:
             self._count_action()
             await self.broker.cancel_order(order_id)
         except Exception as exc:  # noqa: BLE001 - already filled/cancelled is fine
-            log.debug("cancel %s ignored: %s", order_id, exc)
+            if may_have_reached_broker(exc):
+                self._leftovers.add(order_id)  # it may still be working: reconcile checks and cancels again
+                self._event("warning", f"Could not cancel order {order_id} ({exc}); will check again")
+            else:
+                log.debug("cancel %s ignored: %s", order_id, exc)
+        else:
+            self._leftovers.discard(order_id)
 
     # ------------------------------------------------------------------ entry
 
@@ -257,6 +282,10 @@ class OrderManager:
             self._version += 1
             if self.trade is not None or self.position != 0:
                 log.info("Entry ignored: already in a trade")
+                return None
+            if self._leftovers:
+                self._event("warning", f"Entry skipped: earlier order(s) {sorted(self._leftovers)} may still be working "
+                                       "(a cancel didn't get through); waiting until they are confirmed cancelled")
                 return None
             if self.guard is not None:
                 refused = self.guard.check_entry(size, self.position, self.clock())
@@ -296,9 +325,17 @@ class OrderManager:
                     take_profit_ticks=tp_ticks,
                 )
             except Exception as exc:  # noqa: BLE001
-                self.trade = None
-                self._event("error", f"Entry order failed: {exc}")
-                return None
+                if not may_have_reached_broker(exc):
+                    self.trade = None
+                    self._event("error", f"Entry order failed: {exc}")
+                    return None
+                # A timeout or server error: TopstepX may have accepted (and filled) the order anyway.
+                # Forgetting it would leave a position with no stop and let the next entry double it,
+                # so the trade stays pending until TopstepX shows a fill (it is then protected as usual)
+                # or reconcile finds nothing and abandons it after the entry timeout.
+                self._event("warning", f"Entry order may not have gone through ({exc}) - checking with the broker "
+                                       "before doing anything else")
+                return t
             if t.entry_order_id is None:
                 t.entry_order_id = order_id
             self._event(
@@ -442,8 +479,20 @@ class OrderManager:
             if t is None or t.state not in (TradeState.OPEN, TradeState.EXITING):
                 return
             ours = (t.entry_order_id, t.stop_order_id, t.target_order_id)
-            if fill.side == t.side.opposite and fill.order_id not in ours:
+            if fill.side == t.side.opposite and fill.order_id not in ours and not fill.voided:
+                if fill.id in t.exit_fill_ids:
+                    return  # the same execution reported twice (e.g. resent after a reconnect)
+                t.exit_fill_ids.add(fill.id)
                 t.exit_fills.append((fill.price, fill.size))  # e.g. a close-position market order
+                if t.filled_size and sum(q for _, q in t.exit_fills) >= t.filled_size:
+                    # The close filled completely: the position is flat even if its position update is
+                    # late or lost. Cancel the protective stop now - left working it would reverse the trade.
+                    await self._safe_cancel(t.stop_order_id)
+                    await self._safe_cancel(t.target_order_id)
+                    self.position = 0
+                    if not t.exit_reason:
+                        t.exit_reason = "position closed outside the bot"
+                    await self._finalize(t)
 
     async def handle_position(self, pos: Position) -> None:
         if pos.contract_id != self.contract.id:
@@ -492,7 +541,10 @@ class OrderManager:
             f"({t.exit_reason}) net ${t.net_pnl:,.2f}",
         )
         if self.on_trade_closed:
-            await self.on_trade_closed(t)
+            try:
+                await self.on_trade_closed(t)
+            except Exception:  # noqa: BLE001 - the trade is closed either way; don't break the order path
+                log.exception("Could not record the closed trade %s", t.tag)
 
     # ------------------------------------------------------------------- exits
 
@@ -582,20 +634,29 @@ class OrderManager:
             if pos:
                 self.position_avg = pos.avg_price
             t = self.trade
+            await self._cancel_stale_orders(orders, t)
             if t is None:
-                if pos is not None:
-                    if not self._recover_own_trade(pos, orders):
-                        await self._handle_orphan(pos, orders)
-                else:
-                    for o in orders:
-                        if (o.custom_tag or "").startswith("tsb"):
-                            self._event("warning", f"Cancelling stale bot order {o.id}")
-                            await self._safe_cancel(o.id)
+                if pos is not None and not self._recover_own_trade(pos, orders):
+                    await self._handle_orphan(pos, orders)
                 return
+            if pos is not None and (pos.size > 0) != (t.side == OrderSide.BUY):
+                # Opposite to the trade: an old order filled into it, or the position was reversed outside
+                # the bot. Never protect it with this trade's orders (they'd be on the wrong side): close it.
+                self._event("critical", f"Position {pos.size} is on the wrong side for the {t.side.label} trade - closing it")
+                if t.state == TradeState.PENDING:
+                    await self._safe_cancel(t.entry_order_id)
+                    t.state = TradeState.OPEN  # closed below; its P&L comes from the close
+                    t.entry_price, t.filled_size = t.entry_price or pos.avg_price, t.filled_size or abs(pos.size)
+                if t.state == TradeState.OPEN:
+                    t.exit_reason = "position on the wrong side"
+                    await self._exit_locked(t, t.exit_reason)
+                    return
             if t.state == TradeState.PENDING:
                 if pos is not None:
                     await self._entry_filled(t, pos.avg_price, abs(pos.size))
                 elif self.clock() - t.created_at > self.entry_timeout:
+                    if t.entry_order_id is None:  # placing it failed: find it by its tag, if it got through
+                        t.entry_order_id = next((o.id for o in orders if o.custom_tag == f"{t.tag}-E"), None)
                     order = await self.broker.get_order(t.entry_order_id, t.created_at) if t.entry_order_id else None
                     if order and order.status == OrderStatus.FILLED:
                         self._event("warning", "Entry filled but no position reported yet; waiting")
@@ -633,6 +694,22 @@ class OrderManager:
             sizes = {o.id: o.size for o in orders}
             if any(sizes.get(oid, t.filled_size) != t.filled_size for oid in (t.stop_order_id, t.target_order_id)):
                 await self._resize_protection(t, sizes)
+
+    async def _cancel_stale_orders(self, orders: list[Order], t: ManagedTrade | None) -> None:
+        """Cancel working bot orders that don't belong to the current trade (e.g. a stop whose cancel failed)."""
+        working = {o.id for o in orders}
+        self._leftovers &= working
+        for o in orders:
+            match = _ANY_OWN_TAG.match(o.custom_tag or "")
+            if match is None and o.id not in self._leftovers:
+                continue
+            if t is not None and ((match and match.group(1) == t.tag) or o.id in (t.entry_order_id, t.stop_order_id,
+                                                                                   t.target_order_id)):
+                continue
+            if t is None and match and _OWN_TAG.match(o.custom_tag or "") and self.position != 0:
+                continue  # may be the stop that protects a position recovered after a restart
+            self._event("warning", f"Cancelling stale bot order {o.id}")
+            await self._safe_cancel(o.id)
 
     async def _resize_protection(self, t: ManagedTrade, sizes: dict[int, int] | None = None) -> None:
         """Make the stop and target cover exactly the position (e.g. after a partial entry fill)."""
