@@ -277,6 +277,22 @@ class TradingCore:
         if self.last_price is None:
             self.last_price = bar.close
 
+    def catch_up_bar(self, bar: Bar) -> None:
+        """A bar from earlier in today's session, replayed after a (re)start.
+
+        Like warm-up it never trades, but the recommendation book follows the ideas the strategies
+        gave on it, so the morning before a restart is still learned from and ideas that were open
+        then are followed to their outcome live."""
+        day = self.schedule.trading_day(bar.ts)
+        if day != self.strategy_day:
+            self.strategy.on_new_day(day)
+            self.strategy_day = day
+        self.observe_bar(bar)
+        self.strategy.on_bar(bar, self.context(bar, warmup=True))
+        if self.recommender:
+            self.recommender.catch_up_bar(bar)
+        self.last_price = bar.close
+
     async def on_bar(self, bar: Bar) -> None:
         await self._process_bar(bar)
         if self.recommender:

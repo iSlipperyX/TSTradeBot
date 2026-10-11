@@ -309,7 +309,7 @@ def cmd_train(args: argparse.Namespace) -> int:
                   f"{result['bars']:,} bars): {result['observations']} observations.[/]")
     print_knowledge_table(kb.summary([(n, STRATEGIES[n].title) for n in BASE_STRATEGIES]),
                           f"{contract.name} {cfg.instrument.timeframe_minutes}m")
-    console.print(f"[dim]Saved to {cfg.knowledge_path}. The running bot keeps adding what it sees and retrains daily.[/]")
+    console.print(f"[dim]Saved to {cfg.knowledge_path}. The running bot keeps adding what it sees and retrains after every session.[/]")
     return 0
 
 

@@ -172,7 +172,9 @@ def test_shadow_strategies_produce_tracked_ideas(tmp_path):
     assert all(not r.hypothetical for r in taken)
     snap = book.snapshot()
     assert snap["summary"][0]["active"] and json.dumps(snap, default=str)
-    assert core.journal.recommendations(limit=5)
+    rows = core.journal.recommendations(limit=10_000)
+    assert rows and len(rows) == len({(r.created, r.strategy, r.side.label) for r in book.items})
+    assert "-" in rows[0]["id"]  # keyed by the signal, so a restart's "R1" can't overwrite an earlier row
     assert "Recommended trades" in book.text()
 
 

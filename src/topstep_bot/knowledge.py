@@ -27,14 +27,28 @@ Each observation also keeps what the decisions don't use yet: a market snapshot 
 (``ctx``, market_context.py), how far it went for and against it (MFE / MAE in R), how long it
 lasted, its costs in R and, for real fills, the slippage. insights.py turns these into the
 "What the bot learned" report. Files from before these fields existed still load.
+
+Keeping it safe. What the bot learns live can't be downloaded again, so the base is saved three ways:
+  file     ``knowledge_<SYMBOL>_<TF>m.json``, rewritten after every observation (write to a temporary
+           file, then swap it in, so a crash or power cut never leaves half a file)
+  ledger   ``knowledge_<SYMBOL>_<TF>m.ledger.jsonl``: every live observation (real, manual, idea) is
+           also appended here as one line and never removed, even when the base trims old ideas
+  backups  ``knowledge_backups/``: a copy of the file once a day, the last ``knowledge.backups_kept``
+If the file is ever damaged it is set aside (``.damaged-<time>``), the newest good backup is loaded,
+and anything from the ledger the backup is missing is added back, so no real or manual trade is lost.
+The same observation is never counted twice (a restart that replays the morning, say).
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
+import hashlib
 import json
 import logging
 import os
+import shutil
+import time as _time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, time, timezone
@@ -62,6 +76,26 @@ KEPT_SOURCES = ("real", "manual")  # actual fills: never pruned or replaced by r
 MANUAL = "manual"  # strategy name of trades opened from the dashboard's trade ticket
 VOLATILE_RATIO = 1.2
 UNINFORMATIVE_EXITS = ("bot shutdown", "halted", "flatten requested", "daily maintenance", "expired", "entry not filled")
+BACKUP_DIR = "knowledge_backups"
+_REPLACE_TRIES = 5  # Windows: antivirus or a sync tool can hold the file for a moment
+
+
+@functools.cache
+def training_fingerprint() -> str:
+    """A short hash of the code that produces observations (strategies, idea tracking, this file).
+
+    Stored with the training layer: after an update that changes how signals or outcomes are
+    worked out, the next start retrains, so old and new results are never mixed."""
+    root = Path(__file__).parent
+    files = sorted((root / "strategies").glob("*.py")) + [root / "recommendations.py", root / "knowledge.py",
+                                                         root / "market_context.py"]
+    h = hashlib.sha1()
+    for f in files:
+        try:
+            h.update(f.name.encode() + f.read_bytes().replace(b"\r\n", b"\n"))
+        except OSError:
+            continue
+    return h.hexdigest()[:12]
 
 
 def slot_for(local_time: time) -> str:
@@ -134,6 +168,11 @@ class Observation:
         """Result after the costs not already in ``r``."""
         return self.r - (self.cost_r or 0.0)
 
+    @property
+    def key(self) -> tuple[str, str, str, str]:
+        """The signal this observation is about: one per strategy, side and bar."""
+        return (self.day, self.time, self.strategy, self.side)
+
 
 _OBS_FIELDS = frozenset(f.name for f in fields(Observation))
 _OPTIONAL = frozenset({"ctx", "mfe_r", "mae_r", "bars", "cost_r", "slip_in", "slip_out"})
@@ -192,6 +231,8 @@ class KnowledgeBase:
         real_weight: float = 2.0,
         max_observations: int = 6000,
         source: str | None = None,
+        backups: int = 14,
+        ledger: bool = True,
     ):
         self.path = Path(path) if path else None
         self.half_life_days = max(1, half_life_days)
@@ -200,9 +241,16 @@ class KnowledgeBase:
         self.real_weight = real_weight
         self.max_observations = max_observations
         self.source = source  # force every recorded observation to this source (used while training)
+        self.backups = max(0, backups) if self.path else 0  # daily copies kept in knowledge_backups/
+        self.ledger_path = self.path.with_name(self.path.stem + ".ledger.jsonl") if self.path and ledger else None
         self.obs: list[Observation] = []
         self.trained: dict[str, Any] | None = None
         self.updated: int = 0  # bumps on every change
+        self.recovery: list[str] = []  # what loading had to repair, for the startup message
+        self._index: dict[tuple[str, str, str, str], list[Observation]] = {}
+        self._disk_stamp: tuple[int, int] | None = None  # the file as this base last read or wrote it
+        self._backed_up: str = ""  # day of the last daily backup
+        self._read_only: str | None = None  # why saving is off (a file that exists but can't be read)
         if self.path:
             self.load()
 
@@ -210,72 +258,255 @@ class KnowledgeBase:
     def from_config(cls, cfg: BotConfig, path: Path | None) -> KnowledgeBase:
         k = cfg.knowledge
         return cls(path, half_life_days=k.half_life_days, min_samples=k.min_samples, min_edge_r=k.min_edge_r,
-                   real_weight=k.real_trade_weight)
+                   real_weight=k.real_trade_weight, backups=k.backups_kept)
 
     # ------------------------------------------------------------ persistence
 
     def load(self) -> None:
+        """Read the file; if it is damaged, set it aside and use the newest good backup. Then add back
+        anything from the ledger the file is missing (after a crash, or when a backup was used)."""
+        self.recovery = []
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return
+            data = _read_file(self.path)
+        except OSError as exc:
+            self._read_only = f"could not read {self.path.name}: {exc}"
+            log.error("Knowledge base: %s - it will not be overwritten this session", self._read_only)
+            self.recovery.append(f"{self._read_only}; nothing will be saved over it until the bot restarts")
+            data = None
+        except ValueError as exc:
+            data = self._recover(str(exc))
+        if data is not None:
+            self.obs, self.trained = data
+        self._reindex()
+        self._disk_stamp = _stamp(self.path)
+        restored = self._merge_ledger()
+        if restored:
+            self.recovery.append(f"added back {restored} observation(s) from the ledger")
+            self.save()
+
+    def _recover(self, problem: str) -> tuple[list[Observation], dict | None] | None:
+        damaged = self.path.with_name(f"{self.path.name}.damaged-{datetime.now():%Y%m%d-%H%M%S}")
         try:
-            self.obs = [Observation.from_dict(o) for o in raw.get("observations", [])]
-            self.trained = raw.get("trained")
-        except (TypeError, AttributeError):
-            log.warning("Knowledge file %s has an unexpected format - starting fresh", self.path)
-            self.obs, self.trained = [], None
+            os.replace(self.path, damaged)
+        except OSError as exc:
+            self._read_only = f"{self.path.name} is damaged and could not be moved aside ({exc})"
+            log.error("Knowledge base: %s", self._read_only)
+            self.recovery.append(self._read_only)
+            return None
+        log.error("Knowledge file %s was damaged (%s); kept as %s", self.path.name, problem, damaged.name)
+        self.recovery.append(f"the knowledge file was damaged and was kept aside as {damaged.name}")
+        for backup in reversed(self.backup_files()):
+            try:
+                data = _read_file(backup)
+            except (OSError, ValueError):
+                continue
+            if data is not None:
+                self.recovery.append(f"loaded the backup {backup.name}")
+                return data
+        self.recovery.append("no good backup was found")
+        return None
+
+    def _merge_ledger(self) -> int:
+        """Add ledger observations the base is missing: every real and manual trade, and the ideas
+        newer than the training layer (older ideas are covered by training)."""
+        if not self.ledger_path or not self.ledger_path.exists():
+            return 0
+        cut = (self.trained or {}).get("to", "")
+        added: list[Observation] = []
+        try:
+            with open(self.ledger_path, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        o = Observation.from_dict(json.loads(line))
+                    except (ValueError, TypeError, AttributeError):
+                        continue  # a line cut short by a crash or power cut
+                    if o.source not in KEPT_SOURCES and o.day <= cut:
+                        continue
+                    if not self._duplicate(o):
+                        self._add(o)
+                        added.append(o)
+        except OSError as exc:
+            log.warning("Could not read the knowledge ledger: %s", exc)
+        if not added:
+            return 0
+        self.obs.sort(key=lambda x: (x.day, x.time))
+        self._prune()
+        kept = {id(o) for o in self.obs}
+        return sum(1 for o in added if id(o) in kept)  # old ideas the base had trimmed don't come back
 
     def save(self) -> None:
         if not self.path:
             return
-        data = {"version": 2, "trained": self.trained, "observations": [_compact(o) for o in self.obs]}
+        if self._read_only:
+            log.warning("Knowledge base not saved: %s", self._read_only)
+            return
         try:
+            self._merge_from_disk()
             self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._daily_backup()
+            data = {"version": 2, "trained": self.trained, "observations": [_compact(o) for o in self.obs]}
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data), encoding="utf-8")
-            os.replace(tmp, self.path)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())  # on disk before it replaces the old file: a power cut can't leave it empty
+            _replace(tmp, self.path)
+            self._disk_stamp = _stamp(self.path)
         except OSError as exc:
             log.warning("Could not save the knowledge base: %s", exc)
 
+    def _merge_from_disk(self) -> None:
+        """Another program saved the file since this base read it (``topstep-bot train`` while the bot
+        runs, say): keep its newer training and its observations instead of overwriting them."""
+        stamp = _stamp(self.path)
+        if stamp is None or stamp == self._disk_stamp:
+            return
+        try:
+            data = _read_file(self.path)
+        except (OSError, ValueError):
+            return  # unreadable: this base's own copy replaces it
+        if data is None:
+            return
+        obs, trained = data
+        if trained and (not self.trained or str(trained.get("at", "")) > str(self.trained.get("at", ""))):
+            cut = trained.get("to", "")
+            self.obs = [o for o in self.obs if o.source in KEPT_SOURCES or (o.source == "shadow" and o.day > cut)]
+            self.obs += [o for o in obs if o.source == "train"]
+            self.trained = trained
+            self._reindex()
+        cut = (self.trained or {}).get("to", "")
+        for o in obs:
+            if o.source == "train" or (o.source == "shadow" and o.day <= cut) or self._duplicate(o):
+                continue
+            self._add(o)
+        self.obs.sort(key=lambda x: (x.day, x.time))
+        self._prune()
+        self.updated += 1
+        log.info("Knowledge base: merged the changes another program saved to %s", self.path.name)
+
+    def _daily_backup(self) -> None:
+        today = datetime.now().date().isoformat()
+        if not self.backups or self._backed_up == today or not self.path.exists():
+            return
+        folder = self.path.parent / BACKUP_DIR
+        target = folder / f"{self.path.stem}-{today}.json"
+        if not target.exists():
+            folder.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.path, target)
+            for old in self.backup_files()[:-self.backups]:
+                old.unlink(missing_ok=True)
+        self._backed_up = today
+
+    def backup_files(self) -> list[Path]:
+        """The daily backups of this file, oldest first."""
+        if not self.path:
+            return []
+        return sorted((self.path.parent / BACKUP_DIR).glob(f"{self.path.stem}-????-??-??.json"))
+
+    def _append_ledger(self, o: Observation) -> None:
+        try:
+            with open(self.ledger_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(_compact(o)) + "\n")
+        except OSError as exc:
+            log.warning("Could not add to the knowledge ledger: %s", exc)
+
     # ------------------------------------------------------------ learning
 
-    def record(self, o: Observation, save: bool = True) -> None:
+    def _add(self, o: Observation) -> None:
+        self.obs.append(o)
+        self._index.setdefault(o.key, []).append(o)
+
+    def _reindex(self) -> None:
+        self._index = {}
+        for o in self.obs:
+            self._index.setdefault(o.key, []).append(o)
+
+    def _duplicate(self, o: Observation) -> bool:
+        """Already known? A real or manual trade only matches an identical record of itself; an idea
+        matches anything recorded for the same signal (its training replay, its real trade, or itself)."""
+        for x in self._index.get(o.key, ()):
+            if o.source in KEPT_SOURCES:
+                if x == o:
+                    return True
+            elif o.source == "train":
+                if x.source == "train":
+                    return True
+            else:
+                return True
+        return False
+
+    def _prune(self) -> None:
+        if len(self.obs) <= self.max_observations:
+            return
+        # Drop the oldest hypothetical observations first (live ideas stay in the ledger).
+        keep_real = [x for x in self.obs if x.source in KEPT_SOURCES]
+        others = [x for x in self.obs if x.source not in KEPT_SOURCES]
+        room = max(0, self.max_observations - len(keep_real))
+        self.obs = sorted((others[-room:] if room else []) + keep_real, key=lambda x: (x.day, x.time))
+        self._reindex()
+
+    def record(self, o: Observation, save: bool = True) -> bool:
+        """Add an observation (False when it is already known, e.g. replayed after a restart)."""
         if self.source:
             o.source = self.source
-        self.obs.append(o)
-        if len(self.obs) > self.max_observations:  # drop the oldest hypothetical observations first
-            keep_real = [x for x in self.obs if x.source in KEPT_SOURCES]
-            others = [x for x in self.obs if x.source not in KEPT_SOURCES]
-            self.obs = sorted(others[-(self.max_observations - len(keep_real)):] + keep_real, key=lambda x: (x.day, x.time))
+        elif self.path and o.source not in KEPT_SOURCES and self._duplicate(o):
+            return False  # an idea seen again: a restart replays the session so far (see LiveRunner._catch_up)
+        self._add(o)
+        if self.ledger_path and o.source != "train":
+            self._append_ledger(o)
+        self._prune()
         self.updated += 1
         if save:
             self.save()
+        return True
 
     def replace_training(self, observations: Iterable[Observation], *, first_day: date, last_day: date, days: int,
-                         bars: int, symbol: str, timeframe: int, at: datetime | None = None) -> int:
+                         bars: int, symbol: str, timeframe: int, at: datetime | None = None,
+                         origin: str = "") -> int:
         """Swap in a fresh training layer; shadow observations the training covers are dropped."""
         last = last_day.isoformat()
         kept = [o for o in self.obs if o.source in KEPT_SOURCES or (o.source == "shadow" and o.day > last)]
         new = [Observation(**{**asdict(o), "source": "train"}) for o in observations]
         self.obs = sorted(kept + new, key=lambda x: (x.day, x.time))
+        self._reindex()
         self.trained = {"at": (at or datetime.now(UTC)).isoformat(timespec="seconds"), "from": first_day.isoformat(),
                         "to": last, "days": days, "bars": bars, "symbol": symbol, "timeframe": timeframe,
-                        "observations": len(new)}
+                        "observations": len(new), "code": training_fingerprint()}
+        if origin:
+            self.trained["origin"] = origin
         self.updated += 1
         self.save()
         return len(new)
 
-    def training_due(self, now: datetime, retrain_hours: float) -> bool:
+    def training_due(self, now: datetime, retrain_hours: float, *, session_end: datetime | None = None) -> bool:
+        return self.training_due_reason(now, retrain_hours, session_end=session_end) is not None
+
+    def training_due_reason(self, now: datetime, retrain_hours: float, *,
+                            session_end: datetime | None = None) -> str | None:
+        """Why the training layer needs refreshing (None: it is up to date).
+
+        ``session_end``: when the last finished trading session ended. Training from before then
+        is missing that session, so it is refreshed even if it is only a few hours old."""
         if not self.trained:
-            return True
+            return "it has not been trained yet"
         try:
             at = datetime.fromisoformat(self.trained["at"])
-        except (KeyError, ValueError):
-            return True
+        except (KeyError, TypeError, ValueError):
+            return "its training date is unreadable"
         if at.tzinfo is None:
             at = at.replace(tzinfo=UTC)
-        return (now - at).total_seconds() > retrain_hours * 3600
+        if self.trained.get("code") != training_fingerprint():
+            return "the strategy code changed since it was trained"
+        if session_end is not None and at < session_end <= now:
+            return "a trading session finished since it was trained"
+        if (now - at).total_seconds() > retrain_hours * 3600:
+            return f"its training is more than {retrain_hours:g} hours old"
+        return None
+
+    def learned_on(self, day: date) -> dict[str, int]:
+        """What was learned live on one trading day, by source (training replays not counted)."""
+        iso = day.isoformat()
+        return {src: sum(1 for o in self.obs if o.day == iso and o.source == src) for src in SOURCES if src != "train"}
 
     # ------------------------------------------------------------ querying
 
@@ -366,6 +597,11 @@ class KnowledgeBase:
             lines.append("Not trained yet - send /train or run 'topstep-bot train'.")
         if slot:
             lines.append(f"Now: {slot} / {regime}.")
+        if today is not None:
+            got = self.learned_on(today)
+            if sum(got.values()):
+                lines.append(f"Learned today: {sum(got.values())} (live ideas {got['shadow']}, real trades {got['real']}, "
+                             f"your manual trades {got['manual']}).")
         for row in s["strategies"]:
             parts = []
             for sl in SLOT_NAMES:
@@ -384,6 +620,44 @@ class KnowledgeBase:
         return "\n".join(lines)
 
 
+def _stamp(path: Path | None) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except (OSError, AttributeError):
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def _read_file(path: Path) -> tuple[list[Observation], dict | None] | None:
+    """A saved knowledge file: (observations, training info), None if there is none.
+    Raises ValueError when the file is there but damaged (half written, edited by hand, ...)."""
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8")
+    try:
+        raw = json.loads(text)
+        if not isinstance(raw, dict) or not isinstance(raw.get("observations", []), list):
+            raise ValueError("unexpected format")
+        trained = raw.get("trained")
+        if trained is not None and not isinstance(trained, dict):
+            raise ValueError("unexpected training info")
+        return [Observation.from_dict(o) for o in raw.get("observations", [])], trained
+    except (TypeError, AttributeError, KeyError) as exc:
+        raise ValueError(f"unexpected format ({exc})") from exc
+
+
+def _replace(src: Path, dst: Path) -> None:
+    """os.replace, retried briefly: on Windows a virus scanner or sync tool can hold the file for a moment."""
+    for attempt in range(_REPLACE_TRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_TRIES - 1:
+                raise
+            _time.sleep(0.05 * (attempt + 1))
+
+
 def _compact(o: Observation) -> dict[str, Any]:
     """An observation as saved: the optional learning fields are left out while empty (smaller file)."""
     return {k: v for k, v in asdict(o).items() if v is not None or k not in _OPTIONAL}
@@ -400,6 +674,7 @@ async def train_from_bars(
     strategies: list[str] | None = None,
     progress: Callable[[float], None] | None = None,
     at: datetime | None = None,
+    origin: str = "",
 ) -> dict[str, Any]:
     """Replay history through every strategy in shadow mode and store the outcomes as training.
 
@@ -447,7 +722,7 @@ async def train_from_bars(
                 progress(i / total)
             await asyncio.sleep(0)  # let the live bot keep serving its clock while it trains
     added = kb.replace_training(collector.obs, first_day=start, last_day=days[-1], days=len(days) - warmup, bars=total,
-                                symbol=contract.root or trial.instrument.symbol, timeframe=tf, at=at)
+                                symbol=contract.root or trial.instrument.symbol, timeframe=tf, at=at, origin=origin)
     if progress:
         progress(1.0)
     per_strategy = {s.name: sum(1 for o in collector.obs if o.strategy == s.name) for s in book.shadows}

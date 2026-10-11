@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 import websockets
 
 from topstep_bot.api.parse import format_ts, parse_ts
@@ -251,3 +252,94 @@ def test_runner_keeps_every_bar_and_learns_from_all_of_them(tmp_path):
         assert (tmp_path / "market_library.sqlite").exists()
 
     run(go())
+
+
+def test_a_restart_trains_from_saved_history_and_downloads_only_what_is_missing(tmp_path, monkeypatch):
+    import topstep_bot.knowledge as knowledge
+
+    async def go():
+        fake = FakeTopstepX()
+        history = "/api/History/retrieveBars"
+        async with websockets.serve(fake.hub, "127.0.0.1", 0) as srv:
+            port = srv.sockets[0].getsockname()[1]
+            asked, origins = [], []
+            for _ in range(2):
+                runner = make_runner(fake, port, "paper", tmp_path)
+                ready = asyncio.Event()
+
+                async def on_ready(core, ready=ready):
+                    ready.set()
+
+                before = len([p for p, _ in fake.calls if p == history])
+                task = asyncio.create_task(runner.run(on_ready))
+                await asyncio.wait_for(ready.wait(), 30)
+                asked.append(len([p for p, _ in fake.calls if p == history]) - before)
+                origins.append(runner.core.knowledge.trained["origin"])
+                assert any(e["message"].startswith("Knowledge ready:") for e in runner.core.events)
+                runner.controls.stop.set()
+                await asyncio.wait_for(task, 20)
+                # an update that changes the strategy code: the next start must retrain
+                monkeypatch.setattr(knowledge, "training_fingerprint", lambda: "after-an-update")
+            assert origins[0].startswith("saved history + ") and origins[1].startswith("saved history")
+            assert asked[1] <= 2  # the warm-up, plus at most the last few minutes: the 60 days come from disk
+
+    run(go())
+
+
+def test_training_falls_back_to_saved_history_when_the_download_fails(tmp_path):
+    from types import SimpleNamespace
+
+    from topstep_bot.memory import MarketLibrary
+
+    fake = FakeTopstepX()
+    runner = make_runner(fake, 1, "paper", tmp_path)
+    library = MarketLibrary(tmp_path / "lib.sqlite")
+    library.add("MNQ", 5, fake.bars)
+
+    class Memory:
+        symbol, tf = "MNQ", 5
+
+        async def backfill(self, *args, **kwargs):
+            raise httpx.ConnectError("TopstepX is unreachable")
+
+    memory = Memory()
+    memory.library = library
+    runner.core = SimpleNamespace(memory=memory)
+    runner.contract = SimpleNamespace(id=CONTRACT["id"])
+    end = fake.bars[-1].ts + timedelta(minutes=5)
+    bars, origin = run(runner._training_bars(30, end))
+    assert origin == "saved history only: the download failed" and bars[-1] == fake.bars[-1]
+    assert bars[0].ts >= end - timedelta(days=30)
+
+    library.close()
+    empty = MarketLibrary(tmp_path / "empty.sqlite")
+    memory.library = empty
+    with pytest.raises(httpx.ConnectError):
+        run(runner._training_bars(30, end))
+    empty.close()
+
+
+def test_a_bot_that_runs_for_days_retrains_after_each_session(tmp_path):
+    from types import SimpleNamespace
+
+    from topstep_bot.knowledge import KnowledgeBase
+    from topstep_bot.sessions import SessionSchedule
+
+    runner = make_runner(FakeTopstepX(), 1, "paper", tmp_path)
+    kb = KnowledgeBase(tmp_path / "k.json")
+    kb.trained = {"at": "2026-10-08T21:10:00+00:00", "to": "2026-10-08", "days": 60, "code": "old"}
+    runner.core = SimpleNamespace(knowledge=kb, schedule=SessionSchedule(runner.cfg.session), event=lambda *a, **k: None)
+    calls = []
+
+    async def retrain(source):
+        calls.append(source)
+        if len(calls) == 1:
+            raise RuntimeError("TopstepX is down")
+        return "ok"
+
+    runner.retrain = retrain
+    friday_evening = datetime(2026, 10, 9, 21, 30, tzinfo=UTC)  # 16:30 CT, after Friday's close
+    run(runner._retrain_if_due(friday_evening))
+    run(runner._retrain_if_due(friday_evening + timedelta(minutes=5)))  # failed: waits an hour before trying again
+    run(runner._retrain_if_due(friday_evening + timedelta(hours=1, minutes=1)))
+    assert calls == ["daily", "daily"]

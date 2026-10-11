@@ -25,8 +25,9 @@ strategy:
   params: {}                   # override strategy defaults here, e.g. {target_r: 1.5}
 
 knowledge:                      # what the bot learns while it runs (drives the adaptive strategy)
-  auto_train: true              # retrain on the last 60 days of history at startup when stale (daily)
+  auto_train: true              # retrain on the last 60 days after every finished session (from the history saved on your PC)
   history_days: 60
+  backups_kept: 14              # daily copies of the knowledge base in data/knowledge_backups (every live observation is also kept in a ledger)
   deep_learning: true           # long-run memory: keep every bar, backfill history and replay it all daily (reports only)
   deep_history_days: 365        # how far back the long-run memory reaches (up to 3650)
 

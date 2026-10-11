@@ -106,6 +106,17 @@ class SessionSchedule:
             return False
         return not (wd == 4 and t >= time(16, 0))
 
+    def last_session_end(self, ts: datetime) -> datetime:
+        """When the most recent finished Globex session ended (16:00 CT on a weekday) at or before ``ts``."""
+        local = self.local(ts)
+        day = local.date()
+        for _ in range(8):
+            end = datetime.combine(day, time(16, 0), tzinfo=self.tz)
+            if day.weekday() < 5 and end <= local:
+                return end
+            day -= timedelta(days=1)
+        return end
+
     def is_rth(self, ts: datetime, open_: time, close: time) -> bool:
         t = self.local(ts).time()
         return open_ <= t < close

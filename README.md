@@ -45,8 +45,12 @@ No bot can guarantee passing the Combine or making a profit, and this one doesn'
 - **Adaptive all-day trading** — the default `adaptive` strategy runs every strategy through the whole
   session and trades only the ones the bot's **knowledge base** shows to be working at that time of day
   (open / midday / close) in the current volatility regime. The bot **learns while it runs**: every
-  signal from every strategy — traded or not — is followed to its outcome and added to the base, and it
-  retrains on the last 60 days of real data each day. Nothing unproven is traded.
+  signal from every strategy — traded or not, around the clock — is followed to its outcome and added to
+  the base, and it retrains on the last 60 days of real data after every session. Nothing unproven is traded.
+- **Knowledge that survives anything** — each start gets the knowledge ready first: it retrains from the
+  history saved on your PC (downloading only what's missing), and after a mid-day restart it replays the
+  day so far so the morning's ideas are still learned from. Every live observation is also kept in a
+  never-trimmed ledger, with daily backups, and a damaged knowledge file is repaired automatically.
 - **Tuning** — `tune` picks strategy settings walk-forward: chosen on one stretch of real
   history, judged only on the next stretch it never saw, with an HTML report and one-step saving
   to `config.yaml`. See [what 10½ years of real Nasdaq data says](docs/HOW_TO_USE.md#12-the-strategies).
