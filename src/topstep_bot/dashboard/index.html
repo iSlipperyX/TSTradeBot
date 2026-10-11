@@ -323,6 +323,23 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 .keyrow .meta { font-size:12px; }
 @media (max-width:620px) { .sfield { grid-template-columns:1fr; } .sfield .help { grid-column:1; } .sfield input[type=text],
   .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select { width:100%; } }
+/* ask: the central intelligence */
+.chat { display:flex; flex-direction:column; gap:10px; max-height:520px; overflow:auto; padding:2px 2px 6px; }
+.chat .q, .chat .a { padding:9px 12px; border-radius:12px; max-width:92%; white-space:pre-wrap; overflow-wrap:anywhere; font-size:13.5px; }
+.chat .q { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+.chat .a { align-self:flex-start; background:var(--surface2); border:1px solid var(--border); border-bottom-left-radius:4px; }
+.chat .a .by { display:block; margin-top:6px; font-size:11px; color:var(--muted); }
+.chat .a.wait { color:var(--muted); }
+.askbar { display:flex; gap:8px; margin-top:10px; }
+.askbar input { flex:1; min-width:0; font:inherit; padding:8px 11px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.chips button { font-weight:500; font-size:12.5px; padding:4px 10px; border-radius:999px; }
+.declist { font-size:13px; }
+.declist button { display:block; width:100%; text-align:left; font-weight:500; border:0; border-bottom:1px solid var(--border); border-radius:0; padding:7px 2px; background:transparent; }
+.declist button:hover { background:var(--surface2); }
+.declist .st { display:inline-block; min-width:62px; font-size:11px; font-weight:650; text-transform:uppercase; letter-spacing:.03em; }
+.declist .st.taken { color:var(--accent); } .declist .st.skipped { color:var(--warn); } .declist .st.passed { color:var(--muted); }
+.explain { white-space:pre-wrap; font-size:13px; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-top:10px; overflow-wrap:anywhere; }
 </style>
 </head>
 <body>
@@ -362,6 +379,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 
   <nav class="tabs">
     <button data-tab="overview" class="on">Overview</button>
+    <button data-tab="ask">Ask</button>
     <button data-tab="trade">Trade</button>
     <button data-tab="ideas">Ideas <span class="count" id="ideacount" hidden></span></button>
     <button data-tab="market">Market</button>
@@ -445,6 +463,43 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
         <tbody id="todaytrades"></tbody></table></div>
     </div>
     <div class="panel" style="margin-top:12px"><h2>Activity</h2><div class="feed" id="activity"></div></div>
+  </section>
+
+  <!-- ASK: the central intelligence -->
+  <section class="tab" id="tab-ask">
+    <div class="grid two">
+      <div class="panel">
+        <div class="row"><h2 style="margin:0">Ask the bot</h2><span class="spacer"></span><span class="meta" id="ask-mode"></span></div>
+        <div class="chat" id="ask-chat" aria-live="polite">
+          <div class="a">Ask me why I took or skipped a trade, what I learned, how a strategy is doing or what's next. I answer from my own records.</div>
+        </div>
+        <form class="askbar" id="ask-form"><input id="ask-q" maxlength="1000" autocomplete="off" placeholder="e.g. why did you take the last trade?">
+          <button class="primary" id="ask-send">Ask</button></form>
+        <div class="chips" id="ask-chips">
+          <button type="button">Why did you take the last trade?</button><button type="button">Why didn't you trade today?</button>
+          <button type="button">What did you learn?</button><button type="button">When is the next trade?</button>
+          <button type="button">Which decision rule are you using?</button><button type="button">What do you know?</button></div>
+        <p class="hint">Answers come only from the bot's records (decisions, trades, knowledge, the decision lab). It can't place trades or
+          change settings. Turn on AI answers on the Setup tab for free-form questions.</p>
+      </div>
+      <div class="panel">
+        <div class="row"><h2 style="margin:0">Decisions</h2><span class="spacer"></span>
+          <select id="dec-filter" class="picker" style="width:auto"><option value="">All</option><option value="taken">Taken</option>
+            <option value="skipped">Skipped by a rule</option><option value="passed">Passed on</option></select>
+          <button class="small" id="dec-reload">Refresh</button></div>
+        <div class="declist" id="dec-list"><div class="empty">Loading…</div></div>
+        <div class="explain" id="dec-explain" hidden></div>
+        <p class="hint">Every signal the bot weighs is recorded with what it knew at that moment: each strategy's verdict, the evidence,
+          the market and your limits, then the result. For signals it didn't trade, the result is what they would have made.</p>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <div class="row"><h2 style="margin:0">Decision lab</h2><span class="spacer"></span><span class="meta">replayed without peeking</span></div>
+      <div class="explain" id="lab-text" style="margin-top:8px">Loading…</div>
+      <p class="hint">The lab replays the 1.2 (classic) and 1.3 (evidence) decision rules day by day over the long-run memory, using only
+        what was known before each day, with your trade limits. The bot switches to the evidence rule only when it wins clearly over
+        enough days; until then it keeps the classic rule. Simulated results after costs, not a promise: real fills are usually a little worse.</p>
+    </div>
   </section>
 
   <!-- TRADE (manual trade ticket) -->
@@ -560,7 +615,8 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
         <button class="small" id="learn" title="Download the history the bot is still missing and replay all of it through every strategy">Learn from history now</button>
       </div>
       <p class="hint">The long-run memory keeps every price bar the bot sees and, once a day outside trading hours, replays all of them
-        through every strategy. It feeds these reports; the bot still decides its trades from the recent knowledge base below, with every risk rule unchanged.</p>
+        through every strategy. It feeds these reports and the decision lab (Ask tab). Under the evidence rule it also backs up the recent
+        knowledge base below when the bot decides a trade; every risk rule applies either way.</p>
     </div>
     <div class="panel" style="margin-top:12px">
       <div class="row"><h2 style="margin:0">What works when</h2><span class="spacer"></span><button class="small" id="train">Retrain now</button></div>
@@ -837,6 +893,23 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
     </div>
 
     <div class="panel" style="margin-top:12px">
+      <h2 class="steptitle">AI answers <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
+      <p class="hint" style="margin-top:2px">The Ask tab and Telegram answer from the bot's records by themselves. With an Anthropic API key, a Claude
+        model writes the answers instead and can take any question. It reads the same records through read-only lookups, can't trade or
+        change settings, and each question costs a little on your Anthropic account.</p>
+      <div class="sfield"><label for="su-ai-key">Anthropic API key</label>
+        <div class="ctl"><input type="password" id="su-ai-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+          <button class="small primary" id="su-ai-save">Check and save</button><button class="small" id="su-ai-remove" hidden>Remove</button></div>
+        <div class="help">From console.anthropic.com &gt; API keys. Checked with Anthropic, then saved in the .env file on this PC.</div></div>
+      <div class="sfield"><span class="lbl">Use AI answers</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-ai-on"><span>Let the AI answer questions (the built-in answers stay as the fallback)</span></label></div></div>
+      <div class="sfield"><label for="su-ai-model">Model</label>
+        <div class="ctl"><input type="text" id="su-ai-model" class="short" style="width:220px" spellcheck="false"></div>
+        <div class="help">claude-opus-5-5 is the default.</div></div>
+      <div class="msg" id="su-ai-msg"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
       <h2 class="steptitle">Start with Windows <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
       <label class="checkline" style="margin-top:6px"><input type="checkbox" id="su-auto">
         <span>Start Topstep Bot about 30 seconds after I sign in to Windows, and start the bot in the mode used last.
@@ -993,6 +1066,7 @@ function showTab(name) {
   if (name === "logs") loadLogs();
   if (name === "trade") loadTicket();
   if (name === "knowledge") { loadInsights(true); loadBrief(true); }
+  if (name === "ask") loadAsk();
   if (name === "setup") loadSetup(false);
 }
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
@@ -1910,7 +1984,7 @@ function fillSetup() {
   SU_SUG = suSuggestion();
   su("path").textContent = SU.exists ? `Saved in ${SU.path}` : `Creates ${SU.path}`;
   suMsg("save-msg", "");
-  renderAccounts(); renderAlerts(); renderAutostart(); suRender(); renderAccountPanel();
+  renderAccounts(); renderAlerts(); renderAutostart(); renderAI(); suRender(); renderAccountPanel();
   if (SU.login.api_key_saved && (!SU.report || SU.report_age > 300)) checkAccounts(false);
 }
 
@@ -2234,6 +2308,66 @@ su("dc-save").onclick = async () => {
 };
 
 // start with Windows
+// ---- ask: the central intelligence (brain/)
+let ASK_BUSY = false;
+function chatLine(cls, text, by) {
+  const div = document.createElement("div"); div.className = cls; div.textContent = text;
+  if (by) { const s = document.createElement("span"); s.className = "by"; s.textContent = by; div.appendChild(s); }
+  $("ask-chat").appendChild(div); $("ask-chat").scrollTop = $("ask-chat").scrollHeight; return div;
+}
+async function askBot(question) {
+  question = (question || "").trim();
+  if (!question || ASK_BUSY) return;
+  ASK_BUSY = true; $("ask-send").disabled = true; $("ask-q").value = "";
+  chatLine("q", question);
+  const wait = chatLine("a wait", "Looking it up…");
+  const d = await post("ask", {question});
+  wait.remove();
+  if (d.ok === false) chatLine("a", d.message || "No answer.");
+  else chatLine("a", (d.note ? d.note + "\n\n" : "") + d.answer, d.by === "ai" ? "AI answer from the bot's records" : "built-in answer");
+  if (d.mode) $("ask-mode").textContent = d.mode;
+  ASK_BUSY = false; $("ask-send").disabled = false;
+}
+$("ask-form").onsubmit = e => { e.preventDefault(); askBot($("ask-q").value); };
+document.querySelectorAll("#ask-chips button").forEach(b => b.onclick = () => askBot(b.textContent));
+async function fact(name, args) {
+  const d = await post("facts", {name, args: args || {}});
+  return d.ok === false ? {error: d.message} : (d.data || {});
+}
+async function loadDecisions() {
+  const status = $("dec-filter").value;
+  const d = await fact("decisions", status ? {status, limit: 25} : {limit: 25});
+  const items = d.items || [];
+  $("dec-list").innerHTML = items.length ? items.map(x =>
+    `<button type="button" data-id="${esc(x.id)}"><span class="st ${esc(x.status)}">${esc(x.status)}</span>${esc(x.summary)}</button>`).join("")
+    : `<div class="empty">${esc(d.error || d.text || "No decisions recorded yet.")}</div>`;
+  $("dec-list").querySelectorAll("button").forEach(b => b.onclick = async () => {
+    const e = await fact("explain_decision", {id: b.dataset.id});
+    $("dec-explain").hidden = false; $("dec-explain").textContent = e.text || e.error || "Not found.";
+  });
+}
+async function loadLab() { const d = await fact("lab"); $("lab-text").textContent = d.text || d.error || "Not available."; }
+function loadAsk() { loadDecisions(); loadLab(); }
+$("dec-filter").onchange = loadDecisions;
+$("dec-reload").onclick = loadAsk;
+
+// ---- setup: AI answers
+function renderAI() {
+  const a = SU.ai || {};
+  su("ai-on").checked = !!a.enabled; su("ai-model").value = a.model || "claude-opus-5-5";
+  su("ai-key").value = ""; su("ai-key").placeholder = a.key_saved ? "saved - leave empty to keep it" : "sk-ant-…";
+  su("ai-remove").hidden = !a.key_saved;
+}
+async function saveAI(body) {
+  su("ai-save").disabled = true; suMsg("ai-msg", body.api_key ? "Checking the key with Anthropic…" : "");
+  const d = await post("setup/ai", Object.assign({model: su("ai-model").value.trim()}, body));
+  su("ai-save").disabled = false; suMsg("ai-msg", d.message, d.ok !== false);
+  if (d.ok !== false) loadSetup(true); else renderAI();
+}
+su("ai-save").onclick = () => saveAI({api_key: su("ai-key").value.trim(), enabled: true});
+su("ai-on").onchange = () => saveAI({enabled: su("ai-on").checked});
+su("ai-remove").onclick = async () => { if (await ask("Remove the Anthropic API key? The bot goes back to its built-in answers.")) saveAI({remove: true}); };
+
 function renderAutostart() {
   const a = SU.autostart; su("auto").checked = a.enabled; su("auto").disabled = !a.supported;
   if (!a.supported) suMsg("auto-msg", "Only available on Windows.");

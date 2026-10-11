@@ -63,7 +63,7 @@ ACCOUNT_FILES = ("journal_*.db", "knowledge_*m.json", "knowledge_*m.ledger.jsonl
                  "market_journal.jsonl", "market_pick.json")
 ENV_KEYS = {"username": "TOPSTEPX_USERNAME", "api_key": "TOPSTEPX_API_KEY", "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
             "telegram_chat_id": "TELEGRAM_CHAT_ID", "discord_webhook_url": "DISCORD_WEBHOOK_URL",
-            "github_token": "GITHUB_TOKEN"}
+            "github_token": "GITHUB_TOKEN", "anthropic_api_key": "ANTHROPIC_API_KEY"}
 
 
 def load_for_server(config_path: str | None) -> tuple[BotConfig, str | None]:
@@ -163,6 +163,7 @@ class SetupService:
                 "discord": bool(s.discord_webhook_url),
             },
             "github_token_saved": bool(s.github_token),
+            "ai": {"enabled": cfg.brain.ai, "key_saved": bool(s.anthropic_api_key), "model": cfg.brain.model},
             "multi": cfg.multi,
             "profiles": [self._profile_view(p.name) for p in cfg.accounts],
             "keys": ["main", *sorted(s.logins)] if s.api_key else sorted(s.logins),
@@ -827,6 +828,44 @@ class SetupService:
             updater.token = token
             updater.close()  # the next check signs in with the new token
         return "GitHub token saved. Press Check now to look for updates."
+
+    async def ai(self, body: dict) -> str:
+        """The central intelligence's AI answers: save or remove the Anthropic API key, turn them on or off."""
+        from topstep_bot.brain.llm import check_key
+
+        cfg = self.ctl.cfg
+        model = str(body.get("model") or cfg.brain.model).strip()
+        if body.get("remove"):
+            self._set_secrets({"anthropic_api_key": None})
+            self._set_config({("brain", "ai"): False})
+            return "Anthropic API key removed. The central intelligence uses its built-in answers."
+        key = str(body.get("api_key") or "").strip()
+        if key:
+            problem = await check_key(key, model)
+            if problem:
+                raise ValueError(f"{problem[0].upper()}{problem[1:]}. Nothing was saved.")
+            self._set_secrets({"anthropic_api_key": key})
+        enabled = bool(body.get("enabled", True))
+        if enabled and not self.ctl.secrets.anthropic_api_key:
+            raise ValueError("Paste your Anthropic API key first (console.anthropic.com > API keys).")
+        self._set_config({("brain", "ai"): enabled,
+                          ("brain", "model"): model if model != "claude-opus-5-5" else REMOVE})
+        if not enabled:
+            return "AI answers off: the central intelligence uses its built-in answers (the key stays saved)."
+        return (f"AI answers on ({model}). Each question costs a little on your Anthropic account; the bot's records "
+                "never leave your PC except the parts the AI looks up to answer you.")
+
+    def _set_config(self, values: dict) -> None:
+        """Change a few settings in config.yaml (keeping the rest as written) and use them at once."""
+        path = self.config_path
+        original = path.read_text(encoding="utf-8") if path.exists() else ""
+        text = set_values(original, values)
+        try:
+            config_from_text(text, path.name)
+        except ConfigError as exc:
+            raise ValueError(f"Not saved: {_problems(exc)}") from None
+        path.write_text(text, encoding="utf-8")
+        self._reload()
 
     async def autostart(self, body: dict) -> str:
         from topstep_bot import autostart

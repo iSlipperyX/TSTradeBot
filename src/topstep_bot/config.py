@@ -344,9 +344,31 @@ class KnowledgeConfig(_Section):
     deep_learning: bool = Field(
         default=True,
         description="Long-run memory: keep every bar the bot sees, backfill up to deep_history_days of history and replay "
-        "all of it through every strategy once a day. Feeds the reports only; it does not change how the bot trades.",
+        "all of it through every strategy once a day. Feeds the reports and the decision lab; it only shapes trading "
+        "decisions under the evidence rule (policy).",
     )
     deep_history_days: int = Field(default=365, ge=30, le=3650, description="How far back the long-run memory reaches.")
+    policy: Literal["auto", "classic", "evidence"] = Field(
+        default="auto",
+        description="How the adaptive strategy decides which signals to trade. classic = the 1.2 rule (the most specific "
+        "recent evidence decides). evidence = the 1.3 rule (one estimate from every level, after costs, backed by the "
+        "long-run memory). auto = the classic rule until the decision lab shows the evidence rule ahead on enough "
+        "replayed history (lab.py).",
+    )
+
+
+class BrainConfig(_Section):
+    """The central intelligence you can ask about the bot's trades and knowledge (brain/).
+
+    It answers from the bot's own records. With ``ai: true`` and an Anthropic API key (Setup tab), a
+    Claude model writes the answers from the same records; without it the bot answers by itself.
+    It can't place trades or change settings either way."""
+
+    ai: bool = Field(default=False, description="Let a Claude model write the answers (needs ANTHROPIC_API_KEY in .env).")
+    model: str = Field(default="claude-opus-5-5", description="The Claude model that writes the answers.")
+    effort: Literal["low", "medium", "high"] = Field(default="medium", description="How hard the model thinks per answer.")
+    max_tool_calls: int = Field(default=8, ge=1, le=20, description="Lookups the model may make for one answer.")
+    explain_trades: bool = Field(default=True, description="Add why a trade was taken to its Telegram alert.")
 
 
 class FirstTradeConfig(_Section):
@@ -532,6 +554,7 @@ class BotConfig(_Section):
     recommendations: RecommendationsConfig = Field(default_factory=RecommendationsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     first_trade: FirstTradeConfig = Field(default_factory=FirstTradeConfig)
+    brain: BrainConfig = Field(default_factory=BrainConfig)
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     funded: FundedConfig = Field(default_factory=FundedConfig)
     research: ResearchConfig = Field(default_factory=ResearchConfig)
@@ -757,6 +780,7 @@ class Secrets(BaseModel):
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     github_token: str | None = None  # read-only token for update checks (only needed for a private repository)
+    anthropic_api_key: str | None = None  # the central intelligence's optional AI answers (brain/llm.py)
     logins: dict[str, Login] = Field(default_factory=dict)  # extra named API keys (lower-case names)
     login_name: str | None = None  # which named login username/api_key came from (None = the main key)
 
@@ -788,7 +812,7 @@ class Secrets(BaseModel):
 
     def secret_values(self) -> list[str | None]:
         """Everything that must never appear in a log file."""
-        return [self.api_key, self.telegram_bot_token, self.discord_webhook_url, self.github_token,
+        return [self.api_key, self.telegram_bot_token, self.discord_webhook_url, self.github_token, self.anthropic_api_key,
                 *(login.api_key for login in self.logins.values())]
 
 
@@ -820,6 +844,7 @@ def load_secrets() -> Secrets:
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
         github_token=os.environ.get("GITHUB_TOKEN") or None,
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
         logins={k: v for k, v in logins.items() if v.api_key},
     )
 

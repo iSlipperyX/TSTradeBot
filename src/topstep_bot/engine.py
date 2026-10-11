@@ -27,6 +27,7 @@ from topstep_bot.manual import ManualTrading
 from topstep_bot.market_context import MarketContext
 from topstep_bot.models import Account, Bar, Contract, OrderSide, Signal
 from topstep_bot.notify import Notifier
+from topstep_bot.policy import Judge
 from topstep_bot.risk.manager import RiskManager
 from topstep_bot.risk.topstep import LossLimitTracker
 from topstep_bot.sessions import SessionSchedule
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from topstep_bot.knowledge import KnowledgeBase
     from topstep_bot.market_intel import MarketTracker
     from topstep_bot.memory import LongRunMemory
+    from topstep_bot.reasoning import Reasoner
     from topstep_bot.recommendations import RecommendationBook
     from topstep_bot.remote import RemoteControl
 
@@ -129,12 +131,14 @@ class TradingCore:
         self.market = MarketContext()  # the market snapshot saved with every observation
         self.recommender: RecommendationBook | None = None  # trade ideas for the dashboard (+ what the bot learns from)
         self.knowledge: KnowledgeBase | None = None  # what has worked when; drives the adaptive strategy
+        self.judge: Judge | None = None  # the decision rule over the knowledge base (policy.py)
+        self.reasoner: Reasoner | None = None  # live only: records why each decision was made (reasoning.py)
         self.remote: RemoteControl | None = None  # settings/trades from the dashboard and Telegram
         self.manual = ManualTrading(self)  # trades you open yourself from the dashboard's trade ticket
         self.setups = SetupTracker(self)  # the trades every strategy is building toward (dashboard)
         self.first_trade: FirstTradePlanner | None = None  # an educated trade soon after starting (first_trade.py)
         self._insights: dict[bool, tuple[tuple, dict]] = {}  # cached "What the bot learned" reports (recent / long-run)
-        self.memory: LongRunMemory | None = None  # every bar seen + what every strategy did on all of it (reports only)
+        self.memory: LongRunMemory | None = None  # every bar seen + what every strategy did on all of it (memory.py)
         # Cross-account check before any entry: side (+1/-1) -> reason it's not allowed, or None (crossaccount.py).
         self.entry_guard: Callable[[int], str | None] | None = None
         self.intel: MarketTracker | None = None  # live levels, news and headlines for what we trade (market_intel.py)
@@ -148,13 +152,36 @@ class TradingCore:
 
     def attach_knowledge(self, knowledge: KnowledgeBase | None) -> None:
         self.knowledge = knowledge
+        self.judge = None
+        if knowledge is not None:
+            # "auto" trades the classic rule until the live bot reads the decision lab's verdict (set_policy).
+            chosen = self.cfg.knowledge.policy
+            self.judge = Judge(knowledge, lambda: self.memory.knowledge if self.memory else None,
+                               "classic" if chosen == "auto" else chosen,
+                               "automatic: waiting for the decision lab" if chosen == "auto" else "set in config.yaml")
         self._bind_strategy()
 
+    def attach_reasoner(self, reasoner: Reasoner | None) -> None:
+        self.reasoner = reasoner
+        self._bind_strategy()
+
+    def set_policy(self, policy: str, why: str) -> None:
+        """Switch the decision rule (live: from the decision lab's latest result)."""
+        if self.judge is None or (self.judge.policy, self.judge.why) == (policy, why):
+            return
+        changed = self.judge.policy != policy
+        self.judge.set_policy(policy, why)
+        self._bind_strategy()
+        if changed:
+            self.event("info", f"Decision rule: now trading with {self.judge.describe()}")
+
     def _bind_strategy(self) -> None:
-        """Give a strategy that can use them the knowledge base and the live regime."""
+        """Give a strategy that can use them the knowledge base, the live regime and the decision rule."""
         bind = getattr(self.strategy, "bind_knowledge", None)
         if bind:
-            bind(self.knowledge, lambda: self.regime.value)
+            bind(self.knowledge, lambda: self.regime.value, self.judge)
+        if hasattr(self.strategy, "on_evaluation"):
+            self.strategy.on_evaluation = self.reasoner.on_evaluation if self.reasoner else None
 
     def slot(self, ts: datetime | None = None) -> str:
         """Time-of-day slot (open / midday / close / off) of ``ts`` or now."""

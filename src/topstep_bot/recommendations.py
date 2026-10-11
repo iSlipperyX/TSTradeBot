@@ -251,6 +251,8 @@ class RecommendationBook:
             context=self.core.market_snapshot(entry_ref, ctx.bar_close),
         )
         self._store(rec, new=True)
+        if self.core.reasoner is not None and not self.quiet:
+            self.core.reasoner.on_signal(sig, ctx, entry_ref, plan, status, note, tag)
 
     def trade_closed(self, t: ManagedTrade) -> None:
         """A real trade finished: give its recommendation the actual result."""
@@ -318,6 +320,8 @@ class RecommendationBook:
         rec.closed_at = self.core.clock()
         self._store(rec)
         self._learn(rec, why)
+        if self.core.reasoner is not None and not self.quiet:
+            self.core.reasoner.on_outcome(rec, why)
 
     def _learn(self, rec: Recommendation, why: str) -> None:
         """Hand a finished recommendation to the knowledge base (if its ending says something)."""

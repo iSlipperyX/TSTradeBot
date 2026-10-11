@@ -14,10 +14,18 @@ module gives the bot a much bigger memory next to it:
   (``knowledge_<SYMBOL>_<TF>m_longrun.json``). That is every signal every strategy would have
   given on every day in the library, with its outcome, costs, price path and market snapshot.
 
-What the long-run memory changes: the reports (what the bot knows, what it learned, the
-next-trade forecast's background). What it does not change: trading. The adaptive strategy keeps
-deciding from the recent knowledge base, and every risk rule and size stays as configured; the
-long-run results are there to compare against and to test new ideas on.
+What the long-run memory feeds: the reports (what the bot knows, what it learned, the next-trade
+forecast's background) and the decision lab (lab.py), which replays the bot's decision rules on
+it. Trading decisions use it only under the evidence rule (``knowledge.policy``, evidence.py),
+as a lightly weighted background to the recent knowledge base; every risk rule and size stays
+as configured either way.
+
+How far back it reaches: TopstepX serves roughly the last two months of minute bars, and only
+for the newest contracts (measured in October 2026: the current MNQ contract from its first
+weeks as front month, the one before it for the month before that, nothing older). So the
+backfill asks the current contract first and, for the part before its data starts, the
+previous two quarterly contracts once each. From then on the library grows by itself, every
+day the bot runs - nothing is thrown away - and CSV imports can add older history.
 
 Contract rolls: the library keeps one continuous series per symbol and timeframe, built from
 whichever contract was the front month when it was downloaded. Prices jump at a roll; the
@@ -59,7 +67,32 @@ CREATE TABLE IF NOT EXISTS bars (
 CREATE TABLE IF NOT EXISTS spans (
     symbol TEXT NOT NULL, tf INTEGER NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS asked (
+    symbol TEXT NOT NULL, tf INTEGER NOT NULL, contract TEXT NOT NULL, PRIMARY KEY (symbol, tf, contract)
+);
 """
+QUARTERLY = "HMUZ"
+MONTHS = "FGHJKMNQUVXZ"
+OLDER_CONTRACTS = 2  # earlier contracts asked for the history before the current one's data starts
+
+
+def previous_contracts(contract_id: str, n: int = OLDER_CONTRACTS) -> list[str]:
+    """The contracts before ``contract_id``, newest first: CON.F.US.MNQ.Z26 -> [...U26, ...M26].
+
+    Index futures roll quarterly (H M U Z); others are taken as monthly. Unknown id formats give []."""
+    head, _, code = contract_id.rpartition(".")
+    if not head or len(code) < 3 or code[0] not in MONTHS or not code[1:].isdigit():
+        return []
+    cycle = QUARTERLY if code[0] in QUARTERLY else MONTHS
+    i, year, digits = cycle.index(code[0]), int(code[1:]), len(code) - 1
+    out = []
+    for _ in range(n):
+        i -= 1
+        if i < 0:
+            i, year = len(cycle) - 1, year - 1
+        out.append(f"{head}.{cycle[i]}{year % 10 ** digits:0{digits}d}")
+    return out
+
 
 
 def _epoch(ts: datetime) -> int:
@@ -123,7 +156,22 @@ class MarketLibrary:
             self._db.execute("INSERT INTO spans VALUES (?,?,?,?)", (symbol, tf, a, b))
             self._db.commit()
 
+    def was_asked(self, symbol: str, tf: int, contract: str) -> bool:
+        with self._lock:
+            row = self._db.execute("SELECT 1 FROM asked WHERE symbol=? AND tf=? AND contract=?", (symbol, tf, contract))
+            return row.fetchone() is not None
+
+    def note_asked(self, symbol: str, tf: int, contract: str) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR IGNORE INTO asked VALUES (?,?,?)", (symbol, tf, contract))
+            self._db.commit()
+
     # ------------------------------------------------------------- reading
+
+    def first(self, symbol: str, tf: int) -> datetime | None:
+        with self._lock:
+            ts = self._db.execute("SELECT MIN(ts) FROM bars WHERE symbol=? AND tf=?", (symbol, tf)).fetchone()[0]
+        return _dt(ts) if ts is not None else None
 
     def _count(self, symbol: str, tf: int) -> int:
         return self._db.execute("SELECT COUNT(*) FROM bars WHERE symbol=? AND tf=?", (symbol, tf)).fetchone()[0]
@@ -240,6 +288,30 @@ class LongRunMemory:
             added += self.library.add(self.symbol, self.tf, closed, contract.id)
             # Only the closed part counts as downloaded: the bar still forming is fetched next time.
             self.library.note_span(self.symbol, self.tf, start, min(end, now - tf))
+        return added + await self._backfill_older(client, contract, now - timedelta(days=days), live)
+
+    async def _backfill_older(self, client: ProjectXClient, contract: Contract, since: datetime, live: bool) -> int:
+        """History from before the current contract's data starts, from the contracts before it (each asked once)."""
+        from topstep_bot.api.rest import ProjectXError
+        from topstep_bot.models import BarUnit
+
+        added = 0
+        for older in previous_contracts(contract.id):
+            first = self.library.first(self.symbol, self.tf)
+            if first is not None and first - since < timedelta(days=1):
+                break
+            if self.library.was_asked(self.symbol, self.tf, older):
+                continue
+            end = first or datetime.now(UTC)
+            self.stage = f"downloading {older} before {end:%Y-%m-%d}"
+            try:
+                bars = await client.retrieve_bars_range(older, since, end, BarUnit.MINUTE, self.tf, live=live)
+            except ProjectXError as exc:  # an expired contract TopstepX no longer serves
+                log.info("No history for %s: %s", older, exc)
+                bars = []
+            # Only before the newer contract's first bar: the front month is the one that was traded.
+            added += self.library.add(self.symbol, self.tf, [b for b in bars if b.ts < end], older)
+            self.library.note_asked(self.symbol, self.tf, older)
         return added
 
     async def replay(self, cfg: BotConfig, contract: Contract, *, days: int | None = None, at: datetime | None = None,

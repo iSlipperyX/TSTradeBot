@@ -83,6 +83,15 @@ CREATE TABLE IF NOT EXISTS recommendations (
     outcome_r REAL,
     PRIMARY KEY (id, created)
 );
+CREATE TABLE IF NOT EXISTS decisions (
+    id TEXT PRIMARY KEY,
+    day TEXT,
+    created TEXT,
+    status TEXT,
+    strategy TEXT,
+    data TEXT
+);
+CREATE INDEX IF NOT EXISTS decisions_day ON decisions (day, created);
 CREATE TABLE IF NOT EXISTS state (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -191,6 +200,12 @@ class Journal:
         rows = self.conn.execute("SELECT * FROM recommendations ORDER BY created DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]
 
+    def record_decision(self, d: dict) -> None:
+        """Save why the bot took or passed on a signal (reasoning.py); the same id updates it with the outcome."""
+        self.conn.execute("INSERT OR REPLACE INTO decisions VALUES (?,?,?,?,?,?)",
+                          (d["id"], d["day"], d["created"], d["status"], d.get("strategy"), json.dumps(d, default=str)))
+        self.conn.commit()
+
     def log_event(self, level: str, message: str) -> None:
         self.conn.execute(
             "INSERT INTO events VALUES (?,?,?)", (datetime.now(UTC).isoformat(timespec="seconds"), level, message)
@@ -242,6 +257,23 @@ class Journal:
         else:
             rows = self.conn.execute("SELECT * FROM daily ORDER BY trading_day")
         return [dict(r) for r in rows]
+
+    def decisions(self, limit: int = 20, day: str | None = None, status: str | None = None) -> list[dict]:
+        """Decision records, newest first; ``day`` (ISO date) / ``status`` (taken, skipped, passed) narrow them."""
+        where, args = [], []
+        if day:
+            where.append("day = ?")
+            args.append(day)
+        if status:
+            where.append("status = ?")
+            args.append(status)
+        sql = "SELECT data FROM decisions" + (" WHERE " + " AND ".join(where) if where else "")
+        rows = self.conn.execute(sql + " ORDER BY created DESC LIMIT ?", (*args, limit))
+        return [json.loads(r["data"]) for r in rows]
+
+    def decision(self, decision_id: str) -> dict | None:
+        row = self.conn.execute("SELECT data FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+        return json.loads(row["data"]) if row else None
 
     def events(self, limit: int = 100) -> list[dict]:
         rows = self.conn.execute("SELECT * FROM events ORDER BY rowid DESC LIMIT ?", (limit,))

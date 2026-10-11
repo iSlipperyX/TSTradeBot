@@ -84,6 +84,8 @@ REMOTE_ROUTES = {
     ("POST", "/api/bot/restart"),
     ("POST", "/api/mode"),  # paper only: the controller refuses LIVE from the phone
     ("POST", "/api/action/*"),
+    ("POST", "/api/ask"),  # the central intelligence: read-only answers
+    ("POST", "/api/facts"),  # ... and the read-only lookups behind them (the Ask tab)
     ("POST", "/api/updates/check"),
     ("POST", "/api/updates/install"),
     ("POST", "/api/updates/cancel"),

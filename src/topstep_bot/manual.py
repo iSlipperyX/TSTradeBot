@@ -24,6 +24,7 @@ import math
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from topstep_bot import fmt
 from topstep_bot.knowledge import MANUAL, UNINFORMATIVE_EXITS, Observation
 from topstep_bot.models import OrderSide, Signal
 
@@ -82,10 +83,6 @@ def parse_size(raw: Any) -> int | None:
     if not math.isfinite(value) or value < 1 or value != int(value):
         raise TicketError("Size must be a whole number of contracts (at least 1)")
     return int(value)
-
-
-def _money(v: float) -> str:
-    return f"-${abs(v):,.0f}" if v < 0 else f"${v:,.0f}"
 
 
 class ManualTrading:
@@ -248,12 +245,12 @@ class ManualTrading:
         dll_room = risk.cfg.personal_daily_loss_limit + day_pnl
         risk_usd = plan.planned_risk if plan else 0.0
         add(dll_room > risk_usd if plan else dll_room > 0,
-            f"Daily loss room: {_money(dll_room)} more can be lost today (limit {_money(risk.cfg.personal_daily_loss_limit)})"
-            + (f" - this trade risks {_money(risk_usd)}" if plan else ""))
+            f"Daily loss room: {fmt.dollars(dll_room)} more can be lost today (limit {fmt.dollars(risk.cfg.personal_daily_loss_limit)})"
+            + (f" - this trade risks {fmt.dollars(risk_usd)}" if plan else ""))
         mll_room = core.tracker.room(core.balance + open_pnl) - risk.cfg.mll_buffer
-        add(mll_room > risk_usd, f"Room above the Maximum Loss Limit (after the {_money(risk.cfg.mll_buffer)} buffer): {_money(mll_room)}")
+        add(mll_room > risk_usd, f"Room above the Maximum Loss Limit (after the {fmt.dollars(risk.cfg.mll_buffer)} buffer): {fmt.dollars(mll_room)}")
         if risk.topstep_dll:
-            add(day_pnl > -0.9 * risk.topstep_dll, f"Topstep daily loss limit {_money(risk.topstep_dll)}: today {_money(day_pnl)}")
+            add(day_pnl > -0.9 * risk.topstep_dll, f"Topstep daily loss limit {fmt.dollars(risk.topstep_dll)}: today {fmt.dollars(day_pnl)}")
 
         if risk.stage == "combine" and risk.cfg.consistency_guard:
             from topstep_bot.risk.manager import CONSISTENCY_GUARD_FRACTION
@@ -264,10 +261,10 @@ class ManualTrading:
             if plan and plan.target is not None:
                 reward = abs(plan.target - plan.entry_ref) * core.contract.point_value * plan.size
             if reward is not None and reward > room:
-                add(None, f"Consistency guard: the bot closes trades once today reaches {_money(line)} - "
-                          f"{_money(room)} left, this target would make {_money(reward)}")
+                add(None, f"Consistency guard: the bot closes trades once today reaches {fmt.dollars(line)} - "
+                          f"{fmt.dollars(room)} left, this target would make {fmt.dollars(reward)}")
             else:
-                add(True, f"Consistency guard: {_money(room)} of profit left today before trades are closed")
+                add(True, f"Consistency guard: {fmt.dollars(room)} of profit left today before trades are closed")
 
         cap = risk.max_contracts(now)
         topstep_cap = risk.max_contracts_topstep()
