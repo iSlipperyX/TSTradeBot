@@ -227,6 +227,24 @@ class BotActions:
         name = kb.path.stem if kb.path else "knowledge"
         return {"csv": csv_text(kb), "filename": f"{name}.csv"}
 
+    # ------------------------------------------------------------------ the market and funded-account goals
+
+    def market_text(self) -> str:
+        """Live levels, today's reports and headlines for what the bot trades (Telegram /market)."""
+        if self.core.intel is None:
+            return "No market picture yet - it builds from the bot's first bars."
+        return self.core.intel.brief_text(self.core.clock())
+
+    def funded_text(self) -> str:
+        from topstep_bot.funded import status_text
+
+        return status_text(self.core.funded_status())
+
+    def rules_text(self) -> str:
+        from topstep_bot.risk.summary import rules_text
+
+        return rules_text(self.core.cfg)
+
     async def train(self, source: str) -> str:
         """Rebuild the knowledge base from recent history (the bot keeps trading meanwhile)."""
         if self._retrain is None:
@@ -264,7 +282,8 @@ class BotActions:
             return await self.take_idea(str(payload.get("id", "")), source, int(size) if size else None)
         texts = {"status_text": self.status_text, "ideas_text": self.ideas_text, "trades_text": self.trades_text,
                  "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text,
-                 "brief_text": self.brief_text, "next_text": self.next_text}
+                 "brief_text": self.brief_text, "next_text": self.next_text, "market_text": self.market_text,
+                 "funded_text": self.funded_text, "rules_text": self.rules_text}
         if name in texts:
             return {"text": texts[name]()}
         if name == "insights":

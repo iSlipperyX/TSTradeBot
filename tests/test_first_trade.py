@@ -40,8 +40,8 @@ def make(tmp_path, start, *, price=100.0, restart=False, journal=None, **cfg_kw)
 
 
 def seed(kb, strategy, r, n, side="LONG", slot="open", regime="calm", day="2026-03-02"):
-    for _ in range(n):
-        kb.record(Observation(day=day, time="09:00", strategy=strategy, side=side, slot=slot, regime=regime,
+    for i in range(n):  # distinct times: the knowledge base drops a signal it has already recorded
+        kb.record(Observation(day=day, time=f"09:{i:02d}", strategy=strategy, side=side, slot=slot, regime=regime,
                               r=r, usd=r * 50, source="train"), save=False)
 
 

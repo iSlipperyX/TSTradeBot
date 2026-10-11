@@ -398,6 +398,9 @@ class ManualTrading:
         plan = self._plan(side, price, stop, target, size, why)
         if isinstance(plan, str):
             raise TicketError(f"Can't place it at {price}: {plan}")
+        hedge = core.entry_guard(side.sign) if core.entry_guard else None  # another account holds the opposite side
+        if hedge:
+            raise TicketError(f"Not allowed: {hedge}")
         trade = await core.orders.enter(side, plan.size, plan.stop, plan.target, why, ref_price=price,
                                         limit_price=plan.limit, planned_risk=plan.planned_risk, strategy=MANUAL)
         if trade is None:

@@ -143,6 +143,22 @@ async def run_preflight(
     else:
         rep.add(WARN, "Ramp-up", "off - the bot trades full size from its first live trade")
 
+    # ---- Topstep's prohibited conduct (funded.py has the full list)
+    if not cfg.news.enabled:
+        rep.add(WARN, "News filter", "off - Topstep prohibits trading your full maximum position into scheduled major "
+                "news. Turn news.enabled back on unless you size well below your limit around releases")
+    else:
+        rep.add(OK, "News filter", f"no new trades {cfg.news.minutes_before} min before to {cfg.news.minutes_after} min "
+                "after high-impact releases" + (" and your instrument's key reports" if cfg.news.per_instrument else ""))
+    if cfg.risk.breakeven_at_r is not None and cfg.risk.breakeven_at_r < 1.0:
+        rep.add(WARN, "Breakeven stop", f"moves to breakeven at {cfg.risk.breakeven_at_r}R - Topstep prohibits tight "
+                "brackets / auto-breakeven used to capture simulated fills. Use 1R or more, or leave it off")
+    if cfg.account.stage == "express":
+        f = cfg.funded
+        rep.add(INFO, "Payout path", f"{cfg.account.payout_path} - must match what you chose when the XFA was activated "
+                "(account.payout_path)" + (f"; counting since your payout on {f.last_payout_date}" if f.last_payout_date else
+                                           "; set funded.last_payout_date after each payout"))
+
     if not secrets.has_credentials:
         rep.add(FAIL, "TopstepX credentials", "missing - add your TopstepX login on the dashboard's Setup tab")
         return rep
@@ -161,7 +177,8 @@ async def run_preflight(
             rep.add(FAIL, "Login", str(exc))
             return rep
         rep.account_name = account.name
-        rep.add(OK, "Login", f"connected as {secrets.username}")
+        rep.add(OK, "Login", f"connected as {secrets.username}"
+                + (f" with API key '{secrets.login_name}'" if secrets.login_name else ""))
         blocked = api_trading_block(account)
         if blocked:
             rep.add(FAIL, "Account type", blocked)
@@ -186,7 +203,7 @@ async def run_preflight(
         # ---- teach the bot the Maximum Loss Limit
         start = starting_balance(cfg)
         label = account.name
-        journal = Journal(Path(cfg.data_dir) / "journal_live.db")
+        journal = Journal(cfg.journal_path_for("live"))
         try:
             floor = cfg.account.mll_floor_override
             source = "config (mll_floor_override)"

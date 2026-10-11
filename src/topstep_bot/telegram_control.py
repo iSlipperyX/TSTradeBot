@@ -14,6 +14,9 @@ Security:
   * Settings stay within safe bounds; mode (paper/live), account and Topstep rules can't be changed here.
   * /dashboard opens the dashboard inside Telegram once phone access is on (see phone_access.py);
     turning phone access on from here needs a confirmation tap.
+
+Several accounts: name the account after the command (/pause c1, /status c2, /set c1 risk 150) or
+use "all" (/pause all, /flatten all). Without a name the bot shows one button per account.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ log = logging.getLogger(__name__)
 COMMANDS = [
     ("status", "Account, position and risk status"),
     ("dashboard", "Open the dashboard on your phone, inside Telegram"),
+    ("accounts", "All your accounts at a glance"),
     ("pause", "Stop opening new trades"),
     ("resume", "Allow new trades again"),
     ("flatten", "Close everything and halt trading"),
@@ -44,6 +48,10 @@ COMMANDS = [
     ("ideas", "Recommended trades - tap Take to trade one"),
     ("brief", "What the bot knows right now, in plain words"),
     ("next", "When the bot expects its next trade, and why"),
+    ("market", "Market brief: key levels, today's reports, headlines"),
+    ("funded", "Progress to your Combine pass or next payout"),
+    ("research", "What the bot has gathered from the internet"),
+    ("rules", "Topstep rules the bot knows and follows"),
     ("knowledge", "What the bot has learned: which strategy works when"),
     ("train", "Retrain the knowledge base on recent history now"),
     ("learn", "Feed the bot more history: backfill and replay all of it"),
@@ -56,6 +64,9 @@ COMMANDS = [
     ("help", "Show the commands"),
 ]
 DANGEROUS = {"flatten", "stop", "restart", "startbot"}
+CONTROL = {"pause", "resume", *DANGEROUS}  # may target one account or all
+# One account at a time. /rules, /update and /dashboard aren't about one account's bot.
+PER_ACCOUNT = {"ideas", "trades", "settings", "knowledge", "train", "log", "brief", "next", "learn", "market", "funded"}
 CONFIRM_SECONDS = 60
 MAX_TEXT = 4000
 
@@ -63,6 +74,8 @@ KEYBOARD = {
     "inline_keyboard": [
         [{"text": "📊 Status", "callback_data": "cmd:status"}, {"text": "⏸ Pause", "callback_data": "cmd:pause"},
          {"text": "▶️ Resume", "callback_data": "cmd:resume"}, {"text": "📱 Dashboard", "callback_data": "cmd:dashboard"}],
+        [{"text": "📈 Market", "callback_data": "cmd:market"}, {"text": "🏁 Funded", "callback_data": "cmd:funded"},
+         {"text": "📏 Rules", "callback_data": "cmd:rules"}],
         [{"text": "💡 Ideas", "callback_data": "cmd:ideas"}, {"text": "📜 Trades", "callback_data": "cmd:trades"},
          {"text": "🧠 Knowledge", "callback_data": "cmd:knowledge"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
         [{"text": "💬 What I know", "callback_data": "cmd:brief"}, {"text": "⏳ Next trade", "callback_data": "cmd:next"}],
@@ -86,9 +99,14 @@ class TelegramError(Exception):
         self.code = code
 
 
-def help_text() -> str:
+def help_text(accounts: list[str] | None = None) -> str:
     lines = ["Topstep Bot commands:"] + [f"/{name} - {desc}" for name, desc in COMMANDS]
     lines.append("\nExamples: /set risk 150 - /set dailyloss 400 - /set strategy orb - /set news off")
+    if accounts:
+        first = accounts[0]
+        lines.append(f"\nAccounts: {', '.join(accounts)}. Put the account after the command: /status {first}, "
+                     f"/pause {first}, /pause all, /set {first} risk 150, /set all news off. "
+                     "Without one you get a button per account.")
     lines.append("Trading, stopping/starting and setting changes all ask for confirmation. "
                  "Telegram keeps working while the bot is stopped - use /startbot or /restart.")
     return "\n".join(lines)
@@ -167,7 +185,7 @@ class TelegramController:
             self.offset = backlog[-1]["update_id"] + 1
             await self._call("getUpdates", offset=self.offset, timeout=0)  # confirm (drop) them
         if announce:
-            await self.send("🤖 Topstep Bot is online and listening for commands.\n\n" + help_text(), KEYBOARD)
+            await self.send("🤖 Topstep Bot is online and listening for commands.\n\n" + help_text(self._accounts()), KEYBOARD)
 
     async def close(self) -> None:
         for task in list(self._background):
@@ -268,8 +286,13 @@ class TelegramController:
         message_id = message.get("message_id")
         if data.startswith("cmd:"):
             await self.dispatch(data[4:], self._who(user))
+        elif data.startswith("pick:"):
+            _, command, account = data.split(":", 2)
+            await self.dispatch(command, self._who(user), [account])
         elif data.startswith(("take:", "takeh:")):
-            await self._confirm_take(data.split(":", 1)[1], half=data.startswith("takeh:"))
+            parts = data.split(":")
+            account = parts[1] if len(parts) == 3 else None
+            await self._confirm_take(parts[-1], half=data.startswith("takeh:"), account=account)
         elif data.startswith("yes:"):
             action = data[4:]
             pending = self.pending.pop(message_id, None)
@@ -294,32 +317,38 @@ class TelegramController:
         name = user.get("username") or user.get("first_name") or user.get("id")
         return f"Telegram ({name})"
 
-    async def _do(self, name: str, *args: Any) -> Any:
+    def _accounts(self) -> list[str]:
+        """Account names when there are several (empty with one account)."""
+        names = getattr(self.actions, "account_names", None)
+        return list(names()) if names else []
+
+    async def _do(self, name: str, *args: Any, account: str | None = None) -> Any:
         """Call an action (in-process BotActions, or the controller's async proxy)."""
-        result = getattr(self.actions, name)(*args)
+        kwargs = {"account": account} if account is not None else {}
+        result = getattr(self.actions, name)(*args, **kwargs)
         return await result if inspect.isawaitable(result) else result
 
-    async def _execute(self, action: str, source: str) -> str:
+    async def _execute(self, action: str, source: str, account: str | None = None) -> str:
         method = {"pause": "pause", "resume": "resume", "flatten": "flatten", "stop": "stop",
                   "restart": "restart_bot", "startbot": "start_bot"}[action]
         if not hasattr(self.actions, method):
             raise RuntimeError(f"/{action} is only available when the controller is running")
-        return await self._do(method, source)
+        return await self._do(method, source, account=account)
 
     async def _execute_confirmed(self, action: str, payload, source: str) -> str:
         if action in UPDATE_ACTIONS:
             return await self._do("install_update", source, "tonight" if action == "update_tonight" else "now")
         if action == "set":
-            key, value = payload
-            return await self._do("change_setting", key, value, source)
+            key, value, *rest = payload
+            return await self._do("change_setting", key, value, source, account=rest[0] if rest else None)
         if action == "reset":
-            return await self._do("reset_settings", source)
+            return await self._do("reset_settings", source, account=payload)
         if action == "phone":
             return await self._do("phone_on", source)
         if action == "take":
-            rec_id, size = payload
-            return await self._do("take_idea", rec_id, source, size)
-        return await self._execute(action, source)
+            rec_id, size, *rest = payload
+            return await self._do("take_idea", rec_id, source, size, account=rest[0] if rest else None)
+        return await self._execute(action, source, payload)
 
     async def _ask(self, question: str, action: str, payload=None, yes: str | None = None) -> None:
         confirm = {"inline_keyboard": [[{"text": yes or f"Yes, {action}", "callback_data": f"yes:{action}"},
@@ -372,25 +401,34 @@ class TelegramController:
                             "and only your Telegram account can open it. The bot keeps running on the PC. "
                             "Turn it off any time with /dashboard off.", "phone", yes="Yes, turn it on")
 
-    async def _confirm_take(self, rec_id: str, half: bool) -> None:
-        idea = await self._do("find_idea", rec_id)
+    async def _pick_account(self, command: str, with_all: bool) -> None:
+        """Several accounts and none named: one button per account (and 'All' where it makes sense)."""
+        names = self._accounts() + (["all"] if with_all else [])
+        rows = [[{"text": n if n != "all" else "All accounts", "callback_data": f"pick:{command}:{n}"}
+                 for n in names[i:i + 3]] for i in range(0, len(names), 3)]
+        await self.send(f"/{command} - which account?", {"inline_keyboard": rows})
+
+    async def _confirm_take(self, rec_id: str, half: bool, account: str | None = None) -> None:
+        idea = await self._do("find_idea", rec_id, account=account)
         if idea is None or not idea["size"]:
             await self.send("That idea can't be taken (not found, or no valid size).")
             return
         size = max(1, idea["size"] // 2) if half else idea["size"]
         target = f", target {idea['target']}" if idea["target"] is not None else ""
+        where = f" on {account}" if account else ""
         await self._ask(
-            f"Take {idea['id']} ({idea['title']}): {idea['side']} {size} near {idea['entry']}, stop {idea['stop']}{target}?\n"
+            f"Take {idea['id']} ({idea['title']}){where}: {idea['side']} {size} near {idea['entry']}, stop {idea['stop']}{target}?\n"
             f"It is re-priced at the current market and sized by your risk rules (never larger). "
             f"Idea: {idea['reason']}",
-            "take", (rec_id, size), yes=f"Yes, take {size}",
+            "take", (rec_id, size, account), yes=f"Yes, take {size}",
         )
 
-    async def _send_ideas(self) -> None:
-        ideas = await self._do("open_ideas")
-        rows = [[{"text": f"Take {i['id']} ({i['side']} {i['size']})", "callback_data": f"take:{i['id']}"},
-                 {"text": "½ size", "callback_data": f"takeh:{i['id']}"}] for i in ideas]
-        await self.send(await self._do("ideas_text"), {"inline_keyboard": rows} if rows else KEYBOARD)
+    async def _send_ideas(self, account: str | None = None) -> None:
+        ideas = await self._do("open_ideas", account=account)
+        at = f"{account}:" if account else ""
+        rows = [[{"text": f"Take {i['id']} ({i['side']} {i['size']})", "callback_data": f"take:{at}{i['id']}"},
+                 {"text": "½ size", "callback_data": f"takeh:{at}{i['id']}"}] for i in ideas]
+        await self.send(await self._do("ideas_text", account=account), {"inline_keyboard": rows} if rows else KEYBOARD)
 
     QUESTIONS = {
         "flatten": "⚠️ Close any open position, cancel all orders and HALT trading until the bot is restarted?",
@@ -400,10 +438,10 @@ class TelegramController:
         "startbot": "▶️ Start the bot? It will trade automatically in its current mode.",
     }
 
-    async def _slow(self, name: str, source: str, failed: str) -> None:
+    async def _slow(self, name: str, source: str, failed: str, account: str | None = None) -> None:
         """Answer a slow command (/train, /learn) once it finishes; runs in the background."""
         try:
-            await self.send(await self._do(name, source))
+            await self.send(await self._do(name, source, account=account))
         except (ValueError, RuntimeError) as exc:
             await self.send(f"❌ {exc}")
         except Exception:  # noqa: BLE001 - runs outside the polling loop's own error handling
@@ -411,60 +449,76 @@ class TelegramController:
             await self.send(f"❌ {failed} - see the Logs tab.")
 
     async def dispatch(self, command: str, source: str, args: list[str] | None = None) -> None:
-        args = args or []
+        args = list(args or [])
         try:
             await self._dispatch(command, source, args)
         except (ValueError, RuntimeError) as exc:
             await self.send(f"❌ {exc}")
 
     async def _dispatch(self, command: str, source: str, args: list[str]) -> None:
-        if command in ("status", "start"):
-            await self.send(await self._do("status_text"), KEYBOARD)
+        accounts = self._accounts()
+        target = None
+        if accounts and args and args[0].lower() in (*accounts, "all"):
+            target = args.pop(0).lower()
+        if target == "all" and command in PER_ACCOUNT:
+            await self.send(f"/{command} works on one account at a time - e.g. /{command} {accounts[0]}")
+            return
+        if accounts and target is None and (command in CONTROL or command in PER_ACCOUNT or command == "reset"):
+            await self._pick_account(command, with_all=command not in PER_ACCOUNT)
+            return
+        where = "" if target is None else " on ALL accounts" if target == "all" else f" on {target}"
+
+        if command in ("status", "start", "accounts"):
+            await self.send(await self._do("status_text", account=target), KEYBOARD)
         elif command in ("pause", "resume"):
-            await self.send(await self._execute(command, source), KEYBOARD)
+            await self.send(await self._execute(command, source, target), KEYBOARD)
         elif command in DANGEROUS:
             if not self.cfg.confirm_dangerous:
-                await self.send(await self._execute(command, source))
+                await self.send(await self._execute(command, source, target))
                 return
-            await self._ask(self.QUESTIONS[command], command)
+            question = self.QUESTIONS[command]
+            if where:
+                question = question.replace("?", f"{where}?", 1)
+            await self._ask(question, command, target)
         elif command == "trades":
-            await self.send(await self._do("trades_text"))
+            await self.send(await self._do("trades_text", account=target))
         elif command == "ideas":
-            await self._send_ideas()
+            await self._send_ideas(target)
         elif command == "settings":
-            await self.send(await self._do("settings_text"))
+            await self.send(await self._do("settings_text", account=target))
         elif command == "knowledge":
-            await self.send(await self._do("knowledge_text"))
+            await self.send(await self._do("knowledge_text", account=target))
         elif command == "train":
             await self.send("🧠 Training on recent history - this takes a few seconds...")
-            self._in_background(self._slow("train", source, "Training failed"))
-        elif command == "brief":
-            await self.send(await self._do("brief_text"))
-        elif command == "next":
-            await self.send(await self._do("next_text"))
+            self._in_background(self._slow("train", source, "Training failed", target))
+        elif command in ("brief", "next", "market", "funded", "rules", "research"):
+            await self.send(await self._do(f"{command}_text", account=target))
         elif command == "learn":
             await self.send("📚 Learning from the long-run memory: downloading missing history and replaying all of it. "
                             "This can take a minute; the bot keeps trading meanwhile...")
-            self._in_background(self._slow("learn", source, "Learning failed"))
+            self._in_background(self._slow("learn", source, "Learning failed", target))
         elif command == "set":
-            if len(args) < 2:
-                await self.send("Usage: /set <setting> <value>, e.g. /set risk 150. Send /settings for the list.")
+            if len(args) < 2 or (accounts and target is None):
+                example = f"/set {accounts[0]} risk 150 or /set all risk 150" if accounts else "/set risk 150"
+                await self.send(f"Usage: /set {'<account|all> ' if accounts else ''}<setting> <value>, e.g. {example}. "
+                                "Send /settings for the list.")
                 return
-            p = await self._do("preview_setting", args[0], " ".join(args[1:]))
-            if not p["changed"]:
+            value = " ".join(args[1:])
+            p = await self._do("preview_setting", args[0], value, account=target)
+            if not p["changed"] and target != "all":
                 await self.send(f"{p['label']} is already {p['new']}.")
                 return
             warn = "\n⚠️ This increases your risk." if p["riskier"] else ""
-            await self._ask(f"Change {p['label']}: {p['old']} -> {p['new']}?{warn}", "set", (p["key"], " ".join(args[1:])),
-                            yes="Yes, change it")
+            change = f"{p['label']} -> {p['new']}" if target == "all" else f"{p['label']}: {p['old']} -> {p['new']}"
+            await self._ask(f"Change {change}{where}?{warn}", "set", (p["key"], value, target), yes="Yes, change it")
         elif command == "reset":
-            await self._ask("Undo every setting changed from the dashboard/Telegram and go back to config.yaml?", "reset",
-                            yes="Yes, reset")
+            await self._ask(f"Undo every setting changed from the dashboard/Telegram{where} and go back to config.yaml?",
+                            "reset", target, yes="Yes, reset")
         elif command == "log":
-            await self.send(await self._do("log_text"))
+            await self.send(await self._do("log_text", account=target))
         elif command == "update":
             await self._offer_update(source)
         elif command == "dashboard":
             await self._dashboard(source, args)
         else:
-            await self.send(help_text(), KEYBOARD)
+            await self.send(help_text(accounts), KEYBOARD)

@@ -332,11 +332,16 @@ class RecommendationBook:
                      "cost_r": self._idea_cost_r(rec)}
         else:
             facts = {**rec.facts, "ctx": rec.context or rec.facts.get("ctx")}
+        day = self.core.schedule.trading_day(rec.created)
+        calendar = self.core.schedule.news or self.core.news_archive  # live calendar, or the research archive (training)
+        if calendar is not None and hasattr(calendar, "covers") and not calendar.covers(day):
+            calendar = None  # the archive doesn't reach that day: unknown, not "quiet"
         kb.record(Observation(
             day=self.core.schedule.trading_day(rec.created).isoformat(), time=local.strftime("%H:%M"),
             strategy=rec.strategy, side=rec.side.label, slot=rec.slot or self.core.slot(rec.created),
             regime=rec.regime or "calm", r=rec.outcome_r, usd=rec.outcome_usd,
             source="shadow" if rec.hypothetical else "real", why=why, **facts,
+            news=bool(calendar.on_day(day, self.core.schedule.tz)) if calendar is not None else None,
         ), save=not self.quiet)
 
     def _idea_cost_r(self, rec: Recommendation) -> float | None:

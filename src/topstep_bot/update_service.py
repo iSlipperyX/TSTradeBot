@@ -191,17 +191,18 @@ class UpdateService:
             self._save(scheduled=None)
 
     async def _install_now(self, updater: Updater, info: UpdateInfo, source: str) -> str:
+        bots = list(self.ctl.bots.values())
         bot = self.ctl.bot
         self.busy, self.message = "installing", None
         try:
             await self._ensure_flat(source)
-            restart_bot = bot.running or bot.want_running
-            mode = bot.mode
+            to_restart = [b for b in bots if b.running or b.want_running]
+            restart_bot = bool(to_restart)
             label = f"{(info.current or 'unknown')[:7]} -> {info.latest[:7]}"
             bot._event("warning", f"Installing update {label} - requested by {source}")
-            bot.want_running = False  # no automatic restart of the old version meanwhile
-            if bot.running:
-                await bot.stop(f"update ({source})")
+            for b in bots:
+                b.want_running = False  # no automatic restart of the old version meanwhile
+            await asyncio.gather(*(b.stop(f"update ({source})") for b in bots if b.running))
             try:
                 record = await asyncio.to_thread(updater.install, info, self.ctl.config_path)
             except Exception as exc:  # noqa: BLE001 - whatever went wrong, the old version must run again
@@ -209,28 +210,34 @@ class UpdateService:
                     log.exception("Update failed unexpectedly")
                 self.message = f"Update failed: {exc}"
                 bot._event("error", self.message, alert=True)
-                if restart_bot:
-                    await bot.start("update undone")
+                for b in to_restart:
+                    await b.start("update undone")
                 raise ValueError(self.message) from None
         except BaseException:
             self.busy = None
             raise
         self._unschedule()
-        self._save(restart={"mode": mode, "bot": restart_bot, "at": time.time(), "announce": updated_text(info, record["to"])})
+        # Each account's mode is already remembered (controller.json "modes"); a single account passes its mode on.
+        mode = None if self.ctl.multi else bot.mode
+        self._save(restart={"mode": mode, "bot": restart_bot, "bots": [b.account for b in to_restart], "at": time.time(),
+                            "announce": updated_text(info, record["to"])})
         self.busy, self.message = "restarting", "Update installed - restarting with the new version."
         bot._event("info", f"Update installed ({label}); restarting the controller with the new version")
         asyncio.get_running_loop().call_later(RESTART_DELAY, lambda: spawn(self._restart(), name="update-restart"))
-        parts = [*(["the bot"] if restart_bot else []), "the dashboard", *(["Telegram"] if self.ctl.telegram else [])]
+        parts = [*([("the bots" if len(to_restart) > 1 else "the bot")] if restart_bot else []), "the dashboard",
+                 *(["Telegram"] if self.ctl.telegram else [])]
         what = ", ".join(parts[:-1]) + " and " + parts[-1] if len(parts) > 1 else parts[0]
         verb = "restart" if len(parts) > 1 else "restarts"
         return f"Update installed. {what[0].upper()}{what[1:]} {verb} with the new version now - back in about 30 seconds."
 
     async def _ensure_flat(self, source: str) -> None:
-        """Pause new entries, then make sure no trade or order is open. Raises ValueError (and resumes) if one is."""
-        bot = self.ctl.bot
-        paused = False
+        """Pause new entries, then make sure no trade or order is open on any account. Raises ValueError (and
+        resumes what it paused) if one is."""
+        paused = []
         try:
-            if bot.running:
+            for bot in self.ctl.bots.values():
+                if not bot.running:
+                    continue
                 status = await bot.status()
                 snap = status.get("bot") if status else None
                 if snap is None:
@@ -239,27 +246,37 @@ class UpdateService:
                 if not (snap.get("risk") or {}).get("paused"):
                     with contextlib.suppress(RuntimeError, ValueError):
                         await bot.action("pause", {"source": f"update ({source})"})
-                        paused = True
+                        paused.append(bot)
                     status = await bot.status()
                     snap = (status or {}).get("bot") or snap
                 if snap.get("position") or snap.get("trade"):
-                    raise ValueError("A trade is open. Updates only install while the bot is flat: close the trade "
+                    where = f" on {bot.account}" if self.ctl.multi else ""
+                    raise ValueError(f"A trade is open{where}. Updates only install while the bot is flat: close the trade "
                                      "(or let it finish) and try again, or choose 'After the close'.")
             await self._broker_check()
         except ValueError:
-            if paused:
+            for bot in paused:
                 with contextlib.suppress(RuntimeError, ValueError):
                     await bot.action("resume", {"source": f"update ({source}) - not installed"})
             raise
 
     async def _check_broker_flat(self) -> None:
-        """Live mode: ask TopstepX itself, so an order placed outside the bot also blocks the update."""
-        if self.ctl.bot.mode != "live" or not self.ctl.secrets.has_credentials:
-            return
+        """Live accounts: ask TopstepX itself, so an order placed outside the bot also blocks the update."""
+        for bot in self.ctl.bots.values():
+            if bot.mode == "live":
+                await self._check_account_flat(bot.account)
+
+    async def _check_account_flat(self, name: str) -> None:
         from topstep_bot.api.rest import ProjectXClient
         from topstep_bot.live import select_account
 
-        cfg, s = self.ctl.cfg, self.ctl.secrets
+        try:
+            cfg = self.ctl.account_cfg(name)
+            s = self.ctl.secrets.for_account(cfg)
+        except ValueError as exc:
+            raise ValueError(f"Could not check account {name}: {exc}") from None
+        if not s.has_credentials:
+            return
         try:
             async with ProjectXClient(s.username, s.api_key, cfg.api.base_url, cfg.api.timeout_seconds) as client:
                 account = await select_account(client, cfg)
@@ -368,8 +385,10 @@ def relaunch(cfg: BotConfig, config_path: str | None, code: int, secrets: Any = 
     data = Path(cfg.data_dir)
     while code == UPDATE_EXIT_CODE:
         plan = load_state(data).get("restart") or {}
+        # A single account passes its mode on; with several, each account's remembered mode is used.
+        mode = plan.get("mode") if "mode" in plan else cfg.mode
         cmd = [sys.executable, "-m", "topstep_bot", *(["-c", str(config_path)] if config_path else []),
-               "start", "--yes", "--no-browser", "--mode", plan.get("mode") or cfg.mode,
+               "start", "--yes", "--no-browser", *(["--mode", mode] if mode else []),
                *([] if plan.get("bot", True) else ["--no-bot"])]
         out("Restarting Topstep Bot with the new version...")
         started = time.monotonic()

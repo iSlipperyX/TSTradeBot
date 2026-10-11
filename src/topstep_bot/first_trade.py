@@ -438,6 +438,10 @@ class FirstTradePlanner:
     async def _enter(self, ch: Choice, plan: TradePlan, price: float, now: datetime) -> None:
         core = self.core
         reason = f"{TITLE} after starting: {ch.describe()}"
+        hedge = core.entry_guard(plan.side.sign) if core.entry_guard else None
+        if hedge:  # another account holds the opposite side: Topstep prohibits hedging across accounts
+            self._blocked(now, hedge)
+            return
         trade = await core.orders.enter(plan.side, plan.size, plan.stop, plan.target, reason, ref_price=price,
                                         limit_price=plan.limit, planned_risk=plan.planned_risk, strategy=FIRST_TRADE)
         if trade is None:

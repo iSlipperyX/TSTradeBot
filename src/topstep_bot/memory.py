@@ -83,7 +83,8 @@ class MarketLibrary:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._db = sqlite3.connect(str(self.path), check_same_thread=False)
+        # Several account bots can share the library: wait for another process's write instead of failing.
+        self._db = sqlite3.connect(str(self.path), check_same_thread=False, timeout=60)
         self._db.executescript(SCHEMA)
         self._db.commit()
         self._version = 0  # bumps on every write: stats() is cached between writes (the dashboard asks every 2 s)

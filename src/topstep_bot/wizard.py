@@ -41,6 +41,18 @@ def update_env_file(path: Path, values: dict[str, str]) -> None:
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
+def remove_env_keys(path: Path, keys: set[str]) -> bool:
+    """Delete keys from a .env file, keeping every other line. Returns True if anything was removed."""
+    if not path.exists():
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines()
+    kept = [ln for ln in lines if not ("=" in ln and not ln.lstrip().startswith("#") and ln.split("=", 1)[0].strip() in keys)]
+    if len(kept) == len(lines):
+        return False
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    return True
+
+
 def render_config(
     *,
     mode: str = "paper",
@@ -56,6 +68,7 @@ def render_config(
     topstep_dll: bool = False,
     payout_path: str = "standard",
     goal: str = "pass",
+    accounts: list[dict] | None = None,
 ) -> str:
     """``goal``: "pass" protects the Combine; "learn" trades more so the knowledge base learns faster."""
     learn = goal == "learn"
@@ -87,6 +100,8 @@ def render_config(
     dll_line = (f"  topstep_daily_loss_limit: true  # you added Topstep's ${dll_amount:,.0f} Daily Loss Limit; the bot stops before it"
                 if topstep_dll else
                 f"  # topstep_daily_loss_limit: true  # set this if you added Topstep's optional ${dll_amount:,.0f} Daily Loss Limit")
+    if accounts:
+        account_line = "  # account_id: set per account in the 'accounts' list at the end of this file"
     return f"""{goal_line}# Topstep Bot configuration. Every setting has a safe default; the full list is in
 # docs/HOW_TO_USE.md (section "Full configuration reference"). Edit with Notepad; spaces matter.
 
@@ -151,7 +166,38 @@ dashboard:
   enabled: true
   port: 8765
   open_browser: true
+""" + render_accounts(accounts or [])
+
+
+def render_accounts(accounts: list[dict]) -> str:
+    """The 'accounts' section: one bot per account, each inheriting everything above unless it says otherwise."""
+    if not accounts:
+        return """
+# Trading several accounts? List them here - see docs/HOW_TO_USE.md ('Trading several accounts').
+# accounts:
+#   - name: c1                  # short name for the dashboard and Telegram (/pause c1)
+#     account_id: 111111
+#   - name: c2
+#     account_id: 222222
+#     strategy: {name: orb}     # override anything that should differ; the rest is shared
+#     risk: {risk_per_trade: 100}
 """
+    lines = ["", "# One bot per account. Each account uses every setting above unless it overrides it here,",
+             "# so accounts that don't override strategy/instrument take the same trade calls (each sized by its",
+             "# own risk). 'follow: c1' copies c1's calls. See docs/HOW_TO_USE.md ('Trading several accounts').",
+             "multi_account:", "  hedge_guard: correlated       # never hold opposite positions across accounts (Topstep rule)",
+             "accounts:"]
+    for a in accounts:
+        lines.append(f"  - name: {a['name']}")
+        lines.append(f"    account_id: {a['account_id']}" + (f"        # {a['label']}" if a.get("label") else ""))
+        if a.get("login"):
+            lines.append(f"    login: {a['login']}              # API key stored as TOPSTEPX_API_KEY_{a['login'].upper()}")
+        for key in ("plan", "stage"):
+            if a.get(key):
+                lines.append(f'    {key}: "{a[key]}"' if key == "plan" else f"    {key}: {a[key]}")
+        if a.get("strategy"):
+            lines.append(f"    strategy: {{name: {a['strategy']}}}")
+    return "\n".join(lines) + "\n"
 
 
 def _pick(title: str, options: list[tuple[str, str]], default: str) -> str:
@@ -287,6 +333,118 @@ def setup_github_token(env_path: Path, repo: str) -> bool:
     return False
 
 
+def _pick_accounts(accounts: list) -> list:
+    """Let the user choose one or several accounts (e.g. '2' or '1,3' or 'all')."""
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    for i, a in enumerate(accounts, start=1):
+        table.add_row(f"[bold]{i}[/]", a.name, f"balance ${a.balance:,.2f}", "can trade" if a.can_trade else "[red]NOT tradable[/]")
+    console.print("\n[bold cyan]Which account(s) should the bot trade?[/]  Several = one bot per account, run together.")
+    console.print(table)
+    while True:
+        answer = Prompt.ask("Numbers separated by commas, or 'all'", default="1").strip().lower()
+        try:
+            picks = range(1, len(accounts) + 1) if answer == "all" else sorted({int(x) for x in answer.split(",") if x.strip()})
+            chosen = [accounts[i - 1] for i in picks]
+        except (ValueError, IndexError):
+            console.print("[red]Use numbers from the list, e.g. 1,3[/]")
+            continue
+        if chosen:
+            return chosen
+
+
+def _test_key(username: str, api_key: str) -> list | None:
+    try:
+        with console.status("Testing the key..."):
+            return asyncio.run(_fetch_accounts(username, api_key))
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Login failed:[/] {exc}")
+        return None
+
+
+def _add_other_logins(env_path: Path, main_user: str, accounts: list, other_logins: dict[int, str]) -> None:
+    """Store API keys for other TopstepX logins and add their accounts to the list to choose from."""
+    from topstep_bot.config import login_env_names, login_key
+
+    while True:
+        name = login_key(Prompt.ask("Short name for this login (e.g. second)", default="second"))
+        username = Prompt.ask("Its TopstepX username").strip()
+        api_key = Prompt.ask("Its API key (input hidden)", password=True).strip()
+        found = _test_key(username, api_key) if username and api_key else None
+        if found is not None:
+            user_var, key_var = login_env_names(name)
+            update_env_file(env_path, {user_var: username, key_var: api_key} if username != main_user else {key_var: api_key})
+            known = {a.id for a in accounts}
+            new = [a for a in found if a.id not in known and a.simulated]
+            accounts.extend(new)
+            other_logins.update({a.id: name for a in new})
+            console.print(f"[green]Saved login '{name}'[/] with {len(found)} account(s).")
+        if not Confirm.ask("Add another login?", default=False):
+            return
+
+
+def _offer_own_keys(env_path: Path, profiles: list[dict]) -> None:
+    """Optionally give each account its own API key (stored under the account's name, used automatically)."""
+    from topstep_bot.config import login_env_names
+
+    console.print("\n[bold cyan]5c. API keys[/]  All accounts can share your one API key. A separate key per account "
+                  "keeps their connections apart (one account's connection problem can't affect another).")
+    if not Confirm.ask("Give each account its own API key?", default=False):
+        return
+    for prof in profiles:
+        if prof.get("login"):
+            continue
+        api_key = Prompt.ask(f"API key for {prof['name']} ({prof['label']}) - Enter to use the main key",
+                             password=True, default="", show_default=False).strip()
+        if api_key and _test_key(_main_username(env_path), api_key) is not None:
+            update_env_file(env_path, {login_env_names(prof["name"])[1]: api_key})
+            console.print(f"[green]{prof['name']} will use its own key.[/]")
+
+
+def _main_username(env_path: Path) -> str:
+    for line in env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []:
+        if line.startswith("TOPSTEPX_USERNAME="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _account_profiles(chosen: list, plan: str, stage: str, strategy: str,
+                      other_logins: dict[int, str] | None = None) -> list[dict]:
+    """Names, plan/type guesses and (optionally) a strategy per account for the 'accounts' list."""
+    from topstep_bot.preflight import account_hints
+
+    console.print(
+        "\n[bold cyan]5b. Same calls or different calls?[/]\n"
+        "  [bold]Same[/]: every account trades the strategy above and takes the same calls at the same time\n"
+        "        (each one sized and limited by its own risk rules).\n"
+        "  [bold]Different[/]: choose a strategy per account, e.g. adaptive on one Combine and ORB on another.\n"
+        "  Either way the bot never holds opposite positions on two accounts (Topstep forbids hedging)."
+    )
+    same = Confirm.ask("Should all these accounts take the same calls?", default=True)
+    counts: dict[str, int] = {}
+    profiles = []
+    for a in chosen:
+        hint_plan, hint_stage = account_hints(a.name)
+        prefix = {"express": "xfa", "practice": "p"}.get(hint_stage or stage, "c")
+        counts[prefix] = counts.get(prefix, 0) + 1
+        prof = {"name": f"{prefix}{counts[prefix]}", "account_id": a.id, "label": a.name}
+        if other_logins and a.id in other_logins:
+            prof["login"] = other_logins[a.id]
+        if hint_plan and hint_plan != plan:
+            prof["plan"] = hint_plan
+        if hint_stage and hint_stage != stage:
+            prof["stage"] = hint_stage
+        if not same:
+            pick = _pick(f"Strategy for {prof['name']} ({a.name})",
+                         [(cls.name, cls.title) for cls in STRATEGIES.values()], strategy)
+            if pick != strategy:
+                prof["strategy"] = pick
+        profiles.append(prof)
+    console.print("Accounts: " + ", ".join(f"[bold]{p['name']}[/] = {p['label']}" for p in profiles)
+                  + "\nUse these names on the dashboard and in Telegram (e.g. /pause c1). Fine-tune each account "
+                  "(risk, symbol...) in config.yaml - see 'topstep-bot accounts'.")
+    return profiles
+
+
 def run_wizard(config_path: Path, env_path: Path) -> bool:
     console.print(
         Panel.fit(
@@ -309,6 +467,8 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
     )
     account_id = None
     hint_plan, hint_stage, hint_dll = None, None, False
+    picked: list = []  # the accounts to trade (several = one bot each)
+    other_logins: dict[int, str] = {}  # account id -> stored login name, for accounts under another login
     if Confirm.ask("Enter API credentials now? (No = skip; you can still backtest on sample data)", default=True):
         username = Prompt.ask("TopstepX username").strip()
         api_key = Prompt.ask("API key (input hidden)", password=True).strip()
@@ -324,12 +484,17 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
                 console.print(f"[yellow]Not offered: {names}. Topstep does not allow Live Funded Accounts to trade "
                               "through the API.[/]")
             accounts = [a for a in accounts if a.simulated]
-            if accounts:
-                options = [(str(a.id), f"{a.name}  balance ${a.balance:,.2f}  {'can trade' if a.can_trade else 'NOT tradable'}") for a in accounts]
-                account_id = int(_pick("Which account should the bot use?", options, options[0][0]))
+            if accounts and Confirm.ask("Do you also have accounts under another TopstepX login?", default=False):
+                _add_other_logins(env_path, username, accounts, other_logins)
+            if len(accounts) > 1:
+                picked = _pick_accounts(accounts)
+            elif accounts:
+                picked = list(accounts)
+            if picked:
                 from topstep_bot.preflight import account_hints
 
-                chosen = next(a for a in accounts if a.id == account_id)
+                chosen = picked[0]
+                account_id = chosen.id if len(picked) == 1 else None
                 hint_plan, hint_stage = account_hints(chosen.name)
                 hint_dll = "DLL" in chosen.name.upper()
         except ProjectXError as exc:
@@ -387,6 +552,9 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
     else:
         strategy = _pick("5. Strategy (adaptive is recommended: it trades all day and learns what works)",
                          [(cls.name, f"{cls.title}: {cls.description}") for cls in STRATEGIES.values()], "adaptive")
+    profiles = _account_profiles(picked, plan, stage, strategy, other_logins) if len(picked) > 1 else []
+    if len(profiles) > 1:
+        _offer_own_keys(env_path, profiles)
 
     # ---- risk
     mll = PLANS[plan].max_loss_limit
@@ -433,6 +601,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         render_config(
             plan=plan, stage=stage, account_id=account_id, symbol=symbol, strategy=strategy,
             risk_per_trade=risk, daily_loss=daily, topstep_dll=topstep_dll, payout_path=payout_path, goal=goal,
+            accounts=profiles,
         ),
         encoding="utf-8",
     )

@@ -53,10 +53,17 @@ def rule_rows(cfg: BotConfig) -> list[tuple[str, str, str]]:
         ))
     elif stage == "express":
         path = cfg.account.payout_path
+        f = cfg.funded
+        if path == "standard":
+            does = "tracks winning days since your last payout (/funded)" + (
+                "; once today is a winning day, sizes trades so a stop-out keeps it one" if f.protect_winning_day else "")
+        else:
+            goal = f.cycle_profit_goal or plan.profit_target
+            does = f"tracks the ratio (/funded); caps each day at {_money(0.4 * goal)} (40% of your {_money(goal)} goal)"
         rows.append((
             "Payouts",
             "5 winning days of $150+" if path == "standard" else "3 trading days, best day at most 40% of net profit",
-            "trades the same way; your TopstepX dashboard tracks payout progress",
+            does,
         ))
 
     symbol = cfg.instrument.symbol
@@ -87,8 +94,31 @@ def rule_rows(cfg: BotConfig) -> list[tuple[str, str, str]]:
          if news.enabled else "news pauses are OFF; ") + "half size near releases; closes full-size positions before them",
     ))
     rows.append((
+        "Order prices",
+        "no orders priced outside the best bid/offer, no tight brackets or auto-breakeven to game simulated fills",
+        f"entries are limit orders at most {cfg.execution.max_entry_slippage_ticks} tick(s) from the signal and never "
+        "through the bid/offer" if cfg.execution.max_entry_slippage_ticks is not None else
+        "entries are market orders (execution.max_entry_slippage_ticks is empty)",
+    ))
+    guard = cfg.multi_account.hedge_guard
+    rows.append((
+        "Hedging",
+        "no opposite positions in the same or related markets across your accounts",
+        "skips a call that would be opposite to another account's position" if guard != "off" else
+        "hedge guard is OFF (multi_account.hedge_guard) - keep your accounts from opposing each other yourself",
+    ))
+    rows.append((
         "Automation",
         "your own computer only (no VPS/VPN), no high-frequency trading, not on Live Funded accounts",
         "warns on servers/VMs, stops after 30 order actions a minute, refuses Live accounts",
     ))
     return rows
+
+
+def rules_text(cfg: BotConfig) -> str:
+    """The rules as plain text (Telegram /rules)."""
+    lines = [f"Topstep rules for this {cfg.account.plan} {cfg.account.stage} account, and what the bot does:"]
+    for rule, limit, does in rule_rows(cfg):
+        lines.append(f"• {rule}: {limit}\n  Bot: {does}")
+    lines.append("Rules change - your TopstepX dashboard and help.topstep.com always win.")
+    return "\n".join(lines)

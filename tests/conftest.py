@@ -26,6 +26,17 @@ def bar(ts: datetime, o: float, h: float, l: float, c: float, v: float = 100) ->
     return Bar(ts, o, h, l, c, v)
 
 
+@pytest.fixture(autouse=True)
+def offline_research(monkeypatch):
+    """The controller's research collector reaches the internet: keep it idle in tests (research tests call it directly)."""
+    from topstep_bot.research import Research
+
+    async def idle(self, check_every: float = 60.0) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(Research, "run", idle)
+
+
 @pytest.fixture
 def mnq():
     return offline_contract("MNQ")
