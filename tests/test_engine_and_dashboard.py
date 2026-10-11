@@ -29,17 +29,17 @@ def test_engine_sizes_entry_from_stop_and_flattens_at_session_end(mnq):
         core.last_price = 100.0
         sig = Signal("long", stop_price=90.0, target_price=150.0, reason="test")
         await core._handle_entry(sig, b, core.context(b))
-        # Sized for the worst allowed fill: (40 + 8 slippage) ticks x $0.50 = $24 + $1.22 fees -> 3 contracts for $100
-        assert core.orders.trade.size == 3
+        # Sized for the worst allowed fill: (40 + 2 slippage) ticks x $0.50 = $21 + $1.22 fees -> 4 contracts for $100
+        assert core.orders.trade.size == 4
         await broker.on_bar(bar(T0 + timedelta(minutes=5), 100, 101, 99, 100))
-        assert core.orders.position == 3
+        assert core.orders.position == 4
         flat_time = ct(2026, 3, 3, 15, 0)
         now[0] = flat_time
         await core.on_clock(flat_time)
         await broker.on_bar(bar(flat_time, 100, 100, 100, 100))
         assert broker.position == 0
         assert core.closed_trades and "session flatten" in core.closed_trades[0].exit_reason
-        assert core.journal.trades()[0]["size"] == 3
+        assert core.journal.trades()[0]["size"] == 4
     run(go())
 
 
@@ -114,3 +114,38 @@ def test_snapshot_is_json_serializable(mnq):
 
 def test_side_helpers():
     assert OrderSide.BUY.opposite == OrderSide.SELL and OrderSide.SELL.sign == -1
+
+
+def test_entries_never_go_through_the_bid_or_offer(mnq):
+    core, broker, now = make_core(mnq, execution={"max_entry_slippage_ticks": 4})
+    long_, short = Signal("long", stop_price=90.0, reason="t"), Signal("short", stop_price=110.0, reason="t")
+    # backtests: no quotes, so the cap is the signal price + 4 ticks
+    assert core.plan_entry(long_, 100.0).limit == 101.0
+    # live: capped at the offer (buy) / bid (sell) when they are inside the 4-tick cap
+    core.on_quote(99.75, 100.25, T0)
+    assert core.plan_entry(long_, 100.0).limit == 100.25 and core.plan_entry(short, 100.0).limit == 99.75
+    # the offer ran away: still capped at 4 ticks, i.e. a resting order below the offer, never through it
+    core.on_quote(101.5, 101.75, T0)
+    assert core.plan_entry(long_, 100.0).limit == 101.0
+    # sizing still assumes the worst allowed fill
+    plan = core.plan_entry(long_, 100.0)
+    assert plan.planned_risk == plan.size * core.risk.risk_per_contract(101.0, plan.stop)
+    # quote too old to trust: no further than the last trade price
+    now[0] = T0 + timedelta(seconds=30)
+    assert core.plan_entry(long_, 100.0).limit == 100.0 and core.plan_entry(short, 100.0).limit == 100.0
+    assert core.touch(OrderSide.BUY) is None
+
+
+def test_paper_fill_respects_the_limit_at_the_offer(mnq):
+    async def go():
+        core, broker, now = make_core(mnq, risk={"risk_per_trade": 100, "slippage_ticks": 0})
+        await core.begin_day(core.schedule.trading_day(T0), 50_000)
+        broker.live = True
+        await broker.on_price(T0, 100.0, 99.75, 100.25)
+        core.on_quote(99.75, 100.25, T0)
+        core.last_price = 100.0
+        b = bar(T0, 100, 100, 100, 100)
+        await core._handle_entry(Signal("long", stop_price=90.0, reason="t"), b, core.context(b))
+        await broker.drain()
+        assert core.orders.trade.entry_price == 100.25  # filled at the offer, not a tick beyond it
+    run(go())

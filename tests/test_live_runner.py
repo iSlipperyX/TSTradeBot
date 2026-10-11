@@ -139,7 +139,7 @@ def make_runner(fake: FakeTopstepX, port: int, mode: str, tmp_path) -> LiveRunne
         "api": {"user_hub_url": f"http://127.0.0.1:{port}/hubs/user", "market_hub_url": f"http://127.0.0.1:{port}/hubs/market"},
         "dashboard": {"enabled": False},
         "execution": {"reconcile_interval_seconds": 0.5},
-        "news": {"enabled": False},
+        "news": {"enabled": False, "headlines": False},
     })
     runner = LiveRunner(cfg, Secrets(username="u", api_key="k"), Controls())
     runner.client = ProjectXClient("u", "k", transport=httpx.MockTransport(fake.handler))

@@ -87,7 +87,7 @@ SPECS: list[SettingSpec] = [
     SettingSpec("news_flatten", "Close trades before news", "bool", ("news", "flatten_before"),
                 "Also close open trades just before a big release."),
     SettingSpec("max_slippage", "Max entry slippage (ticks)", "int", ("execution", "max_entry_slippage_ticks"),
-                "Entries can't fill more than this many ticks worse than the signal price.",
+                "Entries can't fill more than this many ticks worse than the signal price (and never through the bid/offer).",
                 bounds=lambda c: (0, 40), riskier=_higher),
     SettingSpec("strategy", "Auto-traded strategy", "choice", ("strategy", "name"),
                 "Which strategy the bot trades by itself (switches when flat).",
@@ -315,6 +315,9 @@ class RemoteControl:
             plan.planned_risk = plan.size * core.risk.risk_per_contract(
                 price + plan.side.sign * core.contract.price_offset(core.cfg.execution.max_entry_slippage_ticks or 0),
                 plan.stop)
+        block = core.entry_guard(plan.side.sign) if core.entry_guard else None
+        if block:
+            raise SettingError(f"Not allowed right now: {block}")
         trade = await core.orders.enter(
             plan.side, plan.size, plan.stop, plan.target,
             f"taken from {source}: {rec.title} idea {rec.id} - {rec.reason}", ref_price=price,

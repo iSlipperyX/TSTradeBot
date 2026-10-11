@@ -33,6 +33,7 @@ from topstep_bot.bars import floor_time
 from topstep_bot.broker.base import Broker
 from topstep_bot.broker.paper import PaperBroker
 from topstep_bot.config import BotConfig, Secrets
+from topstep_bot.crossaccount import PositionBook
 from topstep_bot.engine import TradingCore
 from topstep_bot.factory import build_core, fees_for, starting_balance
 from topstep_bot.journal import Journal
@@ -101,7 +102,9 @@ class LiveRunner:
         self.controls = controls or Controls()
         self.client = ProjectXClient(secrets.username, secrets.api_key, cfg.api.base_url, cfg.api.timeout_seconds)
         self.journal = Journal(cfg.journal_path)
-        self.notifier = Notifier(cfg.notifications, secrets, prefix=f"Topstep Bot ({cfg.mode})")
+        who = f"{cfg.active_account}, {cfg.mode}" if cfg.active_account else cfg.mode
+        self.notifier = Notifier(cfg.notifications, secrets, prefix=f"Topstep Bot ({who})")
+        self.positions: PositionBook | None = None  # cross-account hedge guard
         self.core: TradingCore | None = None
         self.broker: Broker | None = None
         self.market: MarketStream | None = None
@@ -170,6 +173,11 @@ class LiveRunner:
         if last_eod is None or last_eod < today.isoformat():
             core.tracker.end_of_day(acct.balance - realized)  # yesterday's close balance
 
+        from topstep_bot.market_intel import MarketTracker
+
+        core.market = MarketTracker(self.contract.root or cfg.instrument.symbol, self.contract, core.schedule,
+                                    cfg.account_dir / "market_journal.jsonl")
+        core.market.result_for_day = self._day_result
         if cfg.recommendations.enabled:
             from topstep_bot.recommendations import RecommendationBook
 
@@ -178,13 +186,32 @@ class LiveRunner:
         await core.begin_day(today, acct.balance, realized, trades)
         from topstep_bot.remote import RemoteControl
 
-        core.remote = RemoteControl(core, cfg.data_path / "remote_settings.json")
+        core.remote = RemoteControl(core, cfg.account_dir / "remote_settings.json")
         for change in core.remote.load_saved():
             log.info("Re-applied remote setting: %s", change)
         await self._setup_knowledge()
         await self._setup_news()
         self._apply_ramp_up()
+        self._setup_hedge_guard()
         return core
+
+    def _setup_hedge_guard(self) -> None:
+        """Coordinate with this PC's other account bots so no two accounts hold opposite positions."""
+        cfg, core = self.cfg, self.core
+        root = (self.contract.root if self.contract else "") or cfg.instrument.symbol  # MNQ, not the code MNQZ6
+        self.positions = PositionBook(cfg.data_path / "positions", cfg.active_account or "main", cfg.mode, root,
+                                      cfg.multi_account.hedge_guard)
+        self._sync_positions()
+        if self.positions.enabled:
+            core.entry_guard = self.positions.claim
+
+    def _sync_positions(self) -> None:
+        if self.positions is None or self.core is None:
+            return
+        orders = self.core.orders
+        pos = orders.position
+        side = (1 if pos > 0 else -1) if pos else (orders.trade.side.sign if orders.trade is not None else 0)
+        self.positions.sync(side)
 
     async def _setup_knowledge(self) -> None:
         """Attach the knowledge base the bot learns into; retrain it from history when stale."""
@@ -308,6 +335,8 @@ class LiveRunner:
             await self.broker.stop()
         if core:
             self._save_paper_balance()
+            if self.positions and core.orders.is_flat:
+                self.positions.release()
             if self.controls.restart_requested:
                 core.event("info", "Restarting for daily maintenance")
             else:
@@ -325,6 +354,7 @@ class LiveRunner:
         self._last_price_at = self.now()
         if isinstance(self.broker, PaperBroker):
             await self.broker.on_price(q.ts, price, q.bid, q.ask)
+        self.core.on_quote(q.bid, q.ask, self.now())
         await self.core.on_price(q.ts, price)
 
     async def _bar_loop(self) -> None:
@@ -385,6 +415,7 @@ class LiveRunner:
                         core.balance = (await self.broker.get_account()).balance
                     self._save_paper_balance()
                     self._apply_ramp_up()
+                self._sync_positions()
                 if now.second % 10 == 0:
                     self._beat()
                 self._maybe_check_in(now)
@@ -394,28 +425,57 @@ class LiveRunner:
 
     # ----------------------------------------------------------- 24/7 helpers
 
+    def _day_result(self, day: date) -> tuple[float | None, int | None]:
+        """The bot's own result on a day (for the market journal)."""
+        label = self.core.account_label if self.core else ""
+        row = next((r for r in self.journal.daily(label) if r["trading_day"] == day.isoformat()), None)
+        return (row["net_pnl"], row["trades"]) if row else (None, None)
+
     async def _setup_news(self) -> None:
-        if not self.cfg.news.enabled or self.core is None:
+        if self.core is None:
             return
-        n = self.cfg.news
-        calendar = NewsCalendar(n.url, self.cfg.data_path / "news_cache.json", n.impacts, n.currencies,
-                                n.minutes_before, n.minutes_after)
+        n, core = self.cfg.news, self.core
+        symbol = self.contract.root or self.cfg.instrument.symbol
+        if n.headlines and core.market:
+            from topstep_bot.market_knowledge import product_for
+            from topstep_bot.news import HeadlineFeed
+
+            product = product_for(symbol)
+            if product:
+                feed = HeadlineFeed([n.headline_url.format(symbol=y) for y in product.yahoo],
+                                    self.cfg.data_path / f"headlines_{product.root}.json")
+                feed.load_cache()
+                core.market.headlines = feed
+        if not n.enabled:
+            return
+        # One cache per instrument: which events matter depends on what is traded.
+        calendar = NewsCalendar(n.url, self.cfg.data_path / f"news_cache_{symbol}.json", n.impacts, n.currencies,
+                                n.minutes_before, n.minutes_after, symbol=symbol, per_instrument=n.per_instrument)
         if not calendar.load_cache() or calendar.fetched_at is None or (
             self.now() - calendar.fetched_at > timedelta(hours=6)
         ):
             await calendar.refresh()
-        self.core.schedule.news = calendar
+        core.schedule.news = calendar
+        if core.market:
+            core.market.news = calendar
         upcoming = calendar.upcoming(self.now(), hours=24)
         if upcoming:
-            tz = self.core.schedule.tz
+            tz = core.schedule.tz
             listing = ", ".join(f"{e.label} {e.time.astimezone(tz):%a %H:%M} CT" for e in upcoming[:6])
-            self.core.event("info", f"News blackouts in the next 24h: {listing}")
+            core.event("info", f"News blackouts in the next 24h: {listing}")
 
     async def _news_loop(self) -> None:
+        """Refresh the calendar every 6 hours and the headlines every few minutes."""
+        last_calendar = self.now()
         while True:
-            await asyncio.sleep(6 * 3600)
-            if self.core and self.core.schedule.news:
+            feed = self.core.market.headlines if self.core and self.core.market else None
+            if feed and (feed.fetched_at is None or self.now() - feed.fetched_at >= timedelta(
+                    minutes=self.cfg.news.headline_refresh_minutes)):
+                await feed.refresh()
+            if self.core and self.core.schedule.news and self.now() - last_calendar > timedelta(hours=6):
+                last_calendar = self.now()
                 await self.core.schedule.news.refresh()
+            await asyncio.sleep(60)
 
     def _apply_ramp_up(self) -> None:
         """First live trading days on an account run at reduced risk (replaces a paper-trading period)."""

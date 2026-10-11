@@ -23,7 +23,7 @@ FAKE = [sys.executable, str(Path(__file__).parent / "fake_worker.py")]
 def fast(monkeypatch):
     monkeypatch.setattr(controller_mod, "BACKOFF", (0.1, 0.1, 0.1))
     monkeypatch.setattr(controller_mod, "notify", lambda *a: None)
-    for var in ("FAKE_EXIT", "FAKE_HANG", "FAKE_POSITION"):
+    for var in ("FAKE_EXIT", "FAKE_EXIT_ACCOUNT", "FAKE_HANG", "FAKE_POSITION"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -156,7 +156,7 @@ def test_mode_switch_requires_confirmation_and_restarts(tmp_path):
         await until(lambda: ctl.bot.state == "running")
         await until(lambda: _bot_mode(ctl), timeout=5)
         assert (await ctl.bot.status())["bot"]["mode"] == "live"
-        assert load_state(ctl.cfg)["mode"] == "live"
+        assert load_state(ctl.cfg)["modes"]["main"] == "live"
         r = (await http.post("/api/mode", json={"mode": "paper"})).json()  # back to paper needs no typing
         assert r["ok"]
         await until(lambda: ctl.bot.state == "running")
@@ -225,7 +225,7 @@ def test_telegram_works_while_bot_is_down(tmp_path):
         await tg.handle_update(button("yes:startbot", fake.sent[-1]["message_id"]))
         await until(lambda: ctl.bot.state == "running")
         await tg.handle_update(msg("/status"))
-        assert "fake bot in paper mode" in fake.sent[-1]["text"]
+        assert "fake bot main in paper mode" in fake.sent[-1]["text"]
         await tg.handle_update(msg("/stop"))
         await tg.handle_update(button("yes:stop", fake.sent[-1]["message_id"]))
         await until(lambda: ctl.bot.state == "stopped")

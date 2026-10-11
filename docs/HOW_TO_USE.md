@@ -2,7 +2,8 @@
 
 This guide takes you from zero to a running bot, explains every screen and setting, and covers
 what to do when something goes wrong. If you only read one section, read
-[The safe path to live trading](#7-the-safe-path-to-live-trading).
+[The safe path to live trading](#7-the-safe-path-to-live-trading). Trading several Combines or
+accounts at once? See [section 28](#28-trading-several-accounts).
 
 ---
 
@@ -35,6 +36,10 @@ what to do when something goes wrong. If you only read one section, read
 25. [Files the bot creates](#25-files-the-bot-creates)
 26. [Troubleshooting](#26-troubleshooting)
 27. [Writing your own strategy](#27-writing-your-own-strategy)
+28. [Trading several accounts](#28-trading-several-accounts)
+29. [Several API keys](#29-several-api-keys)
+30. [What the bot knows about the market and the news](#30-what-the-bot-knows-about-the-market-and-the-news)
+31. [Funded-account goals and Topstep's rules](#31-funded-account-goals-and-topsteps-rules)
 
 ---
 
@@ -124,6 +129,9 @@ strategy works.
 > Your API key can place trades on **every** account on your login. Treat it like a password.
 > If it ever leaks, delete it in TopstepX and create a new one.
 
+You can store more than one key — for example one per account, or the key of a second TopstepX
+login. See [section 29](#29-several-api-keys).
+
 ---
 
 ## 5. Run the setup wizard
@@ -173,6 +181,8 @@ Double-click `start.bat` (or run `topstep-bot`):
 | 12 | telegram-test | Sends a test message with control buttons to your Telegram |
 | 13 | autostart | Starts everything automatically when you sign in to Windows ([section 19](#19-running-247)) |
 | 14 | logs | Shows recent errors and where the log files are ([section 21](#21-logs-finding-out-what-happened)) |
+| 15 | accounts | Your accounts: what each one trades and which ones share the same calls ([section 28](#28-trading-several-accounts)) |
+| 16 | keys | List, add, remove or test your stored TopstepX API keys ([section 29](#29-several-api-keys)) |
 
 You can switch between paper and live later from the dashboard, without coming back to this menu.
 
@@ -337,6 +347,13 @@ To start the paper account fresh, stop the bot and delete that file.
 
 **Ideas tab:** recommended trades with **Take** buttons and today's results per strategy — see
 [section 16](#16-recommended-trades). A badge on the tab shows how many ideas are live.
+
+**Market tab:** what the bot knows about the market it trades right now — key levels, a normal
+day's range in points and dollars, today's market-moving reports, headlines and a profile of the
+contract. See [section 30](#30-what-the-bot-knows-about-the-market-and-the-news).
+
+**Account goal panel** (Overview): progress to your Combine pass or your next Express Funded payout —
+see [section 31](#31-funded-account-goals-and-topsteps-rules).
 
 **Knowledge tab:** what the bot has learned — for every strategy, time of day and regime, the average
 result per signal and whether the adaptive strategy trades it right now — with a **Retrain now** button.
@@ -536,7 +553,7 @@ session:
 | **Contract caps** — 5/10/15 minis (micros count 1/10) | Enforced. Express accounts use a conservative Scaling Plan table — check your real limit in TopstepX Risk Settings and set `risk.max_contracts` if lower. |
 | **Combine consistency** — best day under 50% of total profit | Default daily profit cap at 40% of the target; the backtest's pass simulation checks this rule. |
 | **No VPS/VPN, no HFT** | Bars of 1 minute or more and a few trades a day — nowhere near HFT. **Running it on your own PC is your responsibility.** |
-| **No hedging** | One position at a time on one contract. Don't run opposite strategies on several accounts. |
+| **No hedging** — not within an account, and not opposite positions across your accounts in the same or a correlated market | One position at a time per account. With several accounts, the **hedge guard** makes an account skip a call that would be opposite to another account's open position ([section 28](#28-trading-several-accounts)). It can't see trades you place by hand on other accounts. |
 
 **Keep the bot's MLL in sync.** The API doesn't report the MLL floor, so the bot calculates it.
 If the bot was off for a while or you traded manually, copy the current Maximum Loss Limit from
@@ -599,7 +616,16 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/reset` | Undo every remote setting change (back to `config.yaml`) |
 | `/trades` | The last few closed trades |
 | `/log` | Recent bot activity |
+| `/accounts` | With several accounts: one line per account (mode, market, strategy, today's P&L, position) |
+| `/brief` | Market brief: key levels, a normal day's range, today's reports that move your market, headlines ([section 30](#30-what-the-bot-knows-about-the-market-and-the-news)) |
+| `/funded` | Progress to your Combine pass or next Express payout ([section 31](#31-funded-account-goals-and-topsteps-rules)) |
+| `/rules` | The Topstep rules the bot knows, and what it does about each |
 | `/help` | The command list |
+
+With several accounts, put the account name after the command — `/status c2`, `/pause c1`,
+`/flatten all`, `/set c1 risk 150`, `/set all news off`. If you leave it out, the bot answers
+with a button per account (plus **All accounts** for pause/resume/flatten/stop/restart/start).
+See [section 28](#28-trading-several-accounts).
 
 ### Security
 
@@ -817,9 +843,13 @@ Built-in protection for a new account:
 - **News pause:** no new trades from 5 minutes before to 10 minutes after high-impact US economic
   releases, using this week's economic calendar (`news.*`). `news.flatten_before: true` also closes
   open trades before a release.
-- **Price-capped entries:** entries can't fill more than `execution.max_entry_slippage_ticks`
-  (default 8) worse than the signal price, and trades are sized for that worst case. If a fill still
-  leaves a trade too risky, it is closed immediately.
+- **Price-capped entries:** entries are limit orders that can't fill more than
+  `execution.max_entry_slippage_ticks` (default 2) worse than the signal price, and trades are sized
+  for that worst case. They are also **never priced through the best bid/offer** (Topstep prohibits
+  orders outside it): a buy is capped at the current offer and a sell at the current bid, from the
+  live quote stream. If the quote is more than 5 seconds old, the cap is the last trade price. If the
+  market has run further than the cap, the order rests and is cancelled if it doesn't fill. If a fill
+  still leaves a trade too risky, it is closed immediately.
 
 ---
 
@@ -908,6 +938,7 @@ account:
   starting_balance: null       # default: plan size (combine/practice) or 0 (express)
   mll_floor_override: null     # sync with Topstep's dashboard
   topstep_daily_loss_limit: null
+  login: null                  # which stored API key to use (section 29); default: main key
 
 instrument:
   symbol: MNQ
@@ -957,7 +988,7 @@ session:
   no_trade_dates: [...]                # CME holidays/early closes 2026-2027
 
 execution:
-  max_entry_slippage_ticks: 8  # entries can't fill worse than this (None = plain market orders)
+  max_entry_slippage_ticks: 2  # entries can't fill worse than this, nor through the bid/offer (None = market orders)
   max_risk_overrun: 1.5        # close at once if a fill leaves the trade riskier than this x planned
   use_native_brackets: false   # true = TopstepX server-side brackets (needs "Auto OCO Brackets" enabled)
   orphan_position_policy: flatten   # flatten | adopt | ignore
@@ -989,6 +1020,19 @@ news:
   minutes_before: 5
   minutes_after: 10
   flatten_before: false
+  per_instrument: true         # also pause around your market's key reports, e.g. crude inventories for CL
+  headlines: true              # show headlines about your market (information only)
+  headline_refresh_minutes: 15
+
+funded:                        # section 31
+  payout_path: standard        # standard | consistency - what you chose when your XFA was activated
+  last_payout_date: null       # e.g. "2026-10-02": payout progress restarts after it
+  winning_day_usd: 150         # standard path: a winning day is $150+ net
+  winning_days_needed: 5
+  protect_winning_day: true    # standard path: keep a winning day a winning day
+  consistency_limit: 0.40      # consistency path: best day / total profit
+  consistency_days_needed: 3
+  cycle_profit_goal: null      # consistency path: daily cap = 40% of this (default: the plan's profit target)
 
 service:                       # used by 'topstep-bot service'
   keep_awake: true
@@ -1006,6 +1050,12 @@ dashboard:
 backtest:
   data_file: null
   report_dir: reports
+
+multi_account:                 # only matters with an accounts list (section 28)
+  hedge_guard: correlated      # correlated | same_product | off - no opposite positions across accounts
+  stagger_seconds: 3           # pause between starting each account's bot
+
+accounts: []                   # one entry per account; each overrides only what differs (section 28)
 
 api:                           # only change if Topstep changes its endpoints
   base_url: https://api.topstepx.com
@@ -1042,7 +1092,14 @@ different config file.
 | `topstep-bot preflight [--days N] [--skip-backtest]` | Check everything before trading live |
 | `topstep-bot go-live` | Preflight, then start live trading |
 | `topstep-bot autostart on\|off\|status` | Start everything when you sign in to Windows |
-| `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
+| `topstep-bot logs [--all] [--open] [--bundle] [--account A]` | Recent errors, open the log folder, or zip logs for support |
+| `topstep-bot accounts` | Your accounts, what each trades, which API key each uses, and which share the same calls |
+| `topstep-bot keys [list\|add\|remove\|test] [name]` | Manage stored API keys (section 29) |
+
+**Several accounts:** `--account <name>` (or `-a`) picks one account for `run`, `backtest`, `train`,
+`download`, `preflight`, `go-live`, `flatten`, `journal` and `logs`. Without it, `run`/`backtest`/
+`train`/`download` need it (when you have several), and `preflight`, `go-live`, `flatten`,
+`journal` and `logs` cover every account. `start --mode live --account c2` switches only c2.
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat backtest --days 180`.
 
@@ -1060,10 +1117,15 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat back
 | `logs/` | Log files — see [section 21](#21-logs-finding-out-what-happened) |
 | `data/remote_settings.json` | Settings changed from the dashboard/Telegram (delete it, or `/reset`, to undo) |
 | `data/knowledge_<SYMBOL>_<TF>m.json` | The knowledge base: what works when (delete it to start learning from scratch) |
-| `data/news_cache.json` | This week's economic calendar |
-| `data/controller.json` | The mode you chose last (Paper/Live) |
+| `data/controller.json` | The mode you chose last (Paper/Live), per account |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
 | `data/heartbeat` | "Still alive" signal the controller watches |
+| `data/accounts/<name>/` | With several accounts: each account's own journal, remote settings, knowledge base, heartbeat and exit note |
+| `data/positions/` | Each account's current position side, for the cross-account hedge guard |
+| `data/news_cache_<SYMBOL>.json` | This week's calendar events that matter for that market |
+| `data/headlines_<MARKET>.json` | Recent headlines (cache) |
+| `market_journal.jsonl` (in `data/` or `data/accounts/<name>/`) | One line per finished session: range, gap, overnight levels, reports, the bot's result |
+| `logs/accounts/<name>/` | With several accounts: each account's bot logs (`logs/controller.log` stays shared) |
 
 ---
 
@@ -1173,6 +1235,282 @@ Backtest it with `topstep-bot backtest --strategy my_strategy`, and run the test
 `pytest` after any change to the bot itself.
 
 ---
+
+## 28. Trading several accounts
+
+If you have more than one Combine (or Express/Practice account) under the same TopstepX login, the
+bot can trade them together. Each account gets **its own bot process**, so one account crashing,
+being stopped or hitting its loss limit never affects the others. One dashboard and one Telegram
+chat control all of them.
+
+### Same calls or different calls?
+
+| You want | How | What happens |
+|---|---|---|
+| **Same calls** on every account | List the accounts without overriding `strategy`/`instrument` | Every account runs the same strategy on the same bars, so they get the same signal at the same moment. Each one sizes the trade from **its own** risk settings and checks **its own** limits — an account that is done for the day simply skips it. |
+| **Different calls** | Give an account its own `strategy:` (and/or `instrument:`) | That account trades its own signals, e.g. Adaptive on one Combine and ORB on another, or MNQ on one and MES on another. |
+| **Copy one account's calls** | `follow: c1` | The account trades whatever c1's strategy and market are (even if you change them later), with its own risk. |
+| **Same calls, different size** | Same strategy, different `risk:` | e.g. $150 per trade on a 50K, $300 on a 100K. |
+
+`topstep-bot accounts` (menu **15**) shows every account, what it trades, and which accounts share
+the same calls. The dashboard shows the same grouping under the account cards.
+
+### Set it up
+
+The setup wizard (menu 1) asks which accounts to trade when your login has several, and whether they
+should take the same calls or each get its own strategy. Or edit `config.yaml` by hand — everything
+above the `accounts:` list is shared, and each account lists only what is different:
+
+```yaml
+mode: paper
+strategy: {name: adaptive}
+risk:
+  risk_per_trade: 150
+  personal_daily_loss_limit: 500
+
+multi_account:
+  hedge_guard: correlated     # correlated (default) | same_product | off
+  stagger_seconds: 3          # start the bots a few seconds apart
+
+accounts:
+  - name: c1                  # short name: letters, digits, - and _ (used on the dashboard and in Telegram)
+    account_id: 111111        # from 'topstep-bot check'
+  - name: c2
+    account_id: 222222
+    plan: "100K"              # plan/stage/account shortcuts, or a full account: {...} section
+    risk: {risk_per_trade: 300}
+  - name: c3
+    account_id: 333333
+    strategy: {name: orb}     # different calls
+    instrument: {symbol: MES}
+  - name: c4
+    account_id: 444444
+    follow: c3                # c3's calls, this account's risk
+    mode: live                # this account starts in live mode; the others use the shared mode
+  - name: old
+    account_id: 555555
+    enabled: false            # kept in the file, not traded
+```
+
+Sections an account can override: `account` (or the shortcuts `account_id`, `account_name`, `plan`,
+`stage`, `starting_balance`, `mll_floor_override`, `topstep_daily_loss_limit`), `instrument`,
+`strategy`, `risk`, `session`, `execution`, `data`, `notifications`, `news`, `recommendations` and
+`knowledge`, plus `mode` and `enabled`. Everything else (Telegram, dashboard, service...) is shared.
+An account that changes strategy doesn't inherit the shared strategy's `params`. An account that
+`follow`s another can't also set `strategy`, `instrument`, `session`, `knowledge`, `news` or
+`recommendations` (those decide the calls), and you can't follow an account that itself follows.
+Names like `all`, `main`, `risk` or `news` are reserved because Telegram would confuse them.
+
+Without an `accounts:` list nothing changes: the bot trades the single account in `account:` exactly
+as before, and its files stay where they were.
+
+### The hedge guard
+
+Topstep prohibits **hedging across accounts** — holding opposite positions in the same or a
+correlated market on two of your accounts (for example long MNQ on one Combine and short NQ on
+another). Accounts with different calls will sometimes disagree, so before any entry the bot checks
+what your other accounts hold. If the trade would be opposite to another account's position, it is
+skipped (you'll see *"Skipped SHORT: account c1 is long MNQ - opposite positions across accounts
+count as hedging, which Topstep prohibits"* in Activity, and the idea is marked skipped). The first
+account to enter wins; the others can trade again once it's flat.
+
+| `hedge_guard` | Blocks |
+|---|---|
+| `correlated` (default, safest) | Opposite positions in the same product **or** a related one: all US equity index futures (ES/MES, NQ/MNQ, YM/MYM, RTY/M2K) count as one group; gold and crude oil are their own groups |
+| `same_product` | Only the same product (NQ with MNQ, ES with MES...) |
+| `off` | Nothing — only if you are sure your accounts can never disagree |
+
+The guard covers trades placed by the bot, including ideas you take from the dashboard or Telegram.
+Paper and live accounts are checked separately (paper positions aren't real). It **can't see trades
+you place by hand** in TopstepX on accounts the bot doesn't run — keep those in mind yourself. The
+rule's exact wording can change; check help.topstep.com.
+
+### The dashboard with several accounts
+
+A card per account sits under the top bar: its state, Paper/LIVE, market and strategy, today's P&L
+and position. **Click a card** to select that account — every tab (Overview, Ideas, Knowledge,
+Settings, Logs) and every button (Start/Stop/Restart, the Paper | Live switch, Pause, Flatten,
+setting changes, Take idea) then applies to that account only. The **All accounts** row below the
+cards pauses, resumes, starts, stops or flattens every account at once. The dashboard remembers
+which account you had selected.
+
+### Telegram with several accounts
+
+Name the account after the command, or `all`:
+
+```
+/status            one line per account
+/status c2         full status of c2
+/pause all         pause every account          /pause c1   just c1
+/flatten all       close everything everywhere (asks to confirm)
+/set c1 risk 150   change a setting on c1       /set all news off   on every account
+/ideas c3          c3's ideas, with Take buttons
+```
+
+Leave the name out and the bot replies with a button per account (and **All accounts** for
+pause/resume/flatten/stop/restart/startbot/reset). `/ideas`, `/trades`, `/settings`, `/knowledge`,
+`/train` and `/log` work on one account at a time. Alerts say which account they're from, e.g.
+*[Topstep Bot (c2, live)] ENTRY ...*.
+
+### Modes, files and logs
+
+- **Mode per account.** Each account can be paper or live independently: use the dashboard switch
+  with the account selected, `mode:` on the account in `config.yaml`, or `start --mode live --account c2`.
+  `start --mode live` (and menu 7) switches every account. The dashboard remembers each account's mode.
+- **Separate files.** Each account keeps its own journal, remote setting changes, knowledge base,
+  heartbeat and logs under `data/accounts/<name>/` and `logs/accounts/<name>/`. Accounts that trade
+  the same calls each learn from the same signals, plus their own real trades.
+- **Separate limits.** Daily loss limit, trade count, losing streak, MLL tracking and the ramp-up are
+  all per account. Risk is not pooled: three accounts with $500 daily limits can lose up to $1,500
+  between them on a bad day.
+- **Kill switch.** A file named `KILL` in the bot's folder halts **every** account.
+- **Commands.** `preflight`, `go-live`, `flatten`, `journal` and `logs` cover every account unless
+  you add `--account`; `backtest`, `train` and `download` need `--account` to know which account's
+  strategy and market to use.
+- **API usage.** Each bot logs in and downloads its own history. TopstepX allows 50 history requests
+  per 30 seconds; the staggered start keeps a handful of accounts well inside that. Running more than
+  about five at once isn't recommended.
+
+### Good practice
+
+- Start with every account in **paper** mode for a while, as with one account.
+- Accounts on the **same calls** multiply both the wins and the losses — it's the same bet several
+  times. Size each account so that a bad day on all of them at once is acceptable.
+- **Different calls** on the same market will often be skipped by the hedge guard when they disagree.
+  Different markets in different groups (e.g. equity index on one account, gold on another) avoid
+  that.
+- Topstep limits how many Express Funded Accounts you may hold, and its multi-account rules change
+  from time to time — check the current rules on help.topstep.com before scaling up.
+
+---
+
+## 29. Several API keys
+
+One API key works for every account on your TopstepX login, and that is all you need. You can store
+more, for two reasons:
+
+- **One key per account** keeps the accounts' connections apart, so a problem with one key (revoked,
+  rate-limited, a login hiccup) only affects that account.
+- **Another TopstepX login** (a different username) — its accounts can then be traded too.
+
+Keys live only in `.env`, never in `config.yaml`:
+
+```
+TOPSTEPX_USERNAME=myname            # the main login
+TOPSTEPX_API_KEY=...                # the main key
+TOPSTEPX_API_KEY_C2=...             # a key named "c2" (same username as the main login)
+TOPSTEPX_USERNAME_SECOND=partner    # a key named "second" for another login
+TOPSTEPX_API_KEY_SECOND=...
+```
+
+**Which key an account uses:** its `login:` setting if it has one, otherwise a key with the same
+name as the account (so a key named `c2` is used by account `c2` automatically), otherwise the main
+key. `topstep-bot accounts` shows the key each account uses.
+
+```yaml
+accounts:
+  - name: c1                  # main key
+  - name: c2                  # TOPSTEPX_API_KEY_C2, automatically
+  - name: p1
+    account_id: 999999
+    login: second             # the "second" login's key
+```
+
+Manage them with `topstep-bot keys` (menu **16**):
+
+| Command | What it does |
+|---|---|
+| `topstep-bot keys` | Lists the stored keys (only the last 4 characters shown) and which accounts use each; flags accounts whose key is missing |
+| `topstep-bot keys add c2` | Asks for the username (default: the main one) and the key, **tests the login**, then saves it. Nothing is saved if the login fails |
+| `topstep-bot keys test` | Logs in with every key and shows how many accounts each sees |
+| `topstep-bot keys remove c2` | Deletes the key from `.env` (and warns if an account still uses it) |
+
+The setup wizard can also store keys for another login and give each account its own key. Every
+stored key is masked in log files. If a key is missing when a bot starts, that account stops with
+*"No API key named ..."* on the dashboard; the others carry on.
+
+---
+
+## 30. What the bot knows about the market and the news
+
+The bot now knows the market it trades, not just its own strategies. All of this is on the dashboard's
+**Market** tab and in Telegram **/brief**.
+
+**The contract.** For each market (S&P, Nasdaq, Dow, Russell, gold, crude — minis and micros): exchange,
+contract months, expiry, how it rolls, regular hours, tick and point value, what moves it (e.g.
+mega-cap tech earnings for NQ, the weekly EIA report for crude) and practical notes (NQ moves 1.3-1.6x
+as much as ES; the Russell gaps and fakes out more often).
+
+**Today's numbers**, from the bars the bot already receives — no extra data subscription:
+
+| | |
+|---|---|
+| Key levels | Yesterday's regular-session high / low / close, today's overnight high / low, open, high and low, and how far price is from each |
+| Normal day's range | The average daily range of the last 14 sessions, in points and in dollars per contract (useful for sizing stops) |
+| Today so far | Today's range and what share of a normal day it has used; the opening gap |
+| Notes | Plain-language observations: a big gap, an already-extended day, a quiet day, above/below/inside yesterday's range |
+
+**The news that matters for it.** Before, the bot paused around high-impact US releases. Now, with
+`news.per_instrument: true` (default), it also pauses around the **medium-impact reports that move your
+market** — e.g. the Wednesday EIA crude inventories for CL/MCL, ISM and jobless claims for the index
+futures. The Market tab lists today's reports with forecast and previous values, plus the next three
+days.
+
+**Headlines.** The latest headlines about your market (from Yahoo Finance's free feeds for the future
+and the ETFs that track it: SPY, QQQ, DIA, IWM, GLD, USO), refreshed every 15 minutes, older than three
+days dropped. **They are for your information — the bot does not trade on headlines.** Turn them off
+with `news.headlines: false`.
+
+**It keeps a record.** Each finished session is added to `market_journal.jsonl` — range, gap, overnight
+levels, the reports that day and the bot's own result — so you build up a history of market
+conditions next to your trades.
+
+**It learns from the news.** Every live observation in the knowledge base now notes whether the day had
+a market-moving report. The Knowledge tab's **news / quiet days** column (and `/knowledge`) shows each
+strategy's average result on each kind of day. The bot doesn't act on this yet — it needs weeks of live
+observations before the difference means anything; replayed history has no calendar, so training
+observations count as "unknown".
+
+---
+
+## 31. Funded-account goals and Topstep's rules
+
+The bot knows the rules of each account stage and tracks your progress toward the goal that matters
+there. Overview's **Account goal** panel and Telegram **/funded** show it; **/rules** lists every rule
+with what the bot does about it.
+
+| Stage | Goal | What the bot tracks | What the bot does |
+|---|---|---|---|
+| Combine | Hit the profit target ($3K / $6K / $9K) without touching the MLL | Profit vs target; best day as a share of total profit (must be under 50%) and the total you'd need if it isn't | Stops for the day at 40% of the target, so one big day can't break consistency |
+| Express — **standard** path | 5 winning days of $150+ net per payout | Winning days since your last payout, today's progress to $150, an estimate of what you could request (50% of balance, capped), your Scaling Plan limit | Once today is a winning day, sizes new trades so a stop-out leaves the day at $150+ (`protect_winning_day`) |
+| Express — **consistency** path | Best day ≤ 40% of profit over at least 3 trading days | Trading days, the ratio, the daily cap | Caps each day at 40% of `cycle_profit_goal` (default: the plan's profit target) |
+
+Set your path and last payout so the counts are right:
+
+```yaml
+account:
+  stage: express
+funded:
+  payout_path: standard        # or consistency - whatever you chose when the XFA was activated
+  last_payout_date: "2026-10-02"
+```
+
+**Rules the bot knows** (checked against Topstep's help center on 2026-10-11): Maximum Loss Limit,
+optional Daily Loss Limit, flat by 15:10 CT, profit targets and consistency, position limits and the
+XFA Scaling Plan, both payout paths and payout amounts, no hedging across accounts, **no trading your
+full maximum position into scheduled major news**, **no simulator exploitation** (high-frequency
+scalping, tight brackets or auto-breakeven designed to capture unrealistic fills, orders outside the
+best bid/offer), and running from your own computer. Preflight now **warns** if the news filter is off
+or the breakeven stop is tighter than 1R.
+
+None of this makes the bot trade bigger or more often to reach a goal faster — every limit in your risk
+settings still applies, and the goal-based rules only ever make it more careful. Rules change: the
+numbers in your TopstepX dashboard always win, and if they differ, tell the bot (`funded:` and `risk:`
+settings).
+
+---
+
+
 
 *Trading futures involves substantial risk of loss and is not suitable for everyone. This software
 is provided as-is, with no guarantee of profit or of compliance with Topstep's rules, which can

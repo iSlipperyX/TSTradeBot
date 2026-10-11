@@ -99,8 +99,29 @@ th.now, td.now { background:var(--surface2); }
 pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Consolas,monospace; max-height:340px; overflow:auto; margin:0;
   background:var(--surface2); border-radius:8px; padding:10px; }
 .toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:10px 16px;
-  border-radius:10px; font-weight:600; max-width:90vw; display:none; z-index:10; }
+  border-radius:10px; font-weight:600; max-width:90vw; display:none; z-index:10; white-space:pre-line; }
 .toast.bad { background:var(--crit); color:#fff; }
+/* market */
+.lv { display:grid; grid-template-columns:1fr auto auto; gap:3px 14px; font-size:13px; font-variant-numeric:tabular-nums; }
+.lv .px { font-weight:650; text-align:right; } .lv .dist { color:var(--muted); text-align:right; }
+.lv .now { color:var(--accent); font-weight:700; }
+ul.plain { margin:0; padding-left:18px; } ul.plain li { margin:3px 0; }
+.hl a { color:var(--text); text-decoration:none; } .hl a:hover { text-decoration:underline; }
+.hl time { color:var(--muted); font-size:11.5px; margin-right:6px; font-variant-numeric:tabular-nums; }
+.imp { font-size:11px; padding:0 6px; border-radius:999px; border:1px solid var(--border); }
+.imp.High { border-color:var(--crit); color:var(--crit); } .imp.Medium { border-color:var(--warn); color:var(--warn); }
+
+/* accounts */
+.accts { margin-top:12px; display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); }
+.acct { text-align:left; font-weight:400; padding:9px 12px; border-radius:10px; background:var(--surface); display:flex; flex-direction:column; gap:2px; min-width:0; }
+.acct.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.acct .n { display:flex; align-items:center; gap:6px; font-weight:700; }
+.acct .m { font-size:11px; font-weight:700; padding:0 6px; border-radius:999px; color:#fff; background:var(--paper); }
+.acct .m.live { background:var(--live); }
+.acct .d { font-size:12px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.acct .v { font-variant-numeric:tabular-nums; font-size:13px; }
+.allbar { margin-top:8px; }
+.who { font-weight:700; color:var(--accent); }
 .offline { display:none; margin-top:12px; background:var(--crit); color:#fff; padding:10px 14px; border-radius:10px; font-weight:600; }
 </style>
 </head>
@@ -121,12 +142,23 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
     <span class="pill" id="logpill" title="Warnings and errors from the bot - open the Logs tab">log</span>
     <span class="meta" id="meta"></span>
   </div>
+  <div id="acctwrap" hidden>
+    <div class="accts" id="accts"></div>
+    <div class="row allbar meta">
+      <span>All accounts:</span>
+      <button class="small" id="all-pause">Pause</button><button class="small" id="all-resume">Resume</button>
+      <button class="small" id="all-start">Start</button><button class="small" id="all-stop">Stop</button>
+      <button class="small danger" id="all-flatten">Flatten &amp; halt</button>
+      <span class="spacer"></span><span id="callgroups"></span>
+    </div>
+  </div>
   <div class="offline" id="offline">The dashboard lost contact with the controller. Is the Topstep Bot window still open on your PC?</div>
   <div class="banner" id="banner" hidden></div>
 
   <nav class="tabs">
     <button data-tab="overview" class="on">Overview</button>
     <button data-tab="ideas">Ideas <span class="count" id="ideacount" hidden></span></button>
+    <button data-tab="market">Market</button>
     <button data-tab="knowledge">Knowledge</button>
     <button data-tab="settings">Settings</button>
     <button data-tab="logs">Logs</button>
@@ -155,6 +187,13 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
         <p class="hint">Pause blocks automatic entries (an open trade keeps its stop; you can still take ideas). Flatten &amp; halt
           closes everything and stops trading until the bot is restarted.</p>
       </div>
+      <div class="panel" id="fundedpanel">
+        <h2 id="funded-title">Account goal</h2>
+        <div class="meter" id="funded-meter"><div class="mrow"><span id="funded-label"></span><span id="funded-txt"></span></div><div class="track"><div class="fill" id="funded-bar"></div></div></div>
+        <ul class="plain meta" id="funded-lines"></ul>
+        <p class="hint">From your trade journal and Topstep's rules (checked <span id="rules-date"></span> — your TopstepX dashboard always wins).
+          Settings: <code>funded:</code> in config.yaml.</p>
+      </div>
       <div class="panel">
         <h2>Current trade</h2>
         <div id="trade"></div>
@@ -182,6 +221,21 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
         <tbody id="recs"></tbody></table></div>
       <p class="hint">* hypothetical: ideas that weren't traded are followed to their stop, target or the session end (stop first if a bar touches both).</p>
     </div>
+  </section>
+
+  <!-- MARKET -->
+  <section class="tab" id="tab-market">
+    <div class="grid two">
+      <div class="panel"><h2>Today</h2><div id="mk-today"></div></div>
+      <div class="panel"><h2>Key levels</h2><div id="mk-levels"></div></div>
+    </div>
+    <div class="grid two" style="margin-top:12px">
+      <div class="panel"><h2>Reports that move it</h2><div id="mk-events"></div>
+        <p class="hint">No new trades from a few minutes before to a few minutes after each of these (news settings).</p></div>
+      <div class="panel"><h2>Headlines</h2><div id="mk-headlines" class="feed hl"></div>
+        <p class="hint">For your information — the bot does not trade on headlines.</p></div>
+    </div>
+    <div class="panel" style="margin-top:12px"><h2>About this market</h2><dl id="mk-profile"></dl></div>
   </section>
 
   <!-- KNOWLEDGE -->
@@ -216,7 +270,7 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Co
     </div>
     <div class="panel" style="margin-top:12px" id="crashpanel" hidden><h2>Latest crash report</h2><pre id="log-crash"></pre></div>
     <div class="panel" style="margin-top:12px">
-      <div class="row"><h2 style="margin:0">Bot log (latest)</h2><span class="spacer"></span><button class="small" id="reloadlogs">Refresh</button></div>
+      <div class="row"><h2 style="margin:0" id="logtitle">Bot log (latest)</h2><span class="spacer"></span><button class="small" id="reloadlogs">Refresh</button></div>
       <pre id="log-bot" style="margin-top:8px">…</pre>
       <p class="hint" id="logfolder"></p>
     </div>
@@ -232,12 +286,17 @@ const money = v => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toLoca
 const money0 = v => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, {maximumFractionDigits:0});
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let S = null, settingsBuilt = false, toastTimer;
+let ACC = "";  // the selected account ("" = the controller's default)
+try { ACC = localStorage.getItem("tsb-account") || ""; } catch (e) { /* storage blocked: start with the first account */ }
+const accName = () => S ? S.selected : ACC;
+const on = () => S && S.multi ? ` on ${accName()}` : "";
 
 function toast(msg, bad) { const t = $("toast"); t.textContent = msg; t.className = "toast" + (bad ? " bad" : "");
   t.style.display = "block"; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = "none", 5000); }
 async function post(path, body) {
+  body = Object.assign({account: accName()}, body || {});
   try {
-    const r = await fetch("/api/" + path, {method:"POST", headers:{"X-Token":TOKEN, "Content-Type":"application/json"}, body:JSON.stringify(body || {})});
+    const r = await fetch("/api/" + path, {method:"POST", headers:{"X-Token":TOKEN, "Content-Type":"application/json"}, body:JSON.stringify(body)});
     return await r.json();
   } catch (e) { return {ok:false, message:"No connection to the controller"}; }
 }
@@ -255,20 +314,31 @@ document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
 const openTab = name => document.querySelector(`.tabs button[data-tab="${name}"]`).click();
 
 // ---- process + mode controls
-$("b-start").onclick = () => run("bot/start", {}, S && S.controller.mode === "live" ? "Start the bot in LIVE mode (real orders)?" : null);
-$("b-restart").onclick = () => run("bot/restart", {}, "Restart the bot? Any open position is closed first.");
-$("b-stop").onclick = () => run("bot/stop", {}, "Stop the bot? Any open position is closed first. The dashboard stays online.");
-$("m-paper").onclick = () => { if (S && S.controller.mode !== "paper") run("mode", {mode:"paper"}, "Switch to PAPER mode? The bot restarts with simulated orders."); };
+$("b-start").onclick = () => run("bot/start", {}, S && S.controller.mode === "live" ? `Start the bot${on()} in LIVE mode (real orders)?` : null);
+$("b-restart").onclick = () => run("bot/restart", {}, `Restart the bot${on()}? Any open position is closed first.`);
+$("b-stop").onclick = () => run("bot/stop", {}, `Stop the bot${on()}? Any open position is closed first. The dashboard stays online.`);
+$("m-paper").onclick = () => { if (S && S.controller.mode !== "paper") run("mode", {mode:"paper"}, `Switch${on()} to PAPER mode? The bot restarts with simulated orders.`); };
 $("m-live").onclick = async () => {
   if (!S || S.controller.mode === "live") return;
-  const typed = prompt("Switch to LIVE trading with REAL orders on your TopstepX account?\n\nType LIVE to confirm:");
+  const typed = prompt(`Switch${on()} to LIVE trading with REAL orders on the TopstepX account?\n\nType LIVE to confirm:`);
   if (typed === null) return;
   run("mode", {mode:"live", confirm:typed});
 };
 $("pause").onclick = () => run("action/pause");
 $("resume").onclick = () => run("action/resume");
-$("flatten").onclick = () => run("action/flatten", {}, "Close the position, cancel orders and halt trading?");
-$("reset").onclick = () => { settingsBuilt = false; run("action/reset_settings", {}, "Undo every setting changed here or in Telegram (back to config.yaml)?"); };
+$("flatten").onclick = () => run("action/flatten", {}, `Close the position${on()}, cancel orders and halt trading?`);
+$("reset").onclick = () => { settingsBuilt = false; run("action/reset_settings", {}, `Undo every setting changed here or in Telegram${on()} (back to config.yaml)?`); };
+$("all-pause").onclick = () => run("action/pause", {account:"all"});
+$("all-resume").onclick = () => run("action/resume", {account:"all"});
+$("all-start").onclick = () => run("bot/start", {account:"all"}, (S.accounts || []).some(a => a.mode === "live") ? "Start every account's bot? Accounts in LIVE mode place real orders." : null);
+$("all-stop").onclick = () => run("bot/stop", {account:"all"}, "Stop every account's bot? Open positions are closed first.");
+$("all-flatten").onclick = () => run("action/flatten", {account:"all"}, "Close ALL positions on EVERY account, cancel orders and halt trading?");
+function selectAccount(name) {
+  if (name === accName()) return;
+  ACC = name; settingsBuilt = false;
+  try { localStorage.setItem("tsb-account", name); } catch (e) { /* not remembered: fine */ }
+  refresh(); if ($("tab-logs").classList.contains("on")) loadLogs();
+}
 $("logpill").onclick = () => openTab("logs");
 $("reloadlogs").onclick = loadLogs;
 $("train").onclick = async () => {
@@ -283,12 +353,31 @@ function meter(id, frac, text, color) { $(id + "-bar").style.width = Math.max(0,
 const STATES = {running:["--good","Running"], starting:["--warn","Starting…"], restarting:["--warn","Restarting…"],
   stopping:["--warn","Stopping…"], stopped:["--muted","Stopped"], crashed:["--crit","Crashed"], failed:["--crit","Failed to start"]};
 
+function renderAccounts(s) {
+  $("acctwrap").hidden = !s.multi;
+  if (!s.multi) return;
+  $("accts").innerHTML = s.accounts.map(a => {
+    const x = a.summary, [color, label] = STATES[a.state] || ["--muted", a.state];
+    const pos = !x ? "" : x.position === 0 ? "flat" : `${x.position > 0 ? "long" : "short"} ${Math.abs(x.position)}`;
+    const flag = !x ? "" : x.halted ? " · halted" : x.paused ? " · paused" : x.locked ? " · done today" : "";
+    return `<button class="acct ${a.account === s.selected ? "on" : ""}" data-acct="${esc(a.account)}">
+      <span class="n"><span class="dot" style="background:${css(color)}"></span>${esc(a.account)}
+        <span class="m ${a.mode === "live" ? "live" : ""}">${a.mode === "live" ? "LIVE" : "paper"}</span></span>
+      <span class="d">${x ? `${esc(x.contract)} · ${esc(x.strategy)}` : esc(label)}</span>
+      <span class="v">${x ? `Today <span class="${x.day_pnl < 0 ? "neg" : x.day_pnl > 0 ? "pos" : ""}">${money(x.day_pnl)}</span> · ${pos}${flag}` : "&nbsp;"}</span>
+    </button>`; }).join("");
+  $("accts").querySelectorAll("[data-acct]").forEach(b => b.onclick = () => selectAccount(b.dataset.acct));
+  const groups = {};
+  for (const a of s.accounts) if (a.summary) (groups[`${a.summary.strategy} on ${a.summary.contract}`] ||= []).push(a.account);
+  $("callgroups").textContent = Object.entries(groups).filter(([, v]) => v.length > 1).map(([k, v]) => `${v.join(" + ")}: same calls (${k})`).join(" · ");
+}
+
 function renderTop(s) {
   const c = s.controller, live = c.mode === "live";
   $("m-paper").classList.toggle("on", !live); $("m-live").classList.toggle("on", live);
   const [color, label] = STATES[c.state] || ["--muted", c.state];
   $("botpill").querySelector(".dot").style.background = css(color);
-  $("botpill").lastChild.textContent = `Bot: ${label}${c.state === "running" && c.uptime !== "-" ? " · " + c.uptime : ""}`;
+  $("botpill").lastChild.textContent = `${s.multi ? s.selected : "Bot"}: ${label}${c.state === "running" && c.uptime !== "-" ? " · " + c.uptime : ""}`;
   const up = ["running","starting","restarting","stopping"].includes(c.state);
   $("b-start").disabled = up; $("b-stop").disabled = !up; $("b-restart").disabled = c.state === "stopping";
   const b = s.bot;
@@ -302,7 +391,7 @@ function renderTop(s) {
   if (!up) {
     const ex = c.last_exit;
     cls = c.state === "stopped" ? "warn" : "bad";
-    html = `<b>The bot is ${esc(label.toLowerCase())}.</b><span class="meta">${ex ? `Last exit: ${esc(ex.reason)} (code ${ex.code}, ${esc(ex.at)})` : "Press Start to run it."}</span>
+    html = `<b>${s.multi ? `<span class="who">${esc(s.selected)}</span>: the bot` : "The bot"} is ${esc(label.toLowerCase())}.</b><span class="meta">${ex ? `Last exit: ${esc(ex.reason)} (code ${ex.code}, ${esc(ex.at)})` : "Press Start to run it."}</span>
       <span class="spacer"></span><button class="small primary" onclick="document.getElementById('b-start').click()">Start bot</button>
       <button class="small" onclick="openTab('logs')">See logs</button>`;
   } else if (c.state !== "running") {
@@ -382,6 +471,48 @@ function renderIdeas(b) {
       <td class="num">${res}</td><td class="note">${esc(r.note || r.reason)}</td></tr>`; }).join("") || `<tr><td colspan="12" class="empty">No recommendations yet today.</td></tr>`;
 }
 
+function renderFunded(b) {
+  const f = b && b.funded;
+  $("fundedpanel").hidden = !f;
+  if (!f) return;
+  $("funded-title").textContent = `${f.plan} ${f.stage}: ${f.goal}`;
+  $("rules-date").textContent = f.rules_checked;
+  let frac = null, label = "", txt = "";
+  if (f.stage === "combine") { frac = f.progress; label = "Profit target"; txt = `${money(f.profit)} of ${money(f.target)}`; }
+  else if (f.path === "standard") { frac = f.winning_days / f.winning_days_needed; label = `Winning days ($${f.winning_day_usd}+)`; txt = `${f.winning_days} of ${f.winning_days_needed}`; }
+  else if (f.path === "consistency") { frac = f.trading_days / f.trading_days_needed; label = "Trading days"; txt = `${f.trading_days} of ${f.trading_days_needed}`; }
+  $("funded-meter").hidden = frac === null;
+  if (frac !== null) { $("funded-label").textContent = label; meter("funded", frac, txt, f.eligible ? css("--good") : css("--accent")); }
+  $("funded-lines").innerHTML = (f.summary || []).slice(frac === null ? 0 : 1).map(x => `<li>${esc(x)}</li>`).join("");  // the meter shows line 1
+}
+
+function renderMarket(b) {
+  const m = b && b.market;
+  if (!m) { ["mk-today","mk-levels","mk-events","mk-headlines","mk-profile"].forEach(id => $(id).innerHTML = `<div class="empty">${b ? "Building the market picture…" : "Start the bot to see the market."}</div>`); return; }
+  const f = m.facts, pr = m.profile;
+  const rows = [["Contract", `${m.contract} · tick ${m.tick.size} = $${m.tick.value} · 1 point = $${m.point_value}`], ["Last price", f.price ?? "–"],
+    ["Normal day's range", f.atr_points ? `${f.atr_points} pts ≈ ${money0(f.atr_usd)} per contract` : `learning (${f.sessions} sessions so far)`],
+    ["Today's range", f.range_today != null ? `${f.range_today} pts${f.range_used != null ? ` · ${Math.round(f.range_used * 100)}% of normal` : ""}` : "–"],
+    ["Opening gap", f.gap != null ? `${f.gap > 0 ? "+" : ""}${f.gap} pts` : "–"], ["News day", m.news_day ? "yes — see the reports" : "no scheduled movers"]];
+  $("mk-today").innerHTML = `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` +
+    (m.notes.length ? `<ul class="plain meta" style="margin-top:10px">${m.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : "");
+  const levels = [...f.levels]; if (f.price != null) levels.push({name: "▶ now", price: f.price, distance: null, now: true});
+  levels.sort((a, b) => b.price - a.price);
+  $("mk-levels").innerHTML = levels.length ? `<div class="lv">${levels.map(l => `<span class="${l.now ? "now" : ""}">${esc(l.name)}</span><span class="px ${l.now ? "now" : ""}">${l.price}</span>
+    <span class="dist">${l.distance != null ? (l.distance > 0 ? "+" : "") + Number(l.distance).toFixed(2) : ""}</span>`).join("")}</div>`
+    : `<div class="empty">Levels appear after the first full session.</div>`;
+  const ev = e => `<div><time>${esc(e.local)}</time><span><span class="imp ${esc(e.impact)}">${esc(e.impact)}</span> ${esc(e.title)}${e.forecast ? ` <span class="muted">· forecast ${esc(e.forecast)}${e.previous ? `, previous ${esc(e.previous)}` : ""}</span>` : ""}</span></div>`;
+  const later = m.events_upcoming.filter(e => !m.events_today.some(t => t.time === e.time && t.title === e.title));
+  $("mk-events").innerHTML = `<div class="feed">${m.events_today.map(ev).join("") || `<div class="empty">Nothing scheduled today.</div>`}</div>` +
+    (later.length ? `<h2 style="margin-top:12px">Next 3 days</h2><div class="feed">${later.slice(0, 8).map(ev).join("")}</div>` : "");
+  const safe = u => /^https?:\/\//.test(u) ? u : "#";
+  $("mk-headlines").innerHTML = m.headlines.map(h => `<div><time>${esc((h.published || "").slice(5, 16).replace("T", " "))}</time>
+    <a href="${esc(safe(h.link))}" target="_blank" rel="noopener noreferrer">${esc(h.title)}</a></div>`).join("") || `<div class="empty">No headlines yet (news.headlines).</div>`;
+  $("mk-profile").innerHTML = pr ? [["Market", `${pr.name} (${pr.exchange})`], ["Contract months", pr.months], ["Expiry", pr.expiry], ["Roll", pr.roll],
+    ["Regular hours", m.rth], ["What moves it", pr.drivers.join(" · ")], ...pr.notes.map(n => ["Note", n])]
+    .map(([k, v]) => `<dt>${esc(k)}</dt><dd style="white-space:normal">${esc(v)}</dd>`).join("") : `<dt>Market</dt><dd>${esc(m.symbol)}</dd>`;
+}
+
 function renderKnowledge(b) {
   const k = b && b.knowledge, head = $("kb-table").querySelector("thead"), body = $("kb-table").querySelector("tbody");
   $("train").disabled = !k;
@@ -391,12 +522,13 @@ function renderKnowledge(b) {
   $("kb-meta").innerHTML = `${k.total} observations — training ${c.train}, live ideas ${c.shadow}, real trades ${c.real}. ` +
     (t ? `Last trained ${esc(t.at.slice(0, 16).replace("T", " "))} on ${t.days} days (${esc(t.from)} → ${esc(t.to)}).` : `<span class="neg">Not trained yet — press Retrain now.</span>`) +
     ` Now: <b>${esc(k.now.slot)}</b> / <b>${esc(k.now.regime)}</b>. Auto-traded: ${esc(b.strategy)}.`;
-  head.innerHTML = `<tr><th>Strategy</th>${k.slots.map(s => `<th class="${s === k.now.slot ? "now" : ""}">${esc(s)}</th>`).join("")}<th class="num">overall</th></tr>`;
+  head.innerHTML = `<tr><th>Strategy</th>${k.slots.map(s => `<th class="${s === k.now.slot ? "now" : ""}">${esc(s)}</th>`).join("")}<th class="num">overall</th><th class="num" title="Live observations only: days with a market-moving report vs days without">news / quiet days</th></tr>`;
   body.innerHTML = k.strategies.map(row => `<tr><td>${esc(row.title)}</td>${k.slots.map(s => `<td class="${s === k.now.slot ? "now" : ""}"><div class="kb-cell">${
     k.regimes.map(rg => { const cell = row.cells[s + "|" + rg]; const cls = cell.allowed ? "ok" : cell.level !== "unproven" ? "bad" : "unk";
       const mark = cell.allowed ? "✔" : cell.level !== "unproven" ? "✘" : "?";
       return `<span class="kb ${cls}" title="${esc(cell.why)}">${mark} ${esc(rg)} ${cell.cell_n ? `${cell.mean_r >= 0 ? "+" : ""}${cell.mean_r.toFixed(2)}R (${cell.cell_n})` : "–"}</span>`; }).join("")
-    }</div></td>`).join("")}<td class="num">${row.overall.n ? `${row.overall.mean_r >= 0 ? "+" : ""}${row.overall.mean_r.toFixed(2)}R (${row.overall.n})` : "–"}</td></tr>`).join("");
+    }</div></td>`).join("")}<td class="num">${row.overall.n ? `${row.overall.mean_r >= 0 ? "+" : ""}${row.overall.mean_r.toFixed(2)}R (${row.overall.n})` : "–"}</td>
+    <td class="num">${[row.news_days, row.quiet_days].map(x => x && x.n ? `${x.mean_r >= 0 ? "+" : ""}${x.mean_r.toFixed(2)}R (${x.n})` : "–").join(" / ")}</td></tr>`).join("");
 }
 
 function inputFor(x) {
@@ -437,10 +569,11 @@ function renderSettings(b) {
 
 function renderLogs(s) {
   $("ctlevents").innerHTML = (s.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(5, 16))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">No events yet.</div>`;
+  $("logtitle").textContent = s.multi ? `Bot log - ${s.selected} (latest)` : "Bot log (latest)";
 }
 async function loadLogs() {
   try {
-    const d = await (await fetch("/api/logs", {cache:"no-store"})).json();
+    const d = await (await fetch("/api/logs?account=" + encodeURIComponent(accName()), {cache:"no-store"})).json();
     $("log-errors").textContent = d.errors || "No warnings or errors logged.";
     $("log-bot").textContent = d.bot || "(empty)";
     $("crashpanel").hidden = !d.crash; $("log-crash").textContent = d.crash || "";
@@ -451,10 +584,11 @@ async function loadLogs() {
 
 function render(s) {
   S = s;
-  renderTop(s); renderOverview(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
+  if (s.multi && ACC && ACC !== s.selected) { ACC = s.selected; settingsBuilt = false; }  // e.g. account removed from config
+  renderAccounts(s); renderTop(s); renderOverview(s.bot); renderFunded(s.bot); renderMarket(s.bot); renderIdeas(s.bot); renderKnowledge(s.bot); renderSettings(s.bot); renderLogs(s);
 }
 async function refresh() {
-  try { const r = await fetch("/api/status", {cache:"no-store"}); render(await r.json()); $("offline").style.display = "none"; }
+  try { const r = await fetch("/api/status?account=" + encodeURIComponent(ACC), {cache:"no-store"}); render(await r.json()); $("offline").style.display = "none"; }
   catch (e) { $("offline").style.display = "block"; }
 }
 refresh(); setInterval(refresh, 2000);

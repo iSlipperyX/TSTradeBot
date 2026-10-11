@@ -74,6 +74,16 @@ class AccountConfig(_Section):
         default=None,
         description="Only if your account has a Topstep DLL (legacy platforms / opt-in). New TopstepX accounts have none.",
     )
+    login: str | None = Field(
+        default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,19}$",
+        description="Which stored API key to use (see 'topstep-bot keys'). Default: a key named like the account, "
+                    "else the main key.",
+    )
+
+    @field_validator("login", mode="before")
+    @classmethod
+    def _lower_login(cls, v: Any) -> Any:
+        return str(v).strip().lower() if v not in (None, "") else None
 
 
 class InstrumentConfig(_Section):
@@ -146,8 +156,9 @@ class ExecutionConfig(_Section):
     )
     orphan_position_policy: Literal["flatten", "adopt", "ignore"] = "flatten"
     max_entry_slippage_ticks: int | None = Field(
-        default=8, ge=0,
-        description="Entries are limit orders at most this many ticks worse than the signal price (None = market).",
+        default=2, ge=0,
+        description="Entries are limit orders at most this many ticks worse than the signal price, and never through the "
+                    "best bid/offer (None = market orders).",
     )
     max_risk_overrun: float = Field(
         default=1.5, ge=1.0,
@@ -190,7 +201,38 @@ class NewsConfig(_Section):
     minutes_before: int = Field(default=5, ge=0, le=120)
     minutes_after: int = Field(default=10, ge=0, le=240)
     flatten_before: bool = Field(default=False, description="Also close open trades just before the release.")
+    per_instrument: bool = Field(
+        default=True,
+        description="Also pause around the reports that move what you trade (e.g. weekly crude inventories for CL/MCL).",
+    )
     url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    headlines: bool = Field(default=True, description="Show recent headlines about what you trade (information only).")
+    headline_refresh_minutes: int = Field(default=15, ge=5, le=240)
+    headline_url: str = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"
+
+
+class FundedConfig(_Section):
+    """Funded-account goals: Combine target and consistency, Express Funded payout progress."""
+
+    payout_path: Literal["standard", "consistency"] = Field(
+        default="standard",
+        description="Your Express Funded Account payout path, chosen at activation (standard: winning days; "
+                    "consistency: best day <= 40% of profit).",
+    )
+    last_payout_date: date | None = Field(default=None, description="Day of your last payout request (progress restarts after it).")
+    winning_day_usd: float = Field(default=150, ge=0, description="Net profit that makes a 'winning day' on the standard path.")
+    winning_days_needed: int = Field(default=5, ge=1)
+    protect_winning_day: bool = Field(
+        default=True,
+        description="Express standard path: once today is a winning day, size new trades so a stop-out keeps it one.",
+    )
+    consistency_limit: float = Field(default=0.40, gt=0, le=1, description="Consistency path: largest day / total profit.")
+    consistency_days_needed: int = Field(default=3, ge=1)
+    cycle_profit_goal: float | None = Field(
+        default=None, gt=0,
+        description="Consistency path: profit you aim to build before requesting a payout. Each day is capped at "
+                    "consistency_limit x this (default: the plan's Combine profit target).",
+    )
 
 
 class RecommendationsConfig(_Section):
@@ -247,6 +289,95 @@ class BacktestConfig(_Section):
     report_dir: str = "reports"
 
 
+# Sections an account may override. Anything not overridden is inherited from the shared settings.
+ACCOUNT_SECTIONS = ("account", "instrument", "strategy", "risk", "session", "execution", "data",
+                    "notifications", "news", "recommendations", "knowledge", "funded")
+# What 'follow' copies from the leader, so both accounts get the same trade calls.
+CALL_SECTIONS = ("instrument", "strategy", "session", "knowledge", "news", "recommendations")
+# Account names must not be confused with Telegram words (/pause all, /set risk 150, ...).
+RESERVED_NAMES = {
+    "all", "main", "on", "off", "none", "default", "help", "settings",
+    # setting names and their short forms (see remote.py)
+    "risk_per_trade", "daily_loss_limit", "max_trades", "max_losses", "max_contracts", "profit_target", "breakeven_r",
+    "trail_atr", "trade_start", "last_entry", "news_filter", "news_flatten", "max_slippage", "strategy",
+    "risk", "dailyloss", "dll", "maxtrades", "trades", "losses", "contracts", "maxcontracts", "target", "profit",
+    "breakeven", "be", "trail", "start", "lastentry", "news", "newsflatten", "slippage",
+}
+ACCOUNT_SHORTCUTS = ("account_id", "account_name", "plan", "stage", "starting_balance", "mll_floor_override",
+                     "topstep_daily_loss_limit", "login")
+NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,19}$"
+
+
+class AccountProfile(_Section):
+    """One Topstep account the bot trades. Only what differs from the shared settings needs to be listed.
+
+    Accounts that keep the shared strategy/symbol (or 'follow' another account) get the same trade
+    calls at the same bar; each still sizes and risk-checks every trade with its own limits.
+    """
+
+    name: str = Field(pattern=NAME_PATTERN, description="Short name used on the dashboard and in Telegram, e.g. c1.")
+    enabled: bool = True
+    mode: Literal["paper", "live"] | None = Field(default=None, description="Default mode for this account (else the shared mode).")
+    follow: str | None = Field(default=None, description="Trade the same calls as this account (copies its strategy and symbol).")
+    # shortcuts for the account section
+    account_id: int | None = None
+    account_name: str | None = None
+    plan: Literal["50K", "100K", "150K"] | None = None
+    stage: Literal["combine", "express", "practice"] | None = None
+    starting_balance: float | None = None
+    mll_floor_override: float | None = None
+    topstep_daily_loss_limit: float | None = None
+    login: str | None = Field(default=None, description="Stored API key to use for this account (see 'topstep-bot keys').")
+    # per-account overrides (validated when the account's settings are built)
+    account: dict[str, Any] = Field(default_factory=dict)
+    instrument: dict[str, Any] = Field(default_factory=dict)
+    strategy: dict[str, Any] = Field(default_factory=dict)
+    risk: dict[str, Any] = Field(default_factory=dict)
+    session: dict[str, Any] = Field(default_factory=dict)
+    execution: dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+    notifications: dict[str, Any] = Field(default_factory=dict)
+    news: dict[str, Any] = Field(default_factory=dict)
+    recommendations: dict[str, Any] = Field(default_factory=dict)
+    knowledge: dict[str, Any] = Field(default_factory=dict)
+    funded: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _lower(cls, v: Any) -> Any:
+        return str(v).strip().lower() if v is not None else v
+
+    @field_validator("follow", mode="before")
+    @classmethod
+    def _lower_follow(cls, v: Any) -> Any:
+        return str(v).strip().lower() if v not in (None, "") else None
+
+    def overrides(self) -> dict[str, dict[str, Any]]:
+        out = {s: dict(getattr(self, s)) for s in ACCOUNT_SECTIONS if getattr(self, s)}
+        shortcuts = {k: getattr(self, k) for k in ACCOUNT_SHORTCUTS if getattr(self, k) is not None}
+        if shortcuts:
+            out["account"] = {**out.get("account", {}), **shortcuts}
+        return out
+
+
+class MultiAccountConfig(_Section):
+    """Rules that apply across all your accounts."""
+
+    hedge_guard: Literal["correlated", "same_product", "off"] = Field(
+        default="correlated",
+        description="Topstep bans holding opposite positions across accounts. 'correlated' blocks e.g. long MES in one "
+                    "account while short MNQ in another; 'same_product' only blocks the same market (NQ/MNQ).",
+    )
+    stagger_seconds: float = Field(default=3.0, ge=0, le=60, description="Pause between starting each account's bot.")
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
 class BotConfig(_Section):
     mode: Literal["paper", "live"] = "paper"
     log_level: str = "INFO"
@@ -267,21 +398,141 @@ class BotConfig(_Section):
     news: NewsConfig = Field(default_factory=NewsConfig)
     recommendations: RecommendationsConfig = Field(default_factory=RecommendationsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    funded: FundedConfig = Field(default_factory=FundedConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
+    multi_account: MultiAccountConfig = Field(default_factory=MultiAccountConfig)
+    accounts: list[AccountProfile] = Field(default_factory=list)
+    active_account: str | None = Field(default=None, exclude=True)  # set by for_account(); never saved
+
+    @model_validator(mode="after")
+    def _check_accounts(self) -> BotConfig:
+        names = [a.name for a in self.accounts]
+        dupes = {n for n in names if names.count(n) > 1}
+        if dupes:
+            raise ValueError(f"account names must be unique (repeated: {', '.join(sorted(dupes))})")
+        reserved = [n for n in names if n in RESERVED_NAMES]
+        if reserved:
+            raise ValueError(f"account name(s) {', '.join(reserved)} are reserved words - pick another name, e.g. c1")
+        ids = [a.account_id for a in self.accounts if a.account_id is not None]
+        if len(ids) != len(set(ids)):
+            raise ValueError("two accounts in 'accounts' use the same account_id")
+        by_name = {a.name: a for a in self.accounts}
+        for a in self.accounts:
+            if a.follow is None:
+                continue
+            if a.follow not in by_name:
+                raise ValueError(f"account {a.name} follows '{a.follow}', which is not in 'accounts'")
+            if a.follow == a.name or by_name[a.follow].follow is not None:
+                raise ValueError(f"account {a.name}: follow an account that picks its own calls (no chains)")
+            clash = [s for s in CALL_SECTIONS if getattr(a, s)]
+            if clash:
+                raise ValueError(f"account {a.name} follows {a.follow}, so it can't also set {', '.join(clash)} "
+                                 "(those decide the calls) - remove them or remove 'follow'")
+        return self
+
+    # ------------------------------------------------------------ accounts
+
+    @property
+    def multi(self) -> bool:
+        """True when config.yaml lists accounts (each gets its own bot process)."""
+        return bool(self.accounts)
+
+    def account_names(self, enabled_only: bool = True) -> list[str]:
+        return [a.name for a in self.accounts if a.enabled or not enabled_only]
+
+    def profile(self, name: str) -> AccountProfile:
+        for a in self.accounts:
+            if a.name == name.strip().lower():
+                return a
+        raise ValueError(f"No account named '{name}' in config.yaml. Accounts: {', '.join(self.account_names(False)) or 'none'}")
+
+    def for_account(self, name: str | None) -> BotConfig:
+        """The effective settings of one account: the shared settings plus that account's overrides.
+
+        ``None`` means 'the only account': the shared settings when no accounts are listed, or the
+        single enabled account. Raises ValueError when the choice is ambiguous or unknown.
+        """
+        if self.active_account and name in (None, "", self.active_account):
+            return self
+        if not self.accounts:
+            if name not in (None, "", "main"):
+                raise ValueError(f"No account named '{name}': config.yaml has no 'accounts' list")
+            return self
+        if name in (None, ""):
+            enabled = self.account_names()
+            if len(enabled) != 1:
+                raise ValueError(f"Several accounts are configured ({', '.join(enabled)}) - choose one with --account")
+            name = enabled[0]
+        prof = self.profile(name)
+        base = self.model_dump(mode="python", exclude={"accounts", "active_account"})
+        over = prof.overrides()
+        if prof.follow:
+            leader = self.profile(prof.follow).overrides()
+            over = {**{s: leader[s] for s in CALL_SECTIONS if s in leader}, **over}
+        merged = _deep_merge(base, over)
+        strat = over.get("strategy", {})
+        if strat.get("name", base["strategy"]["name"]) != base["strategy"]["name"]:
+            merged["strategy"]["params"] = dict(strat.get("params", {}))  # shared params belong to another strategy
+        if "symbol" in over.get("instrument", {}) and "contract_id" not in over["instrument"]:
+            merged["instrument"]["contract_id"] = None
+        if prof.mode:
+            merged["mode"] = prof.mode
+        try:
+            cfg = BotConfig.model_validate(merged)
+        except ValueError as exc:
+            raise ValueError(f"account {prof.name}: {exc}") from None
+        cfg.accounts = [a.model_copy() for a in self.accounts]
+        cfg.active_account = prof.name
+        cfg.log_dir = str(Path(self.log_dir) / "accounts" / prof.name)
+        return cfg
+
+    @property
+    def account_dir(self) -> Path:
+        """Where this account's own files live (journal, remote settings, knowledge, heartbeat)."""
+        if self.active_account:
+            return self.data_path / "accounts" / self.active_account
+        return self.data_path
 
     @property
     def data_path(self) -> Path:
         return Path(self.data_dir)
 
+    def journal_path_for(self, mode: str) -> Path:
+        return self.account_dir / f"journal_{mode}.db"
+
     @property
     def journal_path(self) -> Path:
-        return self.data_path / f"journal_{self.mode}.db"
+        return self.journal_path_for(self.mode)
 
     @property
     def knowledge_path(self) -> Path:
-        """One knowledge base per symbol and timeframe (shared by paper and live)."""
-        return self.data_path / f"knowledge_{self.instrument.symbol}_{self.instrument.timeframe_minutes}m.json"
+        """One knowledge base per symbol and timeframe (shared by paper and live), per account."""
+        return self.account_dir / f"knowledge_{self.instrument.symbol}_{self.instrument.timeframe_minutes}m.json"
+
+
+ENV_USERNAME = "TOPSTEPX_USERNAME"
+ENV_API_KEY = "TOPSTEPX_API_KEY"
+
+
+def login_env_names(name: str | None) -> tuple[str, str]:
+    """.env variable names for a stored login: the main one, or TOPSTEPX_USERNAME_<NAME> / TOPSTEPX_API_KEY_<NAME>."""
+    if not name:
+        return ENV_USERNAME, ENV_API_KEY
+    suffix = login_key(name).upper()
+    return f"{ENV_USERNAME}_{suffix}", f"{ENV_API_KEY}_{suffix}"
+
+
+def login_key(name: str) -> str:
+    """How a login name is stored: lower case, '-' as '_' (so 'c-1' and 'C_1' are the same key)."""
+    return name.strip().lower().replace("-", "_")
+
+
+class Login(BaseModel):
+    """One stored TopstepX login: a username and an API key."""
+
+    username: str | None = None
+    api_key: str | None = None
 
 
 class Secrets(BaseModel):
@@ -290,10 +541,39 @@ class Secrets(BaseModel):
     discord_webhook_url: str | None = None
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+    logins: dict[str, Login] = Field(default_factory=dict)  # extra named API keys (lower-case names)
+    login_name: str | None = None  # which named login username/api_key came from (None = the main key)
 
     @property
     def has_credentials(self) -> bool:
         return bool(self.username and self.api_key)
+
+    def login_for(self, cfg: BotConfig) -> str | None:
+        """The stored login an account uses: account.login, else a key named like the account, else the main key."""
+        if cfg.account.login:
+            return cfg.account.login
+        if cfg.active_account and login_key(cfg.active_account) in self.logins:
+            return cfg.active_account
+        return None
+
+    def for_login(self, name: str | None) -> Secrets:
+        """These secrets with username/api_key taken from a named login (a key without a username uses the main one)."""
+        if not name:
+            return self
+        login = self.logins.get(login_key(name))
+        if login is None or not login.api_key:
+            known = ", ".join(sorted(self.logins)) or "none"
+            raise ValueError(f"No API key named '{name}' in .env (stored keys: {known}). Add it with 'topstep-bot keys add {name}'.")
+        return self.model_copy(update={"username": login.username or self.username, "api_key": login.api_key,
+                                       "login_name": login_key(name)})
+
+    def for_account(self, cfg: BotConfig) -> Secrets:
+        return self.for_login(self.login_for(cfg))
+
+    def secret_values(self) -> list[str | None]:
+        """Everything that must never appear in a log file."""
+        return [self.api_key, self.telegram_bot_token, self.discord_webhook_url,
+                *(login.api_key for login in self.logins.values())]
 
 
 def load_env_file(path: Path = DEFAULT_ENV_PATH) -> None:
@@ -311,12 +591,19 @@ def load_env_file(path: Path = DEFAULT_ENV_PATH) -> None:
 
 
 def load_secrets() -> Secrets:
+    logins: dict[str, Login] = {}
+    for key, value in os.environ.items():
+        for prefix, field in ((ENV_API_KEY + "_", "api_key"), (ENV_USERNAME + "_", "username")):
+            if key.startswith(prefix) and value:
+                name = login_key(key[len(prefix):])
+                setattr(logins.setdefault(name, Login()), field, value)
     return Secrets(
-        username=os.environ.get("TOPSTEPX_USERNAME") or None,
-        api_key=os.environ.get("TOPSTEPX_API_KEY") or None,
+        username=os.environ.get(ENV_USERNAME) or None,
+        api_key=os.environ.get(ENV_API_KEY) or None,
         discord_webhook_url=os.environ.get("DISCORD_WEBHOOK_URL") or None,
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
+        logins={k: v for k, v in logins.items() if v.api_key},
     )
 
 

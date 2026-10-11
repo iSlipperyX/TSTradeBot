@@ -132,11 +132,13 @@ def setup_logging(
     retention_days: int = 30,
     file_prefix: str = "bot",
     shared_files: bool = True,
+    tag: str | None = None,
 ) -> Path:
     """Configure logging for the whole program. Returns the log folder.
 
     ``shared_files=False`` (the controller) writes only ``<file_prefix>.log`` so two processes never
     rotate the same file - on Windows that fails while the other process has it open.
+    ``tag`` (the account name) prefixes every line on screen, where several account bots share one window.
     """
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -169,9 +171,11 @@ def setup_logging(
         from rich.logging import RichHandler
 
         screen: logging.Handler = RichHandler(console=console, show_path=False, rich_tracebacks=True, markup=False)
+        if tag:
+            screen.setFormatter(logging.Formatter(f"[{tag}] %(message)s"))
     else:
         screen = logging.StreamHandler()
-        screen.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", DATE_FORMAT))
+        screen.setFormatter(logging.Formatter(f"%(asctime)s %(levelname)-8s {f'[{tag}] ' if tag else ''}%(message)s", DATE_FORMAT))
     screen.setLevel(level.upper())
 
     handlers = [main_file, errors_file, events_file, screen, stats] if shared_files else [main_file, screen, stats]
@@ -264,8 +268,8 @@ def log_startup(cfg: Any, command: str) -> None:
     log.info("Topstep Bot %s starting: %s (pid %s)", __version__, command, os.getpid())
     log.info("Python %s on %s; working folder %s", platform.python_version(), platform.platform(), os.getcwd())
     log.info(
-        "Config: mode=%s plan=%s %s symbol=%s %sm strategy=%s risk/trade=$%s daily loss=$%s",
-        cfg.mode, cfg.account.plan, cfg.account.stage, cfg.instrument.symbol, cfg.instrument.timeframe_minutes,
+        "Config: account=%s mode=%s plan=%s %s symbol=%s %sm strategy=%s risk/trade=$%s daily loss=$%s",
+        getattr(cfg, "active_account", None) or "main", cfg.mode, cfg.account.plan, cfg.account.stage, cfg.instrument.symbol, cfg.instrument.timeframe_minutes,
         cfg.strategy.name, cfg.risk.risk_per_trade, cfg.risk.personal_daily_loss_limit,
     )
 

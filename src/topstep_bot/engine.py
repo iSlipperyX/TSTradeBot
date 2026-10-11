@@ -35,6 +35,7 @@ event_log = logging.getLogger("topstep_bot.events")
 
 if TYPE_CHECKING:
     from topstep_bot.knowledge import KnowledgeBase
+    from topstep_bot.market_intel import MarketTracker
     from topstep_bot.recommendations import RecommendationBook
     from topstep_bot.remote import RemoteControl
 
@@ -43,6 +44,7 @@ _LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARN
 UTC = timezone.utc
 
 FLATTEN_RETRY = timedelta(seconds=5)
+QUOTE_FRESH = timedelta(seconds=5)  # older bid/offer quotes aren't trusted for pricing entries
 
 
 @dataclass
@@ -104,6 +106,9 @@ class TradingCore:
 
         self.balance = 0.0
         self.last_price: float | None = None
+        self.bid: float | None = None  # best bid / offer from the quote stream
+        self.ask: float | None = None
+        self.quote_at: datetime | None = None
         self.last_bar: Bar | None = None
         self.current_day: date | None = None
         self.strategy_day: date | None = None
@@ -119,6 +124,9 @@ class TradingCore:
         self.recommender: RecommendationBook | None = None  # trade ideas for the dashboard (+ what the bot learns from)
         self.knowledge: KnowledgeBase | None = None  # what has worked when; drives the adaptive strategy
         self.remote: RemoteControl | None = None  # settings/trades from the dashboard and Telegram
+        # Cross-account check before any entry: side (+1/-1) -> reason it's not allowed, or None (crossaccount.py).
+        self.entry_guard: Callable[[int], str | None] | None = None
+        self.market: MarketTracker | None = None  # levels, news and headlines for what we trade (market_intel.py)
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
@@ -228,6 +236,8 @@ class TradingCore:
             self.strategy.on_new_day(day)
             self.strategy_day = day
         self.observe_bar(bar)
+        if self.market:
+            self.market.update(bar, record=False)
         self.strategy.on_bar(bar, self.context(bar, warmup=True))
         if self.recommender:
             self.recommender.warmup_bar(bar)
@@ -277,6 +287,8 @@ class TradingCore:
         if t is not None and t.state == TradeState.PENDING and t.created_at <= bar.ts:
             await self.orders.cancel_unfilled_entry("price moved away from the signal")
         self.observe_bar(bar)
+        if self.market:
+            self.market.update(bar)
         ctx = self.context(bar)
         signal = self.strategy.on_bar(bar, ctx)
         if signal is not None and signal.action == "exit":
@@ -309,6 +321,12 @@ class TradingCore:
             self._note_skip(f"Skipped {side.label}: {plan}")
             if self.recommender:
                 self.recommender.record_active(sig, ctx, entry_ref, None, "skipped", plan)
+            return
+        block = self.entry_guard(side.sign) if self.entry_guard else None
+        if block:
+            self._note_skip(f"Skipped {side.label}: {block}")
+            if self.recommender:
+                self.recommender.record_active(sig, ctx, entry_ref, plan, "skipped", block)
             return
         trade = await self.orders.enter(side, plan.size, plan.stop, plan.target, sig.reason, ref_price=entry_ref,
                                         limit_price=plan.limit, planned_risk=plan.planned_risk)
@@ -343,9 +361,38 @@ class TradingCore:
                 target = None
         limit = None
         if max_slip is not None:
-            limit = c.round_price(worst_entry, "up" if side == OrderSide.BUY else "down")
+            limit = self.entry_limit(side, worst_entry, entry_ref)
         planned = size * self.risk.risk_per_contract(worst_entry, stop)
         return TradePlan(side, entry_ref, stop, target, size, limit, planned)
+
+    def on_quote(self, bid: float | None, ask: float | None, ts: datetime) -> None:
+        """The current best bid and offer (live and paper trading; backtests have none)."""
+        if bid is not None and ask is not None:
+            self.bid, self.ask, self.quote_at = bid, ask, ts
+
+    def touch(self, side: OrderSide) -> float | None:
+        """The best price available to us right now: the offer to buy, the bid to sell (None if not fresh)."""
+        if self.quote_at is None or self.clock() - self.quote_at > QUOTE_FRESH:
+            return None
+        return self.ask if side == OrderSide.BUY else self.bid
+
+    def entry_limit(self, side: OrderSide, worst_entry: float, entry_ref: float) -> float:
+        """Entry limit price: never worse than ``worst_entry``, and never through the best bid/offer.
+
+        Topstep prohibits orders priced outside the best bid/offer, so a buy is capped at the offer
+        and a sell at the bid. Without a fresh quote (feed quiet) the last trade price is used
+        instead. Backtests have no quotes at all and keep the ``worst_entry`` cap.
+        """
+        c = self.contract
+        buy = side == OrderSide.BUY
+        limit = c.round_price(worst_entry, "up" if buy else "down")
+        best = self.touch(side)
+        if best is None and self.quote_at is not None:
+            best = entry_ref  # live, but the quote is stale: don't reach past the last trade
+        if best is None:
+            return limit
+        best = c.round_price(best, "down" if buy else "up")
+        return min(limit, best) if buy else max(limit, best)
 
     def _note_skip(self, message: str) -> None:
         """Log a skipped signal once per day per message to avoid noise."""
@@ -464,6 +511,22 @@ class TradingCore:
         return self.knowledge.text(names, today=self.schedule.trading_day(self.clock()), slot=self.slot(),
                                    regime=self.regime.value)
 
+    def funded_status(self) -> dict:
+        """Progress toward this account's goal: Combine pass, or the next XFA payout (funded.py)."""
+        from topstep_bot import funded
+        from topstep_bot.risk.topstep import max_minis_allowed
+
+        if self.journal:
+            days = [(r["trading_day"], r["net_pnl"] or 0.0, r["trades"] or 0) for r in self.journal.daily(self.account_label)]
+        else:
+            days = [(r.day.isoformat(), r.pnl, r.trades) for r in self.daily_records]
+        today = self.current_day or self.schedule.trading_day(self.clock())
+        return funded.status(self.cfg.funded, self.risk.plan, self.risk.stage, days, today,
+                             self.risk.day_pnl(self.balance, self.orders.open_pnl()), self.balance,
+                             self.tracker.starting_balance,
+                             max_minis_allowed(self.risk.plan, self.risk.stage, self.risk.day_start_balance),
+                             self.risk.trades_today)
+
     def snapshot(self) -> dict:
         open_pnl = self.orders.open_pnl()
         equity = self.balance + open_pnl
@@ -500,4 +563,6 @@ class TradingCore:
             "slot": self.slot(),
             "regime": self.regime.value,
             "knowledge": self.knowledge_summary(),
+            "market": self.market.brief(self.clock()) if self.market else None,
+            "funded": self.funded_status(),
         }

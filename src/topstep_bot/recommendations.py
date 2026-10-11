@@ -281,11 +281,14 @@ class RecommendationBook:
         if kb is None or rec.outcome_r is None or any(k in why for k in UNINFORMATIVE_EXITS):
             return
         local = self.core.schedule.local(rec.created)
+        day = self.core.schedule.trading_day(rec.created)
+        calendar = self.core.schedule.news
         kb.record(Observation(
             day=self.core.schedule.trading_day(rec.created).isoformat(), time=local.strftime("%H:%M"),
             strategy=rec.strategy, side=rec.side.label, slot=rec.slot or self.core.slot(rec.created),
             regime=rec.regime or "calm", r=rec.outcome_r, usd=rec.outcome_usd,
             source="shadow" if rec.hypothetical else "real", why=why,
+            news=bool(calendar.on_day(day, self.core.schedule.tz)) if calendar is not None else None,
         ), save=not self.quiet)
 
     # ------------------------------------------------------------- output

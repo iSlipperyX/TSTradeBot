@@ -4,6 +4,7 @@ Behaviour is driven by the environment / actions:
   FAKE_POSITION=1    report an open position (blocks mode switches)
   FAKE_HANG=1        never write a heartbeat
   FAKE_EXIT=<code>   exit immediately with that code (e.g. 2 = config error, 3 = crash)
+  FAKE_EXIT_ACCOUNT  only that account exits (with FAKE_EXIT)
   action "stop"      graceful stop: exit note + exit code 0
   action "crash"     exit with code 3
   action "maint"     exit with code 75 (daily maintenance restart)
@@ -21,10 +22,11 @@ from topstep_bot.service import write_exit_note  # noqa: E402
 from topstep_bot.web import HttpServer, Request  # noqa: E402
 
 MODE = sys.argv[sys.argv.index("--mode") + 1] if "--mode" in sys.argv else "paper"
+ACCOUNT = sys.argv[sys.argv.index("--account") + 1] if "--account" in sys.argv else "main"
 
 
 async def main() -> int:
-    if os.environ.get("FAKE_EXIT"):
+    if os.environ.get("FAKE_EXIT") and os.environ.get("FAKE_EXIT_ACCOUNT", ACCOUNT) == ACCOUNT:
         code = int(os.environ["FAKE_EXIT"])
         write_exit_note(code, "fake configuration problem" if code == 2 else "fake crash")
         return code
@@ -32,7 +34,9 @@ async def main() -> int:
     position = 1 if os.environ.get("FAKE_POSITION") == "1" else 0
 
     def status(_: Request) -> dict:
-        return {"bot": {"mode": MODE, "position": position, "trade": None, "pid": os.getpid()}, "log": {"errors": 0, "warnings": 0, "recent": []}}
+        bot = {"mode": MODE, "position": position, "trade": None, "pid": os.getpid(), "account": ACCOUNT, "contract": "MNQZ6",
+               "strategy": "Fake", "halted": None, "risk": {"day_pnl": 12.5, "paused": False, "locked": None}}
+        return {"bot": bot, "log": {"errors": 0, "warnings": 0, "recent": []}}
 
     def action(req: Request) -> dict | str:
         name, payload = req.param, req.json()
@@ -44,7 +48,7 @@ async def main() -> int:
             done.set_result(3 if name == "crash" else 75)
             return "bye"
         if name == "status_text":
-            return {"text": f"fake bot in {MODE} mode"}
+            return {"text": f"fake bot {ACCOUNT} in {MODE} mode"}
         if name == "bad":
             raise ValueError("bad request from fake")
         return {"echo": name, "payload": payload}

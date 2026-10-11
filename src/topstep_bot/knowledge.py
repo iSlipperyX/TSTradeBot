@@ -17,6 +17,10 @@ Observations fade with age (half-life ``half_life_days``), so the base keeps ada
 market changes. Retraining replaces the "train" layer and drops shadow observations the new
 training already covers, so nothing is counted twice. Real trades are never dropped.
 
+Each live observation also notes whether the day had a market-moving report for the instrument
+(news.py), so the base learns how each strategy does on news days versus quiet days. History
+replayed by training has no calendar, so those observations count as "unknown" there.
+
 Time slots (Chicago time): open 08:30-10:00, midday 10:00-13:00, close 13:00-15:10.
 Regime: "volatile" when the 14-bar ATR (regular hours) is 20% or more above its multi-day average, else "calm".
 """
@@ -106,6 +110,7 @@ class Observation:
     usd: float | None
     source: str  # train | shadow | real
     why: str = ""  # how it ended (stop hit, target hit, session end, ...)
+    news: bool | None = None  # the day had a market-moving report for this instrument (None = unknown)
 
 
 @dataclass
@@ -255,11 +260,14 @@ class KnowledgeBase:
             age = 0
         return (0.5 ** (age / self.half_life_days)) * (self.real_weight if o.source == "real" else 1.0)
 
-    def stats(self, strategy: str, slot: str | None = None, regime: str | None = None, today: date | None = None) -> Stats:
+    def stats(self, strategy: str, slot: str | None = None, regime: str | None = None, today: date | None = None,
+              news: bool | None = None) -> Stats:
+        """``news``: None = every observation, True/False = only news days / only quiet days."""
         today = today or datetime.now(UTC).date()
         s = Stats()
         for o in self.obs:
-            if o.strategy == strategy and (slot is None or o.slot == slot) and (regime is None or o.regime == regime):
+            if o.strategy == strategy and (slot is None or o.slot == slot) and (regime is None or o.regime == regime) \
+                    and (news is None or o.news is news):
                 s.add(o, self.weight(o, today))
         return s
 
@@ -296,6 +304,8 @@ class KnowledgeBase:
                     cells[f"{sl}|{rg}"] = {**v.stats.to_dict(self.min_samples), "allowed": v.allowed, "level": v.level,
                                           "why": v.why, "cell_n": self.stats(name, sl, rg, today).n}
             rows.append({"name": name, "title": title, "overall": self.stats(name, None, None, today).to_dict(self.min_samples),
+                         "news_days": self.stats(name, today=today, news=True).to_dict(self.min_samples),
+                         "quiet_days": self.stats(name, today=today, news=False).to_dict(self.min_samples),
                          "slots": {sl: self.stats(name, sl, None, today).to_dict(self.min_samples) for sl in SLOT_NAMES},
                          "cells": cells, "allowed_now": cells[f"{slot}|{regime}"]["allowed"] if slot in SLOT_NAMES else False})
         return {
@@ -326,8 +336,9 @@ class KnowledgeBase:
                     mark = "✅" if cell["allowed"] else ("❌" if cell["level"] != "unproven" else "❔")
                     marks.append(f"{rg[0]}{mark}")
                 parts.append(f"{sl} {''.join(marks)}")
-            o = row["overall"]
-            lines.append(f"{row['title']}: {o['mean_r']:+.2f}R avg over {o['n']} | " + ", ".join(parts))
+            o, nd, qd = row["overall"], row["news_days"], row["quiet_days"]
+            news = f" | news days {nd['mean_r']:+.2f}R ({nd['n']}), quiet {qd['mean_r']:+.2f}R ({qd['n']})" if nd["n"] else ""
+            lines.append(f"{row['title']}: {o['mean_r']:+.2f}R avg over {o['n']} | " + ", ".join(parts) + news)
         lines.append("c = calm, v = volatile. ✅ trades now, ❌ switched off (losing), ❔ not enough evidence yet.")
         return "\n".join(lines)
 

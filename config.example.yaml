@@ -43,3 +43,18 @@ dashboard:
   enabled: true
   port: 8765
   open_browser: true
+
+# Trading several Combines/accounts? List them (see docs/HOW_TO_USE.md, section 28). Each account uses
+# every setting above unless it overrides it, so accounts that keep the shared strategy take the same calls.
+# multi_account:
+#   hedge_guard: correlated    # never hold opposite positions across accounts (Topstep prohibits hedging)
+# accounts:
+#   - name: c1                 # short name for the dashboard and Telegram (/pause c1, /pause all)
+#     account_id: 111111
+#   - name: c2
+#     account_id: 222222
+#     strategy: {name: orb}    # different calls on this account
+#     risk: {risk_per_trade: 100}
+#   - name: c3
+#     account_id: 333333
+#     follow: c2               # same calls as c2, with this account's own risk

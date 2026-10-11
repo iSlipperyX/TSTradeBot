@@ -10,7 +10,8 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timedelta
 
-from topstep_bot.config import AccountConfig, RiskConfig
+from topstep_bot import funded
+from topstep_bot.config import AccountConfig, FundedConfig, RiskConfig
 from topstep_bot.models import Contract
 from topstep_bot.risk.topstep import LossLimitTracker, PlanSpec, max_minis_allowed
 from topstep_bot.sessions import SessionSchedule
@@ -30,8 +31,10 @@ class RiskManager:
         schedule: SessionSchedule,
         tracker: LossLimitTracker,
         fees_round_turn: float,
+        funded_cfg: FundedConfig | None = None,
     ):
         self.cfg = cfg
+        self.funded = funded_cfg or FundedConfig()
         self.account_cfg = account
         self.plan = plan
         self.stage = account.stage
@@ -57,7 +60,7 @@ class RiskManager:
             return self.cfg.daily_profit_target
         if self.stage == "combine":
             return DEFAULT_COMBINE_DAILY_CAP * self.plan.profit_target
-        return None
+        return funded.daily_cap(self.funded, self.plan, self.stage)
 
     @property
     def topstep_dll(self) -> float | None:
@@ -121,6 +124,9 @@ class RiskManager:
         ]
         if self.topstep_dll:
             budgets.append(0.9 * self.topstep_dll + day_pnl)
+        keep = funded.protected_floor(self.funded, self.stage, day_pnl)
+        if keep is not None:  # XFA standard path: a stop-out must not undo today's winning day
+            budgets.append(day_pnl - keep)
         budget = min(budgets)
         if budget <= 0:
             return 0
@@ -188,6 +194,7 @@ class RiskManager:
             "mll_room": round(self.tracker.room(equity), 2),
             "daily_loss_limit": self.cfg.personal_daily_loss_limit,
             "daily_profit_target": self.daily_profit_target,
+            "winning_day_floor": funded.protected_floor(self.funded, self.stage, self.day_pnl(balance)),
             "locked": self.lock_reason,
             "risk_per_trade": round(self.cfg.risk_per_trade * self.risk_scale, 2),
             "risk_scale": self.risk_scale,

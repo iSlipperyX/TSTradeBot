@@ -51,11 +51,25 @@ Other systems: `pip install -e .` then run `topstep-bot`.
   and the reason for every shutdown (`topstep-bot logs`).
 - **24/7 service** — auto-restart, keep-awake, daily maintenance restart, crash recovery; preflight
   checks and ramp-up for a same-day start; automatic news blackouts.
+- **Several accounts at once (v1.2)** — list your Combines/accounts in `config.yaml` and each gets its
+  own bot: they take the **same calls** (each sized by its own risk) or **different calls** (own strategy,
+  symbol or risk per account; `follow:` copies another account). A **hedge guard** stops two accounts
+  from holding opposite positions (Topstep bans cross-account hedging). One dashboard and one Telegram
+  chat control them all — per account or all at once.
+- **Market knowledge** — for what you trade: key levels (prior day, overnight, open), a normal day's
+  range in points and dollars, the reports that move that market (e.g. EIA crude inventories for CL)
+  with automatic pauses around them, live headlines, and a contract profile (Market tab, `/brief`).
+  The knowledge base also learns how each strategy does on news days vs quiet days.
+- **Funded-account playbook** — Topstep's rules per stage (checked against the help center, with
+  sources), Combine pass and XFA payout progress (winning days, consistency ratio, payout estimate,
+  scaling limit), a winning-day protector and consistency cap, and preflight warnings for settings
+  Topstep prohibits (`/funded`, `/rules`).
+- **Several API keys** — one per account if you like, or keys for a second login (`topstep-bot keys`).
 - **Telegram remote control** — `/status`, `/pause`, `/resume`, `/flatten`, `/stop` with tap buttons,
   owner-only, confirmations for dangerous actions; the setup wizard finds your chat ID for you.
 - **Journal** (SQLite), rotating logs, Telegram/Discord alerts, restart-safe state.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
-- 144 automated tests, including an end-to-end run against a simulated TopstepX server.
+- 189 automated tests, including an end-to-end run against a simulated TopstepX server.
 
 ## Commands
 
@@ -75,6 +89,10 @@ topstep-bot telegram-test   send a test message to your Telegram bot
 topstep-bot preflight       check everything before trading live (go-live = preflight + start)
 topstep-bot autostart on    start everything when you sign in to Windows
 topstep-bot logs            recent errors; --open / --bundle
+topstep-bot accounts        your accounts and which ones share the same calls
+topstep-bot keys            list / add / remove / test stored API keys
+
+With several accounts, add --account <name> (or -a) to run, backtest, train, preflight, flatten...
 ```
 
 ## Project layout
@@ -91,7 +109,11 @@ src/topstep_bot/
   knowledge.py    the knowledge base (what works when) and its training
   recommendations.py  every strategy's signals tracked to an outcome (feeds the knowledge base)
   execution.py    order/trade lifecycle (entry, stop, target, OCO, reconciliation)
-  controller.py   dashboard + Telegram + supervision of the bot process
+  controller.py   dashboard + Telegram + supervision of the bot process(es), one per account
+  crossaccount.py hedge guard: no opposite positions across accounts
+  market_knowledge.py / market_intel.py   what each market is, its key reports, live levels and the brief
+  news.py         economic calendar (per instrument) and headlines
+  funded.py       Topstep rules per stage and progress to the pass / next payout
   worker_api.py   the bot's private local API (used by the controller)
   web.py          tiny local HTTP server shared by both
   live.py         live/paper runner (the bot process)
