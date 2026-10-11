@@ -26,6 +26,15 @@ No bot can guarantee passing the Combine or making a profit, and this one doesn'
 
 ## Features
 
+- **A central intelligence you can talk to** (new in 1.3) — ask the bot why it took or skipped a trade,
+  what each trade taught it, how a strategy is doing or what's next, on the dashboard's **Ask** tab or by
+  typing to it in Telegram. Every signal is recorded as a **decision record** (each strategy's verdict,
+  the evidence, the market, your limits, then the result and the lesson), and every answer comes from
+  those records. Optional AI answers with your own Anthropic API key; built-in answers without it. It can
+  explain, never trade.
+- **Decision lab** (new in 1.3) — a new evidence rule pools every level of what the bot knows, after
+  costs and backed by the long-run memory. The lab replays it against the 1.2 rule without peeking, and
+  the bot only switches when the new rule wins clearly on enough history.
 - **Topstep rules enforced in code** ([TOPSTEP_RULES.md](docs/TOPSTEP_RULES.md), checked Oct 2026) —
   trailing Maximum Loss Limit (end-of-day, locks, checked live with open P&L), the optional Daily
   Loss Limit, the Combine Consistency Target (55% of the profit target) and stop-at-target, position
@@ -167,6 +176,7 @@ topstep-bot telegram-test   send a test message to your Telegram bot
 topstep-bot logs            recent errors and crash reports  (--open, --bundle for support)
 topstep-bot insights        what the bot has learned: results after costs, real fills, conditions (--csv FILE, --longrun)
 topstep-bot learn           grow the long-run memory: backfill history and replay it all (--import CSV, --days N)
+topstep-bot lab             decision lab: replay the classic and evidence rules without peeking and pick one
 topstep-bot first-trade-test  backtest the first trade after starting against a coin flip (--days N)
 topstep-bot update          check GitHub for a newer version and install it (--check, --token, --undo)
 topstep-bot accounts        your accounts: what each trades, its key, which share the same calls (--check: ask TopstepX)
@@ -189,6 +199,10 @@ src/topstep_bot/
   knowledge.py    the knowledge base (what works when) and its training
   recommendations.py  every strategy's signals tracked to an outcome (feeds the knowledge base)
   memory.py       long-run memory: the market library and replaying all of it
+  brain/          the central intelligence: lookups, built-in answers, optional AI answers
+  reasoning.py    a decision record for every signal: verdicts, evidence, market, limits, result, lesson
+  evidence.py     the evidence rule (pooled, after costs);  policy.py  which rule decides;  lab.py  the decision lab
+  fmt.py          shared number formatting
   forecast.py     when the next trade is likely;  briefing.py  what the bot knows, in plain words
   execution.py    order/trade lifecycle (entry, stop, target, OCO, reconciliation)
   controller.py   dashboard + Telegram + supervision of the bot processes (one per account)

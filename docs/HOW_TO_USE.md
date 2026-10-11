@@ -31,6 +31,9 @@ enforces it, see [TOPSTEP_RULES.md](TOPSTEP_RULES.md).
 Optional extras like training, backtests and tuning are in the text menu: `start.bat menu`
 ([section 6](#6-the-text-menu-optional)).
 
+To find out why the bot did something, ask it: the dashboard's **Ask** tab, or just type the question
+to the bot in Telegram ([section 34](#34-the-central-intelligence-ask-the-bot-why)).
+
 ---
 
 ## Contents
@@ -68,6 +71,7 @@ Optional extras like training, backtests and tuning are in the text menu: `start
 31. [What the bot knows about the market and the news](#31-what-the-bot-knows-about-the-market-and-the-news)
 32. [Funded-account goals and Topstep's rules](#32-funded-account-goals-and-topsteps-rules)
 33. [Research: knowledge that grows from the internet](#33-research-knowledge-that-grows-from-the-internet)
+34. [The central intelligence: ask the bot why](#34-the-central-intelligence-ask-the-bot-why)
 
 ---
 
@@ -1069,6 +1073,7 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/stop` | Stops the bot (it flattens first). Telegram and the dashboard stay online, so `/startbot` brings it back. Asks for confirmation. Use `/pause` to just stop new trades. |
 | `/restart` | Restarts the bot (flattens first) — e.g. after an error. Asks for confirmation. |
 | `/startbot` | Starts the bot if it's stopped or crashed. Asks for confirmation. |
+| `/ask <question>` | Ask the bot anything about its trades and knowledge, e.g. `/ask why did you take the last trade?`. You can also just type the question without `/ask` ([section 34](#34-the-central-intelligence-ask-the-bot-why)) |
 | `/ideas` | Recommended trades with **Take** and **½ size** buttons ([section 16](#16-recommended-trades)) |
 | `/brief` | **What the bot knows**, in plain sentences: how much it has seen, what it would and wouldn't trade right now and why, what has worked after costs, lessons worth testing, and when it expects its next trade ([section 17](#what-the-bot-knows-and-when-it-trades-next)) |
 | `/market` | **Market brief** for the market this account trades: key levels, normal range, today's reports, headlines ([section 31](#31-what-the-bot-knows-about-the-market-and-the-news)) |
@@ -1406,9 +1411,16 @@ old evidence fades out. Next to it, the bot keeps a far bigger **long-run memory
 (a strategy that is hot lately but weak over a year deserves suspicion), and conditions worth testing
 get far more data. `topstep-bot insights --longrun` prints the long-run report.
 
-**What it doesn't change:** how the bot trades. The adaptive strategy still decides from the recent
-knowledge base, and every risk rule, limit and position size stays exactly as configured. Using the
-long run in decisions is a later, separately tested step (the roadmap's "decide on evidence" phase).
+**What it changes in trading:** nothing by itself. The long-run memory only enters trading decisions
+through the **evidence rule**, and the bot only switches to that rule when the **decision lab** has
+shown it doing better on enough replayed history ([section 34](#the-decision-rule-and-the-decision-lab)).
+Every risk rule, limit and position size stays exactly as configured either way.
+
+**Reaching further back.** TopstepX only serves recent history for each futures contract (in October
+2026: about a month for the current contract and a few weeks more for the one before; older contracts
+returned nothing). So the backfill also asks for the **two previous contracts** once each and keeps
+whatever they return, and the library keeps growing every day the bot runs. For years of history, import
+a CSV with `topstep-bot learn --import`.
 
 How far back TopstepX serves history depends on the contract; the library simply keeps whatever it
 gets and grows every day the bot runs. Prices jump when the front-month contract rolls; the strategies
@@ -1821,6 +1833,14 @@ knowledge:                     # what the bot learns while it runs (drives the a
   backups_kept: 14             # daily copies of the knowledge base in data/knowledge_backups (0 = none)
   deep_learning: true          # long-run memory: keep every bar, backfill and replay it all daily (reports only)
   deep_history_days: 365       # 30-3650: how far back the long-run memory reaches
+  policy: auto                 # auto | classic | evidence: how the adaptive strategy decides (section 34)
+
+brain:                         # the central intelligence (section 34)
+  ai: false                    # true = a Claude model writes the answers (needs an Anthropic API key, Setup tab)
+  model: claude-opus-5-5
+  effort: medium               # low | medium | high
+  max_tool_calls: 8            # 1-20 lookups per answer
+  explain_trades: true         # add why a trade was taken (and what it taught) to its alerts
 
 first_trade:                   # one educated trade soon after starting ("Teach the bot" turns it on)
   enabled: false
@@ -1985,6 +2005,7 @@ different config file.
 | `topstep-bot logs [--all] [--open] [--bundle]` | Recent errors, open the log folder, or zip logs for support |
 | `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
 | `topstep-bot learn [--days N] [--import CSV] [--offline]` | Grow the long-run memory: download the history it's missing, add a CSV, then replay all of it through every strategy ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
+| `topstep-bot lab` | Decision lab: replay the classic and the evidence rule on the long-run memory without peeking and pick one ([section 34](#the-decision-rule-and-the-decision-lab)); `learn` runs it at the end too |
 | `topstep-bot first-trade-test [--days N] [--data F] [--download]` | Backtest the first trade after starting against a coin flip ([section 17](#the-first-trade-after-starting)) |
 | `topstep-bot accounts [--check]` | Every account: what it trades, its mode and key, and which accounts share the same calls; `--check` also asks TopstepX about each one (balance, can trade, open positions and orders, today's trades) ([section 29](#29-trading-several-accounts)) |
 | `topstep-bot keys [add\|remove\|test] [NAME]` | List, add (tests the login first), remove or test stored API keys ([section 30](#30-several-api-keys)) |
@@ -2002,7 +2023,7 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 |---|---|
 | `config.yaml` | Your settings (`config.yaml.bak`: the version before `tune` last saved settings) |
 | `.env` | Your API credentials, Telegram token and webhook URLs — **private** |
-| `data/journal_paper.db`, `data/journal_live.db` | Trade journal, daily results, MLL floor, paper balance |
+| `data/journal_paper.db`, `data/journal_live.db` | Trade journal, daily results, MLL floor, paper balance, and every decision record (why each signal was taken, passed on or skipped) |
 | `data/<SYMBOL>_1m.csv` | Downloaded history |
 | `reports/*.html` | Backtest and tuning reports (tuning also writes a `.json` with every detail) |
 | `logs/` | Log files — see [section 22](#22-logs-finding-out-what-happened) |
@@ -2012,6 +2033,7 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `data/knowledge_backups/` | A daily copy of the knowledge base (the last `knowledge.backups_kept`) |
 | `data/market_library.sqlite` | The long-run memory's market library: every price bar the bot has downloaded or imported |
 | `data/knowledge_<SYMBOL>_<TF>m_longrun.json` | What every strategy did on the whole library (reports only; rebuilt daily, safe to delete) |
+| `data/lab_<SYMBOL>_<TF>m.json` | The decision lab's last result: both rules' replayed results and which one `policy: auto` uses (safe to delete) |
 | `data/news_cache.json` | This week's economic calendar |
 | `data/research/` | The research library ([section 33](#33-research-knowledge-that-grows-from-the-internet)): `calendar.json` (every calendar seen), `headlines_<ROOT>.jsonl`, `daily_<ROOT>.json` (daily history), `watched_pages.json` (rule pages). Safe to delete |
 | `data/market_journal.jsonl` | One line per finished session: range, gap, overnight levels, the day's reports and the bot's result |
@@ -2630,7 +2652,100 @@ Good to know:
 
 ---
 
+## 34. The central intelligence: ask the bot why
 
+Version 1.3 gives the bot one place that knows everything it recorded, and you can talk to it. Ask it
+why it took a trade, why it skipped one, what a trade taught it, how a strategy is doing or when it
+expects to trade next. It answers from its own records only, so every number it gives you is one the
+bot actually wrote down.
+
+### Where to ask
+
+- **Dashboard → Ask tab.** Type a question or tap one of the suggestions. Next to it, **Decisions**
+  lists every signal the bot weighed (filter: Taken, Skipped by a rule, Passed on); click one for the
+  full explanation. Below is the **Decision lab** panel.
+- **Telegram.** Just type the question to the bot, like a chat (`/ask why the 10:35 trade?` works too).
+  Commands still start with `/`. With several accounts, start with the account's name:
+  `combine2 why didn't you trade today?`.
+- It works while the bot is stopped as well: it then reads the files on your PC.
+
+Things to try: *why did you take the last trade?*, *why the 10:35 trade?*, *why didn't you trade today?*,
+*what did you learn?*, *how is ORB doing?*, *what do you know?*, *when is the next trade?*,
+*which decision rule are you using?*, *what are my rules?*
+
+It can explain and report, but it **can't place, change or close trades or change settings**. That stays
+on the dashboard and the Telegram commands, behind the same confirmations and risk limits as before.
+
+### Every decision is recorded
+
+Whenever a strategy signals, the bot writes a **decision record** before it does anything else:
+
+- **What it saw:** the signal, the price, the time of day and the market (trend or range, how big the
+  move is next to normal, gaps, overnight levels, today's reports).
+- **Every strategy's verdict:** which strategies signalled on that bar, whether each was allowed to trade
+  and why (in plain words, with the numbers behind it).
+- **The evidence:** the recent record at three levels (this time of day and market, this time of day,
+  the strategy overall), the after-cost estimate, the long-run memory's record, and the most similar
+  past situations.
+- **Your limits at that moment:** today's P&L, trades taken and allowed, losses in a row, room above the
+  Maximum Loss Limit, and whether trading was paused or locked.
+- **The result:** what the trade made, or, for a signal it passed on or that a risk rule blocked, what
+  it would have made. Then the **lesson**: how its verdict on that strategy, time of day and market moved
+  once the result was learned.
+
+Records are kept in the trade journal (`data/journal_<mode>.db`), survive restarts, and stay on your PC (with AI answers
+on, the parts the AI looks up for a question are sent to Anthropic to write the answer). With `brain.explain_trades: true` (the default), the Telegram entry alert gets a short
+**💡 Why** line, and the exit alert a **📘 lesson**.
+
+### AI answers (optional)
+
+The built-in answers cover the common questions and need nothing extra. For free-form questions
+("compare this week with last week", "what would make you trade more in the afternoon?"), you can let a
+Claude model write the answers:
+
+1. Get an API key at [console.anthropic.com](https://console.anthropic.com) (this is separate from a
+   Claude subscription and is billed per use; a question usually costs from a few cents to a few tens of cents, more with
+   `brain.effort: high`).
+2. Dashboard → **Setup** tab → **AI answers** → paste the key → **Check and save**. The key
+   is checked first and stored in `.env` on your PC, like your other keys.
+3. Tick **Let the AI answer questions**.
+
+The AI gets **read-only lookups** into the same records and nothing else: it can't trade or change
+settings, and it is told to answer only from what the lookups return. If it can't be reached (no
+internet, a bad key), the bot answers by itself and says so. Remove the key any time with **Remove**.
+
+### The decision rule and the decision lab
+
+The adaptive strategy needs a rule for which signals to trade. Version 1.3 has two:
+
+- **Classic** (the 1.2 rule): the most specific recent evidence decides. A strategy trades in a slot
+  once it has enough recent results there and they are positive after shrinking toward zero.
+- **Evidence** (new in 1.3): one estimate per signal that pools every level at once (this time of day
+  and market, this time of day, the strategy overall) and the long-run memory, after costs. A handful of
+  lucky trades in one corner can't switch a strategy on: the estimate leans on the wider levels until
+  the corner has earned its own weight.
+
+Which one is "better" is a question for data, not opinion. So the **decision lab** replays both rules
+day by day over the long-run memory, using only what was known before each day and with your trade
+limits applied, and compares them with a bootstrap test. With `knowledge.policy: auto` (the default) the
+bot keeps the classic rule **until the evidence rule wins clearly**: at least 60 test days, 30 trades
+each, and 95% of resampled histories agree. The lab runs after each daily `learn`, and the bot only
+changes rule outside the entry window, never in the middle of a trade. A switch shows in the
+dashboard's Activity. Run it yourself with `topstep-bot lab`; the result shows on the Ask tab and in `/ask which decision
+rule are you using?`. Set `policy: classic` or `policy: evidence` to choose the rule yourself.
+
+The decision rule only chooses **which** signals to trade. Position size, stops, the daily loss limit,
+the trade limit, the MLL buffer, news blackouts and every Topstep rule are untouched by it.
+
+### Honest expectations
+
+The intelligence makes the bot **explainable**; it doesn't make it profitable by itself. In October 2026
+the long-run memory held about 19 test days of MNQ from TopstepX, far too few for the lab to prefer
+either rule, so it keeps the classic rule. That will change only as the memory grows (it does every
+day the bot runs, faster with an imported CSV). No bot, rule or AI can guarantee profits or passing
+the Combine.
+
+---
 
 *Trading futures involves substantial risk of loss and is not suitable for everyone. This software
 is provided as-is, with no guarantee of profit or of compliance with Topstep's rules, which can
