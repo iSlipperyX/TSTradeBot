@@ -2105,6 +2105,29 @@ port, change `dashboard.port` in `config.yaml`.
 **"disconnected" on the dashboard** — The bot reconnects automatically; while disconnected it
 polls prices instead. If it persists, check your internet connection.
 
+**"TopstepX can't be reached ... the bot keeps trying"** — the bot was started (or restarted) while
+your internet or TopstepX was down. It waits and tries again (15 seconds, then up to every 5
+minutes) and starts by itself as soon as TopstepX answers; nothing needs doing. You get one alert,
+not one per try.
+
+**"The trade journal was damaged and has been set aside"** — the journal (`journal_<mode>.db`) could
+not be read, for example after a power cut or a sync tool (OneDrive, Dropbox) overwrote it. The bot
+kept it as `….damaged-<time>` and started a new one, so it still runs. The journal is where the bot
+remembers your trailing Maximum Loss Limit: compare the MLL the dashboard shows with the one on
+TopstepX and, if they differ, set `account.mll_floor_override` to TopstepX's value. In live mode new
+trades stay paused until you press **Resume**. Keep the data folder out of synced folders.
+
+**"Could not cancel order ... will check again" / "Entry skipped: earlier order(s) ... may still be
+working"** — a request to TopstepX timed out, so the bot can't be sure an old stop or target is gone.
+It doesn't open a new trade until the next check confirms it (within the reconcile interval,
+15 seconds by default) and cancels it if it is still there. **"Entry order may not have gone
+through ... checking with the broker"** is the same for an entry: the bot waits for TopstepX to show
+whether it filled, protects it with a stop if it did, and drops it if it didn't.
+
+**"Position ... is on the wrong side for the ... trade - closing it"** — the account ended up long
+when the bot's trade was short (or the reverse), e.g. an old order filled after a connection
+problem. The bot closes it rather than protect it with orders meant for the other side.
+
 **A position the bot didn't open was closed** — That is `orphan_position_policy: flatten`. Don't
 trade manually on the bot's account, or change the policy.
 

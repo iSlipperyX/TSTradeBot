@@ -202,13 +202,15 @@ def test_a_position_on_the_wrong_side_is_closed_not_protected(mnq):
     run(go())
 
 
-def test_a_fill_for_part_of_the_close_keeps_the_stop(mnq):
+def test_a_fill_for_part_of_the_close_keeps_the_stop_even_if_reported_twice(mnq):
     async def go():
         broker, om, closed, now = setup(mnq)
         await tick(broker, now, 100.0)
         t = await om.enter(OrderSide.BUY, 2, 95.0, None, "t", ref_price=100.0)
         await broker.drain()
-        await om.handle_fill(Fill(999, 12345, mnq.id, OrderSide.SELL, 1, 100.0, now[0]))  # half of it
+        half = Fill(999, 12345, mnq.id, OrderSide.SELL, 1, 100.0, now[0])
+        await om.handle_fill(half)
+        await om.handle_fill(half)  # the same execution reported twice is still only half
         assert om.trade is t and stops(broker, OrderSide.SELL)  # still protected
         await om.handle_position(Position(1, mnq.id, 2, 100.0))
         assert om.trade is t
@@ -356,5 +358,58 @@ def test_a_journal_that_cannot_be_written_never_stops_the_protective_flatten(mnq
         day = core.current_day
         await core.roll_day_if_needed(now[0] + timedelta(days=1))  # and the next day still begins
         assert core.current_day != day and core.risk.trades_today == 0
+
+    run(go())
+
+
+# ---------------------------------------------------------------- TopstepX unreachable at startup
+
+def test_a_bot_started_during_a_topstepx_outage_waits_for_it_instead_of_crashing(tmp_path, monkeypatch):
+    import asyncio
+
+    import httpx
+    import websockets
+
+    import topstep_bot.live as live
+    from topstep_bot.api.rest import ProjectXError
+
+    from .test_live_runner import FakeTopstepX, make_runner
+
+    monkeypatch.setattr(live, "PREPARE_RETRY_FIRST", 1)
+    assert live.unreachable(httpx.ConnectError("down")) and live.unreachable(ProjectXError("HTTP 503", 503))
+    assert not live.unreachable(ProjectXError("Login failed (code 3): bad key", 3, {"success": False}))
+    assert not live.unreachable(ValueError("a bug"))
+
+    class Outage(FakeTopstepX):
+        down = True
+
+        def handler(self, request):
+            if self.down:
+                raise httpx.ConnectError("TopstepX is unreachable")
+            return super().handler(request)
+
+    async def go():
+        fake = Outage()
+        async with websockets.serve(fake.hub, "127.0.0.1", 0) as srv:
+            runner = make_runner(fake, srv.sockets[0].getsockname()[1], "live", tmp_path)
+            ready = asyncio.Event()
+
+            async def on_ready(core):
+                ready.set()
+
+            task = asyncio.create_task(runner.run(on_ready))
+            await asyncio.sleep(2.5)
+            assert not task.done() and not ready.is_set()  # still waiting, not crashed
+            fake.down = False
+            await asyncio.wait_for(ready.wait(), 30)  # starts as soon as TopstepX answers
+            runner.controls.stop.set()
+            await asyncio.wait_for(task, 20)
+
+            fake.down = True  # and a stop while it waits ends it at once
+            runner = make_runner(fake, srv.sockets[0].getsockname()[1], "live", tmp_path / "again")
+            task = asyncio.create_task(runner.run(on_ready))
+            await asyncio.sleep(1.5)
+            runner.controls.stop.set()
+            await asyncio.wait_for(task, 5)
 
     run(go())

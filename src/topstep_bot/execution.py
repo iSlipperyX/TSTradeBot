@@ -77,6 +77,7 @@ class ManagedTrade:
     planned_risk: float | None = None  # dollars at risk when the trade was sized
     exit_sent_at: datetime | None = None
     exit_fills: list[tuple[float, int]] = field(default_factory=list)
+    exit_fill_ids: set[int] = field(default_factory=set)
     exit_price: float | None = None
     exit_reason: str = ""
     closed_at: datetime | None = None
@@ -478,7 +479,10 @@ class OrderManager:
             if t is None or t.state not in (TradeState.OPEN, TradeState.EXITING):
                 return
             ours = (t.entry_order_id, t.stop_order_id, t.target_order_id)
-            if fill.side == t.side.opposite and fill.order_id not in ours:
+            if fill.side == t.side.opposite and fill.order_id not in ours and not fill.voided:
+                if fill.id in t.exit_fill_ids:
+                    return  # the same execution reported twice (e.g. resent after a reconnect)
+                t.exit_fill_ids.add(fill.id)
                 t.exit_fills.append((fill.price, fill.size))  # e.g. a close-position market order
                 if t.filled_size and sum(q for _, q in t.exit_fills) >= t.filled_size:
                     # The close filled completely: the position is flat even if its position update is
