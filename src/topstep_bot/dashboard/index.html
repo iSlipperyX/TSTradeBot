@@ -305,6 +305,22 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 .savebar .placebtn { width:auto; margin:0; padding:10px 22px; }
 .steps { margin:6px 0 10px; padding-left:20px; font-size:13px; } .steps li { margin:3px 0; }
 .connected { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--pos); }
+.aclist { display:grid; gap:10px; margin:8px 0 4px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
+.accard { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--surface2); min-width:0; }
+.accard .hd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.accard .hd b { font-size:14px; }
+.accard .hd .sub { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.st { font-size:11.5px; font-weight:700; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+.st.ok { background:var(--goodbg); color:var(--pos); } .st.bad { background:var(--badbg); color:var(--neg); }
+.st.idle { background:var(--track); color:var(--muted); }
+.accard dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 12px; margin:8px 0 0; font-size:12.5px; }
+.accard dt { color:var(--muted); } .accard dd { margin:0; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.accard ul { margin:8px 0 0; padding-left:18px; font-size:12.5px; } .accard li.issue { color:var(--neg); }
+.accard li.note { color:var(--muted); }
+.accard .row { margin-top:8px; }
+.acform { border:1px solid var(--accent); border-radius:10px; padding:4px 14px 12px; margin-top:12px; }
+.keyrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:13px; padding:7px 0; border-top:1px solid var(--border); }
+.keyrow .meta { font-size:12px; }
 @media (max-width:620px) { .sfield { grid-template-columns:1fr; } .sfield .help { grid-column:1; } .sfield input[type=text],
   .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select { width:100%; } }
 </style>
@@ -508,6 +524,11 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 
   <!-- MARKET -->
   <section class="tab" id="tab-market">
+    <div class="panel" id="mk-pick-panel" style="margin-bottom:12px" hidden>
+      <h2>Why this market</h2><div id="mk-pick"></div>
+      <p class="hint">Market set to Auto: when it starts, the bot replays recent history for each candidate and scores only the
+        days held back from what it learned, after costs and sized with this account's risk. It picks again each day.</p>
+    </div>
     <div class="grid two">
       <div class="panel"><h2>Today</h2><div id="mk-today"></div></div>
       <div class="panel"><h2>Key levels</h2><div id="mk-levels"></div></div>
@@ -650,11 +671,84 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
           <button class="small primary" id="su-connect">Connect</button></div>
         <div class="help" id="su-key-help">Checked with TopstepX, then saved in the .env file on this PC. It is never shown again.</div></div>
       <div class="msg" id="su-login-msg"></div>
+      <div id="su-keys-box" hidden>
+        <h3 style="margin-top:16px">More API keys <span class="meta" style="font-weight:500">optional</span></h3>
+        <p class="hint" style="margin:0 0 4px">One key works for every account on your login. Add another to trade the accounts
+          of a second TopstepX login, or to give an account its own key so a problem with one key only affects that account.</p>
+        <div id="su-keys"></div>
+        <div class="row" style="margin-top:8px"><button class="small" id="su-key-open">+ Add another API key</button></div>
+        <div class="acform" id="su-key-form" hidden>
+          <div class="sfield"><label for="su-k-name">Name</label>
+            <div class="ctl"><input type="text" id="su-k-name" spellcheck="false" placeholder="e.g. c2 or partner"></div>
+            <div class="help">An account with the same name uses it automatically.</div></div>
+          <div class="sfield"><label for="su-k-user">Username</label>
+            <div class="ctl"><input type="text" id="su-k-user" autocomplete="off" spellcheck="false"></div>
+            <div class="help">The TopstepX login this key belongs to.</div></div>
+          <div class="sfield"><label for="su-k-key">API key</label>
+            <div class="ctl"><input type="password" id="su-k-key" autocomplete="off" spellcheck="false" placeholder="paste the API key"></div>
+            <div class="help">Tested with TopstepX before it is saved in .env.</div></div>
+          <div class="row"><button class="small primary" id="su-k-save">Test and save</button><button class="small" id="su-k-cancel">Cancel</button></div>
+        </div>
+        <div class="msg" id="su-keys-msg"></div>
+      </div>
     </div>
 
     <div class="panel" style="margin-top:12px">
-      <h2 class="steptitle"><span class="stepnum">2</span>Account</h2>
-      <div class="sfield"><span class="lbl">Account the bot trades</span>
+      <h2 class="steptitle"><span class="stepnum">2</span><span id="su-acct-title">Account</span></h2>
+      <p class="hint" style="margin:0 0 4px">What TopstepX reports for each account, read with its API key: balance, whether it
+        can trade, open positions and orders, today's trades. Checked when you open this tab.</p>
+      <div class="aclist" id="su-aclist"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="small primary" id="su-ac-add">+ Add account</button>
+        <button class="small" id="su-ac-check">Check accounts</button>
+        <span class="meta" id="su-ac-when"></span>
+      </div>
+      <div class="acform" id="su-acform" hidden>
+        <h3 id="su-af-title">Add an account</h3>
+        <div class="sfield" id="su-af-first-row" hidden><label for="su-af-first">Name for your current account</label>
+          <div class="ctl"><input type="text" id="su-af-first" class="short" value="c1" spellcheck="false"></div>
+          <div class="help">With two or more accounts each one has a short name. Your current account's trades and
+            knowledge are copied to its own folder; stop the bot before saving.</div></div>
+        <div class="sfield"><span class="lbl">TopstepX account</span>
+          <div class="ctl"><div class="choices" id="su-af-accounts"></div></div>
+          <div class="help" id="su-af-accounts-help"></div></div>
+        <div class="sfield"><label for="su-af-name">Name</label>
+          <div class="ctl"><input type="text" id="su-af-name" class="short" spellcheck="false" placeholder="c2"></div>
+          <div class="help">Short: letters, digits, - or _. Used on the dashboard and in Telegram (/status c2).</div></div>
+        <div class="sfield"><label for="su-af-plan">Size and type</label>
+          <div class="ctl"><select id="su-af-plan" style="width:auto"></select><select id="su-af-stage" style="width:auto"></select></div>
+          <div class="help" id="su-af-plan-help">Filled in from the account's name and balance: check it.</div></div>
+        <div class="sfield" id="su-af-dll-row"><span class="lbl">Topstep Daily Loss Limit</span>
+          <div class="ctl"><label class="checkline"><input type="checkbox" id="su-af-dll"><span>This account has Topstep's optional Daily Loss Limit</span></label></div></div>
+        <div class="sfield" id="su-af-payout-row"><label for="su-af-payout">Payout path</label>
+          <div class="ctl"><select id="su-af-payout"><option value="standard">Standard: 5 winning days of $150 or more</option>
+            <option value="consistency">Consistency: best day at most 40% of profit</option></select></div></div>
+        <div class="sfield"><label for="su-af-key">API key</label>
+          <div class="ctl"><select id="su-af-key"></select></div>
+          <div class="help">Picked for you: the key that can see this account.</div></div>
+        <div class="sfield"><label for="su-af-calls">Trade calls</label>
+          <div class="ctl"><select id="su-af-calls">
+            <option value="shared">Same calls as the shared settings</option>
+            <option value="follow">Copy another account's calls</option>
+            <option value="own">Its own strategy</option></select>
+            <select id="su-af-follow" style="width:auto" hidden></select><select id="su-af-strategy" style="width:auto" hidden></select></div>
+          <div class="help" id="su-af-calls-help"></div></div>
+        <div class="sfield" id="su-af-market-row"><label for="su-af-market">Market</label>
+          <div class="ctl"><select id="su-af-market"></select></div>
+          <div class="help" id="su-af-market-help"></div></div>
+        <div class="sfield"><span class="lbl">Risk</span>
+          <div class="ctl">
+            <label class="meta" for="su-af-risk">per trade $</label><input type="number" class="short" id="su-af-risk" min="1" step="10">
+            <label class="meta" for="su-af-daily">daily limit $</label><input type="number" class="short" id="su-af-daily" min="1" step="10">
+            <label class="meta" for="su-af-trades">trades/day</label><input type="number" class="short" id="su-af-trades" min="1" max="50" step="1" style="width:80px"></div>
+          <div class="help" id="su-af-risk-help">Each account sizes and limits its own trades. Risk is not pooled.</div></div>
+        <div class="row" style="margin-top:10px"><button class="small primary" id="su-af-save">Save account</button>
+          <button class="small" id="su-af-cancel">Cancel</button></div>
+        <div class="msg" id="su-af-msg"></div>
+      </div>
+      <div class="msg" id="su-ac-msg"></div>
+      <h3 id="su-acct-sub" style="margin-top:16px">Settings for this account</h3>
+      <div class="sfield" id="su-pick-row"><span class="lbl">Account the bot trades</span>
         <div class="ctl"><div class="choices" id="su-accounts"></div></div></div>
       <div class="sfield"><label for="su-plan">Account size</label>
         <div class="ctl"><select id="su-plan"></select></div><div class="help" id="su-plan-help"></div></div>
@@ -1462,7 +1556,20 @@ function renderFunded(b) {
   $("funded-lines").innerHTML = (f.summary || []).slice(frac === null ? 0 : 1).map(x => `<li>${esc(x)}</li>`).join("");  // the meter shows line 1
 }
 
+function renderPick(p) {
+  $("mk-pick-panel").hidden = !p;
+  if (!p) return;
+  const rows = [...p.candidates].sort((a, b) => (b.r_per_day ?? -99) - (a.r_per_day ?? -99));
+  $("mk-pick").innerHTML = `<p style="margin:4px 0 8px"><b>${esc(p.symbol)}</b> - ${esc(p.reason)} <span class="meta">(${esc(p.at.replace("T", " "))})</span></p>
+    ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Market</th><th class="num">R / day</th><th class="num">$ / day</th><th class="num">Trades</th><th class="num">Won</th><th>Note</th></tr></thead><tbody>
+    ${rows.map(c => `<tr${c.symbol === p.symbol ? ' class="on"' : ""}><td>${c.symbol === p.symbol ? "▶ " : ""}${esc(c.symbol)}</td>
+      <td class="num ${c.r_per_day > 0 ? "pos" : c.r_per_day < 0 ? "neg" : ""}">${c.r_per_day != null ? (c.r_per_day > 0 ? "+" : "") + c.r_per_day.toFixed(2) : "–"}</td>
+      <td class="num">${c.usd_per_day != null ? money0(c.usd_per_day) : "–"}</td><td class="num">${c.trades || 0}${c.test_days ? ` / ${c.test_days}d` : ""}</td>
+      <td class="num">${c.win_rate != null ? Math.round(c.win_rate * 100) + "%" : "–"}</td><td class="meta">${esc(c.note)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+}
+
 function renderMarket(b) {
+  renderPick(b && b.market_pick);
   const m = b && b.intel;
   if (!m) { ["mk-today","mk-levels","mk-events","mk-headlines","mk-profile"].forEach(id => $(id).innerHTML = `<div class="empty">${b ? "Building the market picture…" : "Start the bot to see the market."}</div>`); return; }
   const f = m.facts, pr = m.profile;
@@ -1803,7 +1910,176 @@ function fillSetup() {
   SU_SUG = suSuggestion();
   su("path").textContent = SU.exists ? `Saved in ${SU.path}` : `Creates ${SU.path}`;
   suMsg("save-msg", "");
-  renderAccounts(); renderAlerts(); renderAutostart(); suRender();
+  renderAccounts(); renderAlerts(); renderAutostart(); suRender(); renderAccountPanel();
+  if (SU.login.api_key_saved && (!SU.report || SU.report_age > 300)) checkAccounts(false);
+}
+
+// ---- Accounts panel: what TopstepX says about every account, and adding / editing / removing them
+let AC_BUSY = false, AF = null;  // AF: the add/edit form's state
+async function checkAccounts(force) {
+  if (AC_BUSY) return;
+  AC_BUSY = true; su("ac-check").disabled = true; su("ac-when").textContent = "Checking with TopstepX…";
+  const d = await post("setup/accounts/check", {force});
+  AC_BUSY = false; su("ac-check").disabled = false;
+  if (d.ok === false) { su("ac-when").textContent = ""; suMsg("ac-msg", d.message, false); return; }
+  SU.report = d; SU.report_age = 0; renderAccountPanel();
+}
+function acStatus(r) {
+  if (!r) return `<span class="st idle">not checked</span>`;
+  if (r.issues && r.issues.length) return `<span class="st bad">${r.topstepx ? "needs attention" : "not connected"}</span>`;
+  return `<span class="st ok">✔ connected</span>`;
+}
+function acCard(name, r, prof) {
+  const t = r && r.topstepx, line = (k, v) => `<dt>${esc(k)}</dt><dd>${v}</dd>`;
+  const title = SU.multi ? esc(name) : "Your account";
+  let dl = "";
+  if (t) {
+    dl += line("TopstepX", `${esc(t.name)} <span class="meta">id ${t.id}</span>`);
+    dl += line("Balance", `${money(t.balance)} · ${t.can_trade ? "can trade" : '<span class="neg">can\'t trade now</span>'}`);
+  } else if (prof && prof.account_id) dl += line("TopstepX", `id ${prof.account_id}`);
+  if (r) {
+    const says = t && ((t.plan && t.plan !== r.plan) || (t.stage && t.stage !== r.stage));  // only worth a word when it disagrees
+    dl += line("Type", `${esc(r.plan)} ${esc(r.stage)}` + (says ? ` <span class="neg">(name says ${esc([t.plan, t.stage].filter(Boolean).join(" "))})</span>` : ""));
+    if (r.progress) dl += line("Combine", `${money0(r.progress.profit)} of ${money0(r.progress.target)} target`);
+    dl += line("Key", esc(r.key));
+    const mk = r.follow ? `copies ${esc(r.follow)}'s calls (${esc(r.market)})` : r.auto_pick
+      ? `Auto: bot picks${r.market !== r.fallback ? ` - today ${esc(r.market)}` : ""} <span class="meta">(else ${esc(r.fallback)})</span>` : esc(r.market);
+    dl += line("Trades", `${mk} · ${esc(r.strategy)} · ${money0(r.risk_per_trade)}/trade`);
+    if (r.positions) dl += line("Open now", (r.positions.length ? esc(r.positions.join(", ")) : "flat") + (r.orders && r.orders.length ? ` · ${r.orders.length} working order${r.orders.length > 1 ? "s" : ""}` : ""));
+    if (r.today) dl += line("Today", `${r.today.trades} trade${r.today.trades === 1 ? "" : "s"}, net <span class="${r.today.pnl < 0 ? "neg" : r.today.pnl > 0 ? "pos" : ""}">${money(r.today.pnl)}</span>`);
+  }
+  const items = r ? [...(r.issues || []).map(x => `<li class="issue">${esc(x)}</li>`), ...(r.notes || []).map(x => `<li class="note">${esc(x)}</li>`)] : [];
+  const off = prof && prof.enabled === false ? ` <span class="st idle">off</span>` : "";
+  const buttons = SU.multi ? `<div class="row"><button class="small" data-acedit="${esc(name)}">Edit</button>
+    <button class="small" data-acremove="${esc(name)}">Remove</button></div>` : "";
+  return `<div class="accard"><div class="hd"><b>${title}</b>${acStatus(r)}${off}</div><dl>${dl}</dl>${items.length ? `<ul>${items.join("")}</ul>` : ""}${buttons}</div>`;
+}
+function renderAccountPanel() {
+  const rep = SU.report, rows = rep ? rep.accounts : [];
+  su("acct-title").textContent = SU.multi ? "Accounts" : "Account";
+  su("acct-sub").textContent = SU.multi ? "Shared settings: every account uses these unless it sets its own" : "Settings for this account";
+  su("pick-row").hidden = SU.multi;
+  const names = SU.multi ? SU.profiles.map(p => p.name) : ["main"];
+  const configured = SU.configured && (SU.multi || SU.values.account_id != null);
+  su("aclist").innerHTML = !configured ? `<div class="empty">${SU.login.api_key_saved ? "Choose your account below and press Save, then it is checked here." : "Connect your TopstepX login first (step 1)."}</div>`
+    : names.map(n => acCard(n, rows.find(r => r.name === n), SU.profiles.find(p => p.name === n))).join("");
+  su("aclist").querySelectorAll("[data-acedit]").forEach(b => b.onclick = () => openAccountForm(b.dataset.acedit));
+  su("aclist").querySelectorAll("[data-acremove]").forEach(b => b.onclick = () => removeAccount(b.dataset.acremove));
+  su("ac-add").hidden = !configured;
+  su("ac-when").textContent = AC_BUSY ? "Checking with TopstepX…" : rep ? `Checked ${new Date(rep.checked_at).toLocaleTimeString()}` +
+    (rep.available.length ? ` · ${rep.available.length} more account${rep.available.length > 1 ? "s" : ""} on your key${SU.keys.length > 1 ? "s" : ""} can be added` : "") : "";
+  renderKeys();
+}
+function renderKeys() {
+  su("keys-box").hidden = !SU.login.api_key_saved;
+  const rep = SU.report, status = name => rep && rep.keys.find(k => k.name === name);
+  su("keys").innerHTML = SU.keys.map(name => {
+    const k = status(name);
+    const st = !k ? `<span class="st idle">not checked</span>` : k.ok ? `<span class="st ok">✔ works · sees ${k.accounts}</span>` : `<span class="st bad">${esc(k.error)}</span>`;
+    return `<div class="keyrow"><b>${name === "main" ? "main (above)" : esc(name)}</b><span class="meta">${k ? esc(k.username) + " · " + esc(k.key) : ""}</span>${st}
+      <span class="spacer"></span>${name === "main" ? "" : `<button class="small" data-keyremove="${esc(name)}">Remove</button>`}</div>`; }).join("");
+  su("keys").querySelectorAll("[data-keyremove]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Remove the API key '${b.dataset.keyremove}' from this PC?`)) return;
+    const d = await post("setup/keys/remove", {name: b.dataset.keyremove});
+    suMsg("keys-msg", d.message, d.ok !== false);
+    if (d.ok !== false) { await loadSetup(true); checkAccounts(true); }
+  });
+}
+su("ac-check").onclick = () => checkAccounts(true);
+su("ac-add").onclick = () => openAccountForm(null);
+su("key-open").onclick = () => { su("key-form").hidden = false; su("k-user").value = SU.login.username; su("k-name").focus(); };
+su("k-cancel").onclick = () => { su("key-form").hidden = true; su("k-key").value = ""; };
+su("k-save").onclick = async () => {
+  su("k-save").disabled = true; suMsg("keys-msg", "Testing the key with TopstepX…");
+  const d = await post("setup/keys/add", {name: su("k-name").value.trim(), username: su("k-user").value.trim(), api_key: su("k-key").value.trim()});
+  su("k-save").disabled = false; suMsg("keys-msg", d.message, d.ok !== false);
+  if (d.ok === false) return;
+  su("k-key").value = ""; su("k-name").value = ""; su("key-form").hidden = true;
+  await loadSetup(true); checkAccounts(true);
+};
+
+function openAccountForm(name) {
+  const prof = name ? SU.profiles.find(p => p.name === name) : null, rep = SU.report || {available: [], accounts: []};
+  const current = name && prof ? (rep.accounts.find(r => r.name === name) || {}).topstepx : null;
+  const choices = [...(current ? [current] : prof && prof.account_id ? [{id: prof.account_id, name: prof.account_name || `Account ${prof.account_id}`}] : []), ...rep.available];
+  const taken = new Set(SU.multi ? SU.profiles.map(p => p.name) : []);
+  let n = taken.size + (SU.multi ? 1 : 2); while (taken.has("c" + n)) n++;
+  AF = {original: name || "", account: choices.find(c => prof && c.id === prof.account_id) || null, choices};
+  su("af-title").textContent = name ? `Edit ${name}` : "Add an account";
+  su("af-first-row").hidden = SU.multi || !!name;
+  su("af-name").value = name || "c" + n;
+  const c = SU.choices;
+  su("af-plan").innerHTML = c.plans.map(p => option(p.name, p.name, p.name === (prof ? prof.plan : SU.values.plan))).join("");
+  su("af-stage").innerHTML = c.stages.map(x => option(x.key, x.label, x.key === (prof ? prof.stage : SU.values.stage))).join("");
+  su("af-dll").checked = prof ? prof.topstep_dll : false;
+  su("af-payout").value = prof ? prof.payout_path : "standard";
+  su("af-key").innerHTML = SU.keys.map(k => option(k, k === "main" ? "main key" : k, k === ((prof && prof.key) || "main"))).join("");
+  const others = (SU.multi ? SU.profiles.map(p => p.name) : [su("af-first").value || "c1"]).filter(x => x !== name);
+  su("af-follow").innerHTML = others.map(x => option(x, x, prof && prof.follow === x)).join("");
+  su("af-strategy").innerHTML = c.strategies.map(x => option(x.key, x.title, x.key === (prof ? prof.strategy : SU.values.strategy))).join("");
+  su("af-calls").value = prof ? prof.calls : "shared";
+  const shared = SU.values.symbol === "AUTO" ? "Auto" : SU.values.symbol;
+  su("af-market").innerHTML = option("", `Same as the shared settings (${shared})`, !prof || !prof.market) +
+    c.symbols.map(x => option(x.key, x.key === "AUTO" ? x.label : `${x.key} - ${x.label}`, prof && prof.market === x.key)).join("");
+  su("af-risk").value = prof ? prof.risk_per_trade : SU.values.risk_per_trade;
+  su("af-daily").value = prof ? prof.daily_loss_limit : SU.values.daily_loss_limit;
+  su("af-trades").value = prof ? prof.max_trades : SU.values.max_trades;
+  suMsg("af-msg", ""); su("acform").hidden = false;
+  if (!name && choices.length === 1) pickFormAccount(choices[0]); else renderAccountForm();  // the only one: chosen for you
+  su("acform").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+function pickFormAccount(a) {
+  AF.account = a;
+  if (a.plan) su("af-plan").value = a.plan;
+  if (a.stage) su("af-stage").value = a.stage;
+  su("af-dll").checked = !!a.dll;
+  if (a.key && SU.keys.includes(a.key)) su("af-key").value = a.key;
+  renderAccountForm();
+}
+function renderAccountForm() {
+  const box = su("af-accounts");
+  box.innerHTML = AF.choices.length ? AF.choices.map(a => `<button class="choice${AF.account && AF.account.id === a.id ? " on" : ""}" data-afacct="${a.id}">
+    <b>${esc(a.name)}</b><small>${a.balance != null ? money(a.balance) + " · " : ""}${a.can_trade === false ? "can't trade right now" : a.can_trade ? "can trade" : ""}${a.plan || a.stage ? ` · looks like ${esc([a.plan, a.stage].filter(Boolean).join(" "))}` : ""}${a.key && a.key !== "main" ? ` · key ${esc(a.key)}` : ""}</small></button>`).join("")
+    : `<div class="empty">No other account on your key${SU.keys.length > 1 ? "s" : ""}. Add an API key for another TopstepX login above, or press Check accounts.</div>`;
+  box.querySelectorAll("[data-afacct]").forEach(b => b.onclick = () => pickFormAccount(AF.choices.find(x => String(x.id) === b.dataset.afacct)));
+  const excluded = (SU.report && SU.report.excluded) || [];
+  su("af-accounts-help").textContent = excluded.length ? `Not offered: ${excluded.join(", ")} (Live Funded Accounts can't trade through the API).` : "";
+  const stage = su("af-stage").value, calls = su("af-calls").value;
+  su("af-dll-row").hidden = stage === "practice"; su("af-payout-row").hidden = stage !== "express";
+  su("af-follow").hidden = calls !== "follow"; su("af-strategy").hidden = calls !== "own";
+  su("af-market-row").hidden = calls === "follow";
+  su("af-calls-help").textContent = calls === "follow" ? "Trades whatever that account trades (strategy and market), sized with this account's own risk."
+    : calls === "own" ? "Its own signals. Accounts that disagree on the same market are kept apart by the hedge guard."
+    : "The same signal at the same moment as the other accounts on the shared settings, each sized with its own risk.";
+  const m = su("af-market").value;
+  su("af-market-help").textContent = m === "AUTO" ? "Each day it replays recent history for every micro your plan allows and trades the one where its strategy did best on days held back from training. If none shows an edge it trades the shared market."
+    : m ? "" : "Whatever the shared settings trade.";
+  const plan = SU.choices.plans.find(p => p.name === su("af-plan").value), risk = parseFloat(su("af-risk").value);
+  su("af-risk-help").textContent = plan && risk > 0.15 * plan.max_loss_limit ? `That is ${Math.round(100 * risk / plan.max_loss_limit)}% of this account's Maximum Loss Limit per trade - a few losses in a row would end it.`
+    : "Each account sizes and limits its own trades. Risk is not pooled.";
+  su("af-risk-help").className = "help" + (plan && risk > 0.15 * plan.max_loss_limit ? " warn" : "");
+}
+["af-stage", "af-calls", "af-market", "af-plan"].forEach(id => su(id).addEventListener("change", renderAccountForm));
+su("af-risk").addEventListener("input", renderAccountForm);
+su("af-cancel").onclick = () => { su("acform").hidden = true; AF = null; };
+su("af-save").onclick = async () => {
+  if (!AF || !AF.account) { suMsg("af-msg", "Pick the TopstepX account first.", false); return; }
+  su("af-save").disabled = true; suMsg("af-msg", "Saving…");
+  const d = await post("setup/accounts/save", {original: AF.original, first_name: su("af-first").value.trim(), name: su("af-name").value.trim(),
+    account_id: AF.account.id, account_name: AF.account.name, plan: su("af-plan").value, stage: su("af-stage").value,
+    topstep_dll: su("af-dll").checked, payout_path: su("af-payout").value, key: su("af-key").value, calls: su("af-calls").value,
+    follow: su("af-follow").value, strategy: su("af-strategy").value, market: su("af-market").value,
+    risk_per_trade: su("af-risk").value, daily_loss_limit: su("af-daily").value, max_trades: su("af-trades").value});
+  su("af-save").disabled = false;
+  if (d.ok === false) { suMsg("af-msg", d.message, false); return; }
+  su("acform").hidden = true; AF = null; toast(d.message);
+  await loadSetup(true); suMsg("ac-msg", d.message, true); refresh(); checkAccounts(true);
+};
+async function removeAccount(name) {
+  if (!confirm(`Remove ${name} from config.yaml? Its trades and knowledge stay in data/accounts/${name}.`)) return;
+  const d = await post("setup/accounts/remove", {name});
+  suMsg("ac-msg", d.message, d.ok !== false);
+  if (d.ok !== false) { await loadSetup(true); refresh(); }
 }
 function renderAccounts() {
   const box = su("accounts"), list = SU.accounts || [];
@@ -1837,8 +2113,9 @@ function suRender() {
   su("payout-row").hidden = stage !== "express";
   const sym = c.symbols.find(x => x.key === su("symbol").value);
   const blocked = sym && sym.blocked.includes(plan.name);
-  su("symbol-help").textContent = sym ? `${money(sym.tick_value)} per tick.` + (blocked ? ` Topstep doesn't currently allow ${sym.key} on a ${plan.name} account.`
-    : sym.key.startsWith("M") ? " A micro: the best way to start." : " A full-size contract: ten times a micro's risk per point.") : "";
+  su("symbol-help").textContent = !sym ? "" : sym.key === "AUTO" ? `Each day the bot replays recent history for every micro your plan allows and trades the one where its strategy did best on days held back from training, after costs. If none shows an edge it trades ${SU.values.fallback}.`
+    : `${money(sym.tick_value)} per tick.` + (blocked ? ` Topstep doesn't currently allow ${sym.key} on a ${plan.name} account.`
+    : sym.key.startsWith("M") ? " A micro: the best way to start." : " A full-size contract: ten times a micro's risk per point.");
   su("symbol-help").className = "help" + (blocked ? " bad" : "");
   const learn = F.goal === "learn";
   su("first-row").hidden = !learn;
@@ -1899,7 +2176,7 @@ su("save").onclick = async () => {
   su("save").disabled = true;
   const d = await post("setup/save", {
     account_id: F.account_id, account_name: F.account_name, plan: su("plan").value, stage: su("stage").value, goal: F.goal,
-    topstep_dll: su("dll").checked, payout_path: su("payout").value, symbol: su("symbol").value, strategy: su("strategy").value,
+    topstep_dll: su("dll").checked, payout_path: su("payout").value, symbol: su("symbol").value, fallback: SU.values.fallback, strategy: su("strategy").value,
     risk_per_trade: su("risk").value, daily_loss_limit: su("daily").value, max_trades: su("trades").value, fresh: su("fresh").checked,
     first_trade: su("first").checked});
   su("save").disabled = false;

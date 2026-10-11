@@ -127,6 +127,7 @@ class LiveRunner:
         self._train_after: datetime | None = None  # after a failed daily retrain: wait before trying again
         self._warmup_bars: tuple[list, tuple[datetime, datetime]] | None = None  # kept until the long-run memory opens
         self._catchup_bars: list = []  # today's bars so far: replayed once the knowledge base is ready
+        self.market_pick = None  # market_pick.Pick when instrument.auto_pick chose the market
 
     @staticmethod
     def now() -> datetime:
@@ -145,6 +146,8 @@ class LiveRunner:
             blocked = api_trading_block(self.account)
             if blocked:
                 raise SetupError(blocked)
+        if cfg.instrument.auto_pick:
+            await self._pick_market()
         self.contract = await resolve_contract(self.client, cfg)
         log.info("Account %s (id %s), contract %s (%s)", self.account.name, self.account.id, self.contract.name, self.contract.id)
 
@@ -197,6 +200,7 @@ class LiveRunner:
         core.intel = MarketTracker(self.contract.root or cfg.instrument.symbol, self.contract, core.schedule,
                                     cfg.account_dir / "market_journal.jsonl")
         core.intel.result_for_day = self._day_result
+        core.market_pick = self.market_pick.to_dict() if self.market_pick else None
         if cfg.recommendations.enabled:
             from topstep_bot.recommendations import RecommendationBook
 
@@ -230,6 +234,61 @@ class LiveRunner:
                 best = 0.0
             best = max(best, row["net_pnl"] or 0.0)
         return best
+    async def _pick_market(self) -> None:
+        """instrument.auto_pick: choose the market before anything uses the symbol (market_pick.py).
+
+        A pick from the last few hours is reused, so a restart during the day doesn't pick again."""
+        from topstep_bot import market_pick as mp
+        from topstep_bot.memory import LongRunMemory, MarketLibrary
+
+        cfg, now = self.cfg, self.now()
+        pick = mp.load_pick(cfg)
+        if mp.fresh(pick, cfg, now):
+            log.info("Market pick from %s reused: %s", pick.at, pick.symbol)
+        else:
+            held = await self._held_market(set(mp.candidates_for(cfg)) | {cfg.instrument.symbol})
+            tf = cfg.instrument.timeframe_minutes
+            library = MarketLibrary(cfg.library_path)
+
+            async def load(symbol: str):
+                contract = await self.client.resolve_contract(symbol)
+                try:
+                    await LongRunMemory(library, None, symbol, tf).backfill(
+                        self.client, contract, cfg.knowledge.history_days, now, live=cfg.data.live_market_data)
+                except Exception as exc:  # noqa: BLE001 - score on the history already saved
+                    log.info("Market pick: could not download %s history (%s); using what is saved", symbol, exc)
+                return contract, library.bars(symbol, tf, now - timedelta(days=mp.PICK_DAYS), now)
+
+            def progress(symbol: str) -> None:
+                self._beat()  # scoring takes a while: the controller must not think the bot hung
+                log.info("Market pick: scoring %s", symbol)
+
+            try:
+                pick = await mp.pick_market(cfg, load, now=now, held=held, progress=progress)
+            finally:
+                library.close()
+            log.info("%s", pick.text())
+        cfg.instrument.symbol = pick.symbol
+        self.market_pick = pick
+
+    async def _held_market(self, markets: set[str]) -> str | None:
+        """The market of an open position on the account (live only: paper positions don't survive a restart)."""
+        if self.cfg.mode != "live" or self.account is None:
+            return None
+        from topstep_bot.instruments import matches_root
+
+        try:
+            positions = await self.client.search_open_positions(self.account.id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Market pick: could not check open positions (%s)", exc)
+            return None
+        for p in positions:
+            name = p.contract_id.split(".")[3] if p.contract_id.count(".") >= 4 else p.contract_id
+            for m in sorted(markets):
+                if p.size and (name == m or matches_root(name, m)):
+                    return m
+        return None
+
     def _setup_hedge_guard(self) -> None:
         """Coordinate with this PC's other account bots so no two accounts hold opposite positions."""
         cfg, core = self.cfg, self.core

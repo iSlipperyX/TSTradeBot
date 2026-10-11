@@ -114,8 +114,14 @@ No bot can guarantee passing the Combine or making a profit, and this one doesn'
   Telegram chat. Accounts can take the same calls, their own calls, or copy another account's calls,
   each with its own risk and limits; a hedge guard stops opposite positions across accounts, which
   Topstep prohibits ([how](docs/HOW_TO_USE.md#29-trading-several-accounts)).
-- **Several API keys** — one per account or per TopstepX login if you like, managed with
-  `topstep-bot keys` and masked in every log ([how](docs/HOW_TO_USE.md#30-several-api-keys)).
+- **Accounts on the dashboard** — the Setup tab shows what TopstepX reports for every account, read
+  with its API key (balance, can it trade, open positions and orders, today's trades, and anything
+  that doesn't match your settings), with **+ Add account**, **Edit** and **Remove** buttons.
+- **Several API keys** — one per account or per TopstepX login if you like, managed on the dashboard
+  or with `topstep-bot keys`, and masked in every log ([how](docs/HOW_TO_USE.md#30-several-api-keys)).
+- **The bot can pick its market** — set the market to Auto and each day it trades the micro where
+  its strategy did best on recent days held back from training, after costs; if none shows an
+  edge it stays on your market ([how](docs/HOW_TO_USE.md#letting-the-bot-pick-the-market)).
 - **Market knowledge** — the Market tab and `/market`: the contract's specs and what moves it, key
   levels, the normal day's range, today's reports for your market and its headlines; a session journal
   of market conditions next to your trades ([how](docs/HOW_TO_USE.md#31-what-the-bot-knows-about-the-market-and-the-news)).
@@ -163,7 +169,7 @@ topstep-bot insights        what the bot has learned: results after costs, real 
 topstep-bot learn           grow the long-run memory: backfill history and replay it all (--import CSV, --days N)
 topstep-bot first-trade-test  backtest the first trade after starting against a coin flip (--days N)
 topstep-bot update          check GitHub for a newer version and install it (--check, --token, --undo)
-topstep-bot accounts        your accounts: what each trades, its key, which share the same calls
+topstep-bot accounts        your accounts: what each trades, its key, which share the same calls (--check: ask TopstepX)
 topstep-bot keys            list, add, remove or test stored API keys (add NAME, remove NAME, test)
 
 With several accounts, add --account NAME to act on one (e.g. 'start --mode live --account c2').
@@ -197,6 +203,7 @@ src/topstep_bot/
   market_knowledge.py  each market's specs and what moves it;  market_intel.py  live levels and ranges
   research.py     the research library: what the bot gathers from the internet
   funded.py       progress to the Combine pass or next payout;  crossaccount.py  the hedge guard
+  account_check.py  what TopstepX says about each account;  market_pick.py  the bot picks its market
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram
   manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
   setups.py       the trades each strategy is building toward (dashboard's Getting ready to trade)

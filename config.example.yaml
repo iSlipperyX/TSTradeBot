@@ -15,6 +15,7 @@ account:
 instrument:
   symbol: MNQ                # MNQ, MES, NQ, ES, M2K, RTY, MYM, YM, MGC, GC, MCL, CL
   timeframe_minutes: 5
+  # auto_pick: true          # let the bot pick the market each day (symbol is used when none shows an edge)
 
 # adaptive = every strategy, all day, trading only what the bot has learned is working. Or one
 # strategy alone, most robust in the 10-year test first: noise_breakout, orb_momentum, orb,

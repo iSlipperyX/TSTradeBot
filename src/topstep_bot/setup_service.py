@@ -6,6 +6,10 @@
     config.yaml in place, so comments and hand edits elsewhere in the file are kept. The result
     is checked before it is saved, the previous file is kept as config.yaml.bak, and a change
     that would let the bot break a Topstep rule is refused with the reason.
+  * Accounts: every account config.yaml lists, checked with its API key (account_check.py), with
+    buttons to add another account the keys can see, edit or remove one, and store more API keys.
+    The first extra account turns the single account into an ``accounts:`` list; its trades and
+    knowledge are copied into its own folder (data/accounts/<name>) so nothing it learned is lost.
   * Telegram and Discord alerts, update checks for a private copy, and starting with Windows.
 
 Secrets (API key, bot tokens, webhooks) go to .env on this PC and are never sent back to the
@@ -18,14 +22,27 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from topstep_bot.config import BotConfig, ConfigError, anchor_folders, config_from_text, load_config, load_env_file
-from topstep_bot.config_edit import REMOVE, set_values
+from topstep_bot.config import (
+    NAME_PATTERN,
+    RESERVED_NAMES,
+    BotConfig,
+    ConfigError,
+    Login,
+    anchor_folders,
+    config_from_text,
+    load_config,
+    load_env_file,
+    login_env_names,
+    login_key,
+)
+from topstep_bot.config_edit import REMOVE, set_section, set_values
 from topstep_bot.instruments import SPECS
 from topstep_bot.risk.topstep import PLANS, product_limit
 from topstep_bot.strategies import STRATEGIES
@@ -39,6 +56,11 @@ log = logging.getLogger("topstep_bot.setup")
 STAGES = [("combine", "Trading Combine (evaluation)"), ("express", "Express Funded Account (XFA)"),
           ("practice", "Practice account")]
 LEARN_MIN_TRADES = 8
+AUTO = "AUTO"  # the Market choice that lets the bot pick (instrument.auto_pick)
+REPORT_MAX_AGE = 300  # seconds before the Setup tab checks the accounts again by itself
+# Each account's own files, copied into data/accounts/<name> when the single account joins an accounts list.
+ACCOUNT_FILES = ("journal_*.db", "knowledge_*m.json", "knowledge_*m.ledger.jsonl", "remote_settings.json",
+                 "market_journal.jsonl", "market_pick.json")
 ENV_KEYS = {"username": "TOPSTEPX_USERNAME", "api_key": "TOPSTEPX_API_KEY", "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
             "telegram_chat_id": "TELEGRAM_CHAT_ID", "discord_webhook_url": "DISCORD_WEBHOOK_URL",
             "github_token": "GITHUB_TOKEN"}
@@ -83,6 +105,9 @@ class SetupService:
         self.config_error = config_error
         self.accounts: list[dict] = []  # from the last successful login (for names and hints)
         self.saved_at: float | None = None  # last save while the bot was running (it needs a restart)
+        self.report: dict | None = None  # the last account check (account_check.py)
+        self.report_at = 0.0
+        self._checking: asyncio.Task | None = None
 
     # ---------------------------------------------------------------- state for the page
 
@@ -124,7 +149,8 @@ class SetupService:
             "values": {
                 "account_id": a.account_id, "account_name": a.account_name, "plan": a.plan, "stage": a.stage,
                 "goal": goal, "topstep_dll": dll, "payout_path": a.payout_path,
-                "symbol": cfg.instrument.symbol, "strategy": cfg.strategy.name,
+                "symbol": AUTO if cfg.instrument.auto_pick else cfg.instrument.symbol, "strategy": cfg.strategy.name,
+                "fallback": cfg.instrument.symbol,
                 "risk_per_trade": cfg.risk.risk_per_trade, "daily_loss_limit": cfg.risk.personal_daily_loss_limit,
                 "max_trades": cfg.risk.max_trades_per_day,
                 "first_trade": cfg.first_trade.enabled, "first_trade_minutes": cfg.first_trade.within_minutes,
@@ -137,14 +163,20 @@ class SetupService:
                 "discord": bool(s.discord_webhook_url),
             },
             "github_token_saved": bool(s.github_token),
+            "multi": cfg.multi,
+            "profiles": [self._profile_view(p.name) for p in cfg.accounts],
+            "keys": ["main", *sorted(s.logins)] if s.api_key else sorted(s.logins),
+            "report": self.report,
+            "report_age": round(time.time() - self.report_at) if self.report else None,
             "autostart": self._autostart_state(),
             "choices": {
                 "plans": [{"name": p.name, "profit_target": p.profit_target, "max_loss_limit": p.max_loss_limit,
                            "max_minis": p.max_minis, "daily_loss_limit": p.daily_loss_limit} for p in PLANS.values()],
                 "stages": [{"key": k, "label": label} for k, label in STAGES],
-                "symbols": [{"key": sym, "label": SPECS[sym].description, "tick_value": SPECS[sym].tick_value,
-                             "blocked": [p for p in PLANS if product_limit(sym, PLANS[p]) == 0]}
-                            for sym in SYMBOL_CHOICES if sym in SPECS],
+                "symbols": [{"key": AUTO, "label": "Auto: the bot picks each day", "tick_value": None, "blocked": []}] + [
+                    {"key": sym, "label": SPECS[sym].description, "tick_value": SPECS[sym].tick_value,
+                     "blocked": [p for p in PLANS if product_limit(sym, PLANS[p]) == 0]}
+                    for sym in SYMBOL_CHOICES if sym in SPECS],
                 "strategies": [{"key": c.name, "title": c.title, "description": c.description} for c in STRATEGIES.values()],
                 "suggested": {f"{p}|{g}|{int(d)}": suggested_risk(p, g, d)
                               for p in PLANS for g in ("pass", "learn") for d in (False, True)},
@@ -223,7 +255,8 @@ class SetupService:
             ("account", "plan"): plan, ("account", "stage"): stage,
             ("account", "topstep_daily_loss_limit"): True if v["topstep_dll"] and stage != "practice" else REMOVE,
             ("account", "payout_path"): v["payout_path"],
-            ("instrument", "symbol"): v["symbol"], ("strategy", "name"): v["strategy"],
+            ("instrument", "symbol"): v["symbol"], ("instrument", "auto_pick"): True if v["auto_pick"] else REMOVE,
+            ("strategy", "name"): v["strategy"],
             ("risk", "risk_per_trade"): v["risk_per_trade"], ("risk", "personal_daily_loss_limit"): v["daily_loss_limit"],
             ("risk", "max_trades_per_day"): v["max_trades"],
         }
@@ -272,6 +305,9 @@ class SetupService:
         if stage not in dict(STAGES):
             raise ValueError("Choose the account type.")
         symbol = str(body.get("symbol", "")).upper()
+        auto_pick = symbol == AUTO
+        if auto_pick:  # the bot picks; the set market is kept for days no market shows an edge
+            symbol = str(body.get("fallback") or "").upper() or "MNQ"
         if symbol not in SPECS:
             raise ValueError("Choose what to trade.")
         strategy = str(body.get("strategy", ""))
@@ -289,7 +325,7 @@ class SetupService:
         if goal == "learn":
             strategy = "adaptive"  # learning runs every strategy and learns from all of them
         return {
-            "plan": plan, "stage": stage, "goal": goal, "symbol": symbol, "strategy": strategy,
+            "plan": plan, "stage": stage, "goal": goal, "symbol": symbol, "auto_pick": auto_pick, "strategy": strategy,
             "account_id": account_id, "account_name": str(body.get("account_name") or "").strip() or None,
             "topstep_dll": bool(body.get("topstep_dll")),
             "payout_path": "consistency" if body.get("payout_path") == "consistency" and stage == "express" else "standard",
@@ -319,6 +355,7 @@ class SetupService:
         fresh = original is None or bool(body.get("fresh"))
         if fresh:
             text = set_values(self._fresh_text(v), {("risk", "max_trades_per_day"): v["max_trades"],
+                                                    ("instrument", "auto_pick"): True if v["auto_pick"] else REMOVE,
                                                     ("account", "account_name"): v["account_name"] or REMOVE,
                                                     ("first_trade", "enabled"): v["first_trade"] or REMOVE})
         else:
@@ -334,9 +371,10 @@ class SetupService:
             path.with_name(path.name + ".bak").write_text(original, encoding="utf-8")
         path.write_text(text, encoding="utf-8")
         self._reload()
+        market = f"auto (else {v['symbol']})" if v["auto_pick"] else v["symbol"]
         log.info("Setup saved from the dashboard (%s %s, %s, %s, goal %s, first trade %s)", v["plan"], v["stage"],
-                 v["symbol"], v["strategy"], v["goal"], "on" if v["first_trade"] else "off")
-        self.ctl.bot._event("info", f"Setup saved from the dashboard: {v['plan']} {v['stage']}, {v['symbol']}, "
+                 market, v["strategy"], v["goal"], "on" if v["first_trade"] else "off")
+        self.ctl.bot._event("info", f"Setup saved from the dashboard: {v['plan']} {v['stage']}, {market}, "
                                     f"{v['strategy']}, ${v['risk_per_trade']:,.0f} per trade")
         bot = self.ctl.bot
         if bot.running:
@@ -357,6 +395,322 @@ class SetupService:
         self.config_error = None
         if cfg.telegram.control_enabled != old_telegram:
             asyncio.get_running_loop().create_task(self.ctl.restart_telegram())
+
+    # ---------------------------------------------------------------- accounts
+
+    def _profile_view(self, name: str) -> dict:
+        """One account in the accounts list, as the Add/Edit form shows it."""
+        cfg = self.ctl.cfg
+        p = cfg.profile(name)
+        acfg = cfg.for_account(name)
+        shared_market = AUTO if cfg.instrument.auto_pick else cfg.instrument.symbol
+        own = p.instrument.get("symbol") is not None or "auto_pick" in p.instrument
+        market = (AUTO if acfg.instrument.auto_pick else acfg.instrument.symbol) if own else ""
+        r = acfg.risk
+        return {"name": p.name, "enabled": p.enabled, "account_id": acfg.account.account_id,
+                "account_name": acfg.account.account_name, "plan": acfg.account.plan, "stage": acfg.account.stage,
+                "topstep_dll": acfg.account.topstep_daily_loss_limit is not None,
+                "payout_path": acfg.account.payout_path, "key": p.login or "",
+                "calls": "follow" if p.follow else ("own" if p.strategy else "shared"), "follow": p.follow or "",
+                "strategy": acfg.strategy.name, "market": market, "shared_market": shared_market,
+                "risk_per_trade": r.risk_per_trade, "daily_loss_limit": r.personal_daily_loss_limit,
+                "max_trades": r.max_trades_per_day, "mode": p.mode or ""}
+
+    async def check_accounts(self, force: bool = True) -> dict:
+        """Ask TopstepX about every account (account_check.py). Concurrent requests share one check."""
+        from topstep_bot import account_check
+
+        if not force and self.report and time.time() - self.report_at < REPORT_MAX_AGE:
+            return self.report
+        if self._checking is None or self._checking.done():
+            self._checking = asyncio.ensure_future(account_check.check(self.ctl.cfg, self.ctl.secrets))
+        report = await asyncio.shield(self._checking)
+        self.report, self.report_at = report, time.time()
+        return report
+
+    def _require_file(self) -> str:
+        if self.config_error:
+            raise ValueError("config.yaml has a problem: fix it first (see the top of this tab).")
+        if not self.config_path.exists():
+            raise ValueError("Finish the setup below and press Save first; then you can add more accounts.")
+        return self.config_path.read_text(encoding="utf-8")
+
+    def _validate(self, text: str) -> None:
+        try:
+            config_from_text(text, self.config_path.name)
+        except ConfigError as exc:
+            raise ValueError(f"Not saved: {_problems(exc)}") from None
+
+    def _write(self, original: str, text: str) -> None:
+        self._validate(text)
+        self.config_path.with_name(self.config_path.name + ".bak").write_text(original, encoding="utf-8")
+        self.config_path.write_text(text, encoding="utf-8")
+        self._reload()
+        self.ctl.sync_accounts()
+        self.report_at = 0.0  # check again with the new list
+
+    def _account_entry(self, body: dict, existing: dict, taken: set[str]) -> dict:
+        """The accounts-list entry for the Add/Edit form: what it manages is rewritten, anything else is kept."""
+        from topstep_bot.risk.topstep import PLANS
+        from topstep_bot.strategies import STRATEGIES
+
+        cfg = self.ctl.cfg
+        name = str(body.get("name") or "").strip().lower()
+        if not re.match(NAME_PATTERN, name):
+            raise ValueError("Give the account a short name: letters, digits, - or _ (e.g. c2).")
+        if name in RESERVED_NAMES:
+            raise ValueError(f"'{name}' is a reserved word (Telegram would confuse it). Try another, e.g. c2.")
+        if name in taken:
+            raise ValueError(f"There is already an account named {name}.")
+        try:
+            account_id = int(body.get("account_id"))
+        except (TypeError, ValueError):
+            raise ValueError("Pick the TopstepX account.") from None
+        plan, stage = str(body.get("plan", "")).upper(), str(body.get("stage", ""))
+        if plan not in PLANS or stage not in dict(STAGES):
+            raise ValueError("Choose the account size and type.")
+        e = {"name": name, **{k: v for k, v in existing.items() if k != "name"},
+             "account_id": account_id, "plan": plan, "stage": stage}
+        account_name = str(body.get("account_name") or "").strip()
+        if account_name:
+            e["account_name"] = account_name
+        if body.get("topstep_dll") and stage != "practice":
+            e["topstep_daily_loss_limit"] = PLANS[plan].daily_loss_limit
+        else:
+            e.pop("topstep_daily_loss_limit", None)
+        acct = dict(e.get("account") or {})
+        if stage == "express":
+            acct["payout_path"] = "consistency" if body.get("payout_path") == "consistency" else "standard"
+        else:
+            acct.pop("payout_path", None)
+        e["account"] = acct
+        key = login_key(str(body.get("key") or "")) if body.get("key") not in (None, "", "main") else ""
+        if key and key not in self.ctl.secrets.logins:
+            raise ValueError(f"No API key named '{key}' is stored. Add it under API keys first.")
+        if key:
+            e["login"] = key
+        else:
+            e.pop("login", None)
+        calls = str(body.get("calls") or "shared")
+        instrument = dict(e.get("instrument") or {})
+        strategy = dict(e.get("strategy") or {})
+        e.pop("follow", None)
+        if calls == "follow":
+            target = str(body.get("follow") or "").strip().lower()
+            if target not in cfg.account_names(enabled_only=False) or target == name:
+                raise ValueError("Choose which account's calls to copy.")
+            e["follow"] = target
+            instrument, strategy = {}, {}  # following copies the market and the strategy
+        else:
+            if calls == "own":
+                chosen = str(body.get("strategy") or "")
+                if chosen not in STRATEGIES:
+                    raise ValueError("Choose a strategy for this account.")
+                keep = strategy.get("name") == chosen and strategy.get("params")
+                strategy = {"name": chosen, **({"params": strategy["params"]} if keep else {})}
+            else:
+                strategy = {}
+            market = str(body.get("market") or "").upper()
+            instrument.pop("symbol", None)
+            instrument.pop("auto_pick", None)
+            if market == AUTO:
+                instrument["auto_pick"] = True
+            elif market:
+                if market not in SPECS:
+                    raise ValueError("Choose a market.")
+                instrument["symbol"] = market
+        e["instrument"], e["strategy"] = instrument, strategy
+        risk = dict(e.get("risk") or {})
+        for field, key_name, label in (("risk_per_trade", "risk_per_trade", "Risk per trade"),
+                                       ("personal_daily_loss_limit", "daily_loss_limit", "Daily loss limit"),
+                                       ("max_trades_per_day", "max_trades", "Max trades per day")):
+            raw = str(body.get(key_name, "")).replace("$", "").replace(",", "").strip()
+            if raw == "":
+                risk.pop(field, None)
+                continue
+            try:
+                value = float(raw)
+            except ValueError:
+                raise ValueError(f"{label}: type a number.") from None
+            if value <= 0:
+                raise ValueError(f"{label} must be more than 0.")
+            value = int(value) if field == "max_trades_per_day" or value.is_integer() else value
+            if value == getattr(cfg.risk, field):
+                risk.pop(field, None)  # same as the shared setting: inherit it, so a change there reaches this account
+            else:
+                risk[field] = value
+        e["risk"] = risk
+        if not existing:
+            e["mode"] = "paper"  # a new account always starts on paper, whatever the others do
+        return {k: v for k, v in e.items() if v not in ({}, None)}
+
+    @staticmethod
+    def _raw_accounts(text: str) -> list[dict]:
+        import yaml
+
+        data = yaml.safe_load(text) or {}
+        return [dict(a) for a in data.get("accounts") or []]
+
+    async def save_account(self, body: dict) -> dict:
+        """Add an account (``original`` empty) or change one, from the Accounts panel."""
+        original_text = self._require_file()
+        cfg = self.ctl.cfg
+        entries = self._raw_accounts(original_text)
+        editing = str(body.get("original") or "").strip().lower()
+        converting = not entries
+        first_name = ""
+        if converting:  # one account so far: it becomes the first entry of the accounts list
+            if editing:
+                raise ValueError("There is no accounts list yet.")
+            if cfg.account.account_id is None and not cfg.account.account_name:
+                raise ValueError("Choose your first account in step 2 and press Save before adding another.")
+            if any(b.running for b in self.ctl.bots.values()):
+                raise ValueError("Stop the bot first: your current account moves into an accounts list, and its trades "
+                                 "and knowledge are copied to its own folder while nothing is running.")
+            first_name = str(body.get("first_name") or "c1").strip().lower()
+            if not re.match(NAME_PATTERN, first_name):
+                raise ValueError("Give your current account a short name: letters, digits, - or _ (e.g. c1).")
+            if first_name in RESERVED_NAMES:
+                raise ValueError(f"'{first_name}' is a reserved word (Telegram would confuse it): name your current "
+                                 "account something else, e.g. c1.")
+            first = {"name": first_name, "account_id": cfg.account.account_id}
+            if cfg.account.account_name:
+                first["account_name"] = cfg.account.account_name
+            entries = [{k: v for k, v in first.items() if v is not None}]
+        index = next((i for i, x in enumerate(entries) if str(x.get("name", "")).lower() == editing), None)
+        if editing and index is None:
+            raise ValueError(f"No account named {editing}.")
+        existing = entries[index] if index is not None else {}
+        taken = {str(x.get("name", "")).lower() for i, x in enumerate(entries) if i != index}
+        entry = self._account_entry(body, existing, taken)
+        renamed = bool(editing) and entry["name"] != editing
+        if renamed and editing in self.ctl.bots and self.ctl.bots[editing].running:
+            raise ValueError(f"Stop {editing}'s bot before renaming it.")
+        if any(x.get("account_id") == entry["account_id"] for i, x in enumerate(entries) if i != index):
+            raise ValueError("That TopstepX account is already in the list.")
+        if index is None:
+            entries.append(entry)
+        else:
+            entries[index] = entry
+        if renamed:  # accounts that copied its calls follow the new name
+            for x in entries:
+                if str(x.get("follow", "")).lower() == editing:
+                    x["follow"] = entry["name"]
+        text = set_section(original_text, "accounts", entries)
+        self._validate(text)  # before any file is copied or moved
+        if converting:
+            self._copy_account_files(first_name)
+        if renamed:
+            self._move_account_folder(editing, entry["name"])
+        self._write(original_text, text)
+        name = entry["name"]
+        bot = self.ctl.bots.get(name)
+        log.info("Setup: account %s %s from the dashboard", name, "changed" if editing else "added")
+        self.ctl.bot._event("info", f"Account {name} {'changed' if editing else 'added'} on the Setup tab")
+        if bot is not None and bot.running:
+            return {"message": f"Saved. {name}'s bot is running with its old settings: restart it to use the new ones."}
+        lead = (f"Your accounts are now listed by name: your first account is {first_name} (its trades and knowledge "
+                f"were copied to data/accounts/{first_name}). " if converting else "")
+        return {"message": f"{lead}Saved {name}. It starts in Paper mode: select it at the top and press Start."}
+
+    async def remove_account(self, body: dict) -> dict:
+        original_text = self._require_file()
+        name = str(body.get("name") or "").strip().lower()
+        entries = self._raw_accounts(original_text)
+        if not any(str(x.get("name", "")).lower() == name for x in entries):
+            raise ValueError(f"No account named {name}.")
+        if len(entries) == 1:
+            raise ValueError("It's the only account in the list. To go back to a single account, edit config.yaml.")
+        bot = self.ctl.bots.get(name)
+        if bot is not None and bot.running:
+            raise ValueError(f"Stop {name}'s bot first.")
+        followers = [str(x["name"]) for x in entries if str(x.get("follow", "")).lower() == name]
+        if followers:
+            raise ValueError(f"{', '.join(followers)} copy {name}'s calls: change them first.")
+        entries = [x for x in entries if str(x.get("name", "")).lower() != name]
+        self._write(original_text, set_section(original_text, "accounts", entries))
+        log.info("Setup: account %s removed from the dashboard", name)
+        self.ctl.bot._event("info", f"Account {name} removed on the Setup tab")
+        return {"message": f"Removed {name} from config.yaml (its files stay in data/accounts/{name}). The previous "
+                           "config.yaml is in config.yaml.bak."}
+
+    def _copy_account_files(self, name: str) -> None:
+        """The single account's own files, copied (not moved) to where the accounts list keeps them."""
+        from topstep_bot.controller import MAIN, load_state, save_state
+
+        src = Path(self.ctl.cfg.data_dir)
+        dst = src / "accounts" / name
+        dst.mkdir(parents=True, exist_ok=True)
+        for pattern in ACCOUNT_FILES:
+            for f in src.glob(pattern):
+                if f.is_file() and not f.name.endswith("_longrun.json") and not (dst / f.name).exists():
+                    shutil.copy2(f, dst / f.name)
+        backups = src / "knowledge_backups"
+        if backups.is_dir():
+            shutil.copytree(backups, dst / "knowledge_backups", dirs_exist_ok=True)
+        state = load_state(self.ctl.cfg)
+        modes = state.get("modes") or {}
+        if MAIN in modes:  # the mode chosen on the dashboard stays with the account
+            modes[name] = modes.pop(MAIN)
+            save_state(self.ctl.cfg, state)
+
+    def _move_account_folder(self, old: str, new: str) -> None:
+        base = Path(self.ctl.cfg.data_dir) / "accounts"
+        if (base / old).is_dir() and not (base / new).exists():
+            try:
+                (base / old).rename(base / new)
+            except OSError as exc:
+                log.warning("Could not rename data/accounts/%s to %s: %s", old, new, exc)
+
+    # ---------------------------------------------------------------- more API keys
+
+    async def add_key(self, body: dict) -> dict:
+        from topstep_bot.account_check import _login
+        from topstep_bot.wizard import update_env_file
+
+        name = login_key(str(body.get("name") or ""))
+        if not re.match(NAME_PATTERN, name) or name == "main":
+            raise ValueError("Give the key a short name: letters, digits, - or _ (e.g. c2, or the account it's for).")
+        s = self.ctl.secrets
+        username = str(body.get("username") or "").strip() or (s.username or "")
+        api_key = str(body.get("api_key") or "").strip()
+        if not username or not api_key:
+            raise ValueError("Type the TopstepX username and paste the API key.")
+        accounts, error = await _login(username, api_key, self.ctl.cfg)
+        if accounts is None:
+            raise ValueError(f"This key didn't work: {error}. Nothing was saved.")
+        user_var, key_var = login_env_names(name)
+        own_user = username if username != s.username else ""
+        update_env_file(self.env_path, {key_var: api_key, user_var: own_user})
+        os.environ[key_var], os.environ[user_var] = api_key, own_user
+        s.logins[name] = Login(username=own_user or None, api_key=api_key)
+        self.report_at = 0.0
+        log.info("Setup: API key '%s' added (%d account(s))", name, len(accounts))
+        return {"message": f"Key '{name}' works and is saved: it sees {len(accounts)} account(s). An account named "
+                           f"{name} uses it automatically; choose it for others when you add or edit them."}
+
+    async def remove_key(self, body: dict) -> dict:
+        from topstep_bot.wizard import remove_env_keys
+
+        name = login_key(str(body.get("name") or ""))
+        s, cfg = self.ctl.secrets, self.ctl.cfg
+        if name not in s.logins:
+            raise ValueError(f"No stored key named '{name}'.")
+        users = []
+        for acct in cfg.account_names(enabled_only=False) if cfg.multi else []:
+            try:
+                if s.login_for(cfg.for_account(acct)) == name:
+                    users.append(acct)
+            except ValueError:
+                continue
+        if users:
+            raise ValueError(f"{', '.join(users)} use this key: give them another key first.")
+        remove_env_keys(self.env_path, set(login_env_names(name)))
+        for var in login_env_names(name):
+            os.environ.pop(var, None)
+        s.logins.pop(name, None)
+        self.report_at = 0.0
+        return {"message": f"Key '{name}' removed from .env."}
 
     # ---------------------------------------------------------------- Telegram & Discord
 

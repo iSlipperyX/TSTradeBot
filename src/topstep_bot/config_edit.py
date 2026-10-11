@@ -158,6 +158,49 @@ def set_value(text: str, section: str | None, key: str, value: Any) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _block(value: Any) -> list[str]:
+    """A section's value as indented block lines: a list of mappings (``accounts``) or a mapping."""
+    lines: list[str] = []
+    if isinstance(value, dict):
+        return [f"  {k}: {dump_value(v)}" for k, v in value.items()]
+    for item in value:
+        if isinstance(item, dict) and item:
+            first = True
+            for k, v in item.items():
+                lines.append(f"  {'- ' if first else '  '}{k}: {dump_value(v)}")
+                first = False
+        else:
+            lines.append(f"  - {dump_value(item)}")
+    return lines
+
+
+def set_section(text: str, name: str, value: Any) -> str:
+    """Return ``text`` with the whole top-level section ``name`` replaced by ``value`` (or removed with REMOVE).
+
+    Used for lists such as ``accounts``, which set_value can't edit one key at a time. Everything
+    outside the section, including comments, stays as it was; comments inside it are not kept."""
+    lines = text.splitlines()
+    found = _section(lines, name)
+    if found is not None:
+        start, end = found
+        while end > start + 1 and (not lines[end - 1].strip() or lines[end - 1].startswith("#")):
+            end -= 1  # blank lines and comments in column 0 belong to what follows
+        _, comment = _split_comment(lines[start][_TOP_KEY.match(lines[start]).end():])
+        if value is REMOVE:
+            del lines[start:end]
+        else:
+            empty = not value
+            lines[start:end] = [f"{name}: {'[]' if isinstance(value, list) else '{}'}{comment}" if empty
+                                else f"{name}:{comment}", *([] if empty else _block(value))]
+        return "\n".join(lines) + "\n"
+    if value is REMOVE:
+        return text if text.endswith("\n") or not text else text + "\n"
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += ["", f"{name}:", *_block(value)] if value else ["", f"{name}: {dump_value(value)}"]
+    return "\n".join(lines) + "\n"
+
+
 def set_values(text: str, changes: dict[tuple[str | None, str], Any]) -> str:
     for (section, key), value in changes.items():
         text = set_value(text, section, key, value)

@@ -116,14 +116,40 @@ class AccountConfig(_Section):
 
 
 class InstrumentConfig(_Section):
-    symbol: str = "MNQ"
+    symbol: str = Field(default="MNQ", description="What to trade (with auto_pick: the market used when none shows an edge).")
     contract_id: str | None = None
     timeframe_minutes: int = Field(default=5, ge=1, le=60)
+    auto_pick: bool = Field(
+        default=False,
+        description="Let the bot pick the market when it starts: the candidate where its strategy did best on recent "
+                    "days it wasn't trained on, after costs and sized with this account's risk (market_pick.py).",
+    )
+    candidates: list[str] = Field(
+        default_factory=list,
+        description="Markets auto_pick chooses from (default: the micro contracts your plan allows).",
+    )
 
     @field_validator("symbol")
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.strip().upper()
+
+    @field_validator("candidates")
+    @classmethod
+    def _upper_all(cls, v: list[str]) -> list[str]:
+        from topstep_bot.instruments import SPECS
+
+        out = list(dict.fromkeys(s.strip().upper() for s in v if s.strip()))
+        unknown = [s for s in out if s not in SPECS]
+        if unknown:
+            raise ValueError(f"unknown market(s) in candidates: {', '.join(unknown)} (known: {', '.join(SPECS)})")
+        return out
+
+    @model_validator(mode="after")
+    def _pick_or_pin(self) -> InstrumentConfig:
+        if self.auto_pick and self.contract_id:
+            raise ValueError("auto_pick and contract_id can't both be set: pinning a contract fixes the market")
+        return self
 
 
 class StrategyConfig(_Section):
@@ -685,6 +711,8 @@ class BotConfig(_Section):
         """
         if not self.active_account:
             return True
+        from topstep_bot.market_pick import current_symbol
+
         key = (self.instrument.symbol, self.instrument.timeframe_minutes)
         for name in self.account_names():
             if name == self.active_account:
@@ -693,7 +721,7 @@ class BotConfig(_Section):
                 other = self.for_account(name)
             except ValueError:
                 continue
-            if (other.instrument.symbol, other.instrument.timeframe_minutes) == key:
+            if (current_symbol(other), other.instrument.timeframe_minutes) == key:  # an auto-picked market counts too
                 return False
         return True
 

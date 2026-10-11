@@ -275,7 +275,7 @@ strategy works.
 > If it ever leaks, delete it in TopstepX and create a new one.
 
 You can store more than one key — for example one per account, or the key of a second TopstepX
-login. See [section 29](#29-several-api-keys).
+login. See [section 30](#30-several-api-keys).
 
 ---
 
@@ -288,8 +288,17 @@ bottom; every field already has a suggestion, and a short note under each one ex
 1. **TopstepX login.** Enter your username and API key, then press **Connect**. The bot logs in
    to check them and lists your accounts. The key is saved in a file called `.env` in the bot
    folder, which only lives on your computer. The dashboard never shows it again: it only says
-   "saved", and you can paste a new one any time.
-2. **Account.** Pick the account the bot should trade. The bot reads the account name (e.g.
+   "saved", and you can paste a new one any time. Under **More API keys** you can store another
+   key (tested before it is saved) for a second TopstepX login, or one per account
+   ([section 30](#30-several-api-keys)).
+2. **Account.** At the top, a card shows **what TopstepX reports for your account**, read with
+   your API key: its name and id, balance, whether it can trade right now, its size and type,
+   progress toward the Combine target, open positions and working orders, and today's trades and
+   net P&L. Anything that needs attention is in red: the key can't log in or can't see the
+   account, TopstepX says it can't trade, or its name points to a different size or type than your
+   settings (a wrong size means wrong loss limits). It's checked each time you open the tab;
+   **Check accounts** checks again. **+ Add account** adds another account
+   ([section 29](#29-trading-several-accounts)). Below the card, pick the account the bot should trade. The bot reads the account name (e.g.
    `50KTC-...`, `XFA-150K-...`) and fills in the matching **size** (50K, 100K or 150K) and
    **type** (`combine`, `express` or `practice`). Size sets the Maximum Loss Limit, profit target
    and contract cap the bot works with. Live Funded accounts are not offered: Topstep doesn't
@@ -304,7 +313,9 @@ bottom; every field already has a suggestion, and a short note under each one ex
      Settings in TopstepX; the bot then stops before it). For an Express Funded Account, pick the
      **payout path** you chose.
 3. **What to trade.** Start with a **micro** contract (MNQ, MES, M2K, MYM, MGC, MCL). Micros are
-   1/10th the size of the minis, so mistakes cost 10× less. For the **strategy**, `adaptive`
+   1/10th the size of the minis, so mistakes cost 10× less. Or choose **Auto: the bot picks each
+   day** and let it choose among the micros
+   ([Letting the bot pick the market](#letting-the-bot-pick-the-market)). For the **strategy**, `adaptive`
    (recommended) runs every strategy all day and trades only what the bot has learned is working;
    or pick one strategy. See [section 12](#12-the-strategies).
 4. **Risk.** Dollars to risk per trade, your personal daily loss limit and the most trades per day.
@@ -1787,9 +1798,11 @@ account:
   login: null                  # which stored API key (section 30); default: the main key
 
 instrument:
-  symbol: MNQ
-  contract_id: null            # pin an exact contract, e.g. CON.F.US.MNQ.Z26
+  symbol: MNQ                  # with auto_pick: the market used when none shows an edge
+  contract_id: null            # pin an exact contract, e.g. CON.F.US.MNQ.Z26 (not with auto_pick)
   timeframe_minutes: 5         # 1-60
+  auto_pick: false             # true = the bot picks the market each day (section 31)
+  candidates: []               # markets auto_pick chooses from (default: the micros your plan allows)
 
 strategy:
   name: adaptive               # adaptive | noise_breakout | orb_momentum | orb | ema_trend
@@ -1973,7 +1986,7 @@ different config file.
 | `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
 | `topstep-bot learn [--days N] [--import CSV] [--offline]` | Grow the long-run memory: download the history it's missing, add a CSV, then replay all of it through every strategy ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 | `topstep-bot first-trade-test [--days N] [--data F] [--download]` | Backtest the first trade after starting against a coin flip ([section 17](#the-first-trade-after-starting)) |
-| `topstep-bot accounts` | Every account: what it trades, its mode and key, and which accounts share the same calls ([section 29](#29-trading-several-accounts)) |
+| `topstep-bot accounts [--check]` | Every account: what it trades, its mode and key, and which accounts share the same calls; `--check` also asks TopstepX about each one (balance, can trade, open positions and orders, today's trades) ([section 29](#29-trading-several-accounts)) |
 | `topstep-bot keys [add\|remove\|test] [NAME]` | List, add (tests the login first), remove or test stored API keys ([section 30](#30-several-api-keys)) |
 | `... --account NAME` | With several accounts: `preflight`, `go-live`, `flatten`, `journal`, `logs`, `rules` and `start --mode` act on one account (default: all); `backtest`, `train`, `download`, `tune`, `learn`, `insights` use that account's strategy and market |
 | `topstep-bot insights [--csv FILE] [--longrun]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
@@ -2004,6 +2017,7 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `data/market_journal.jsonl` | One line per finished session: range, gap, overnight levels, the day's reports and the bot's result |
 | `data/accounts/<name>/`, `logs/accounts/<name>/` | With several accounts: each account's journal, knowledge base, remote settings, heartbeat and logs ([section 29](#29-trading-several-accounts)) |
 | `data/positions/` | What each account holds, for the hedge guard (rewritten while the bots run) |
+| `market_pick.json` (in the account's folder) | With the market on Auto: today's pick, the reason, and every candidate's score |
 | `data/controller.json` | The mode you chose last (Paper/Live) and whether phone access is on |
 | `data/tools/cloudflared.exe` | Cloudflare's tunnel program for phone access (downloaded the first time you turn it on) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
@@ -2223,12 +2237,34 @@ chat control all of them.
 | **Same calls, different size** | Same strategy, different `risk:` | e.g. $150 per trade on a 50K, $300 on a 100K. |
 
 `topstep-bot accounts` (menu **21**) shows every account, what it trades, and which accounts share
-the same calls. The dashboard shows the same grouping under the account cards.
+the same calls; `topstep-bot accounts --check` also asks TopstepX about each one, like the Setup tab. The dashboard shows the same grouping under the account cards.
 
 ### Set it up
 
-The setup wizard (menu 1) asks which accounts to trade when your login has several, and whether they
-should take the same calls or each get its own strategy. Or edit `config.yaml` by hand — everything
+**On the dashboard** (easiest): Setup tab → **2. Accounts** → **+ Add account**. The form lists
+every account your API keys can see that isn't set up yet, with its balance and whether it can
+trade; pick one and the bot fills in its size and type from the name and balance (check them).
+Give it a short name, then choose:
+
+- **API key**: the key that can see the account is picked for you.
+- **Trade calls**: *Same calls as the shared settings*, *Copy another account's calls* or *Its own
+  strategy*.
+- **Market**: the shared market, a market of its own, or **Auto** (the bot picks).
+- **Risk**: per trade, daily limit and trades per day. Values equal to the shared settings aren't
+  copied, so a later change to the shared settings reaches this account too.
+
+**Save account** writes it into `config.yaml` (the previous file is kept as `config.yaml.bak`) and
+its card appears at the top of the dashboard at once, stopped and in **Paper** mode. Each account's
+card on the Setup tab has **Edit** and **Remove**; the bot must be stopped to remove an account or
+rename it.
+
+The **first** extra account turns your single account into an `accounts:` list. Your current account
+gets a short name (`c1` unless you choose another), and its trade journal, knowledge base and remote
+settings are **copied** into `data/accounts/c1/`, so nothing it has learned is lost (the originals
+stay where they were). Stop the bot before saving this first one. With more than one account, the
+fields under the cards edit the **shared settings** every account uses unless it sets its own.
+
+The setup wizard (menu 1) can do the same in the console. Or edit `config.yaml` by hand — everything
 above the `accounts:` list is shared, and each account lists only what is different:
 
 ```yaml
@@ -2397,7 +2433,10 @@ Manage them with `topstep-bot keys` (menu **22**):
 | `topstep-bot keys test` | Logs in with every key and shows how many accounts each sees |
 | `topstep-bot keys remove c2` | Deletes the key from `.env` (and warns if an account still uses it) |
 
-The setup wizard can also store keys for another login and give each account its own key. Every
+The dashboard does the same: Setup tab → **More API keys** → **+ Add another API key** (tested
+before it is saved; each key shows whether it works and how many accounts it sees), and **Remove**
+(refused while an account still uses the key). The setup wizard can also store keys for another
+login and give each account its own key. Every
 stored key is masked in log files. If a key is missing when a bot starts, that account stops with
 *"No API key named ..."* on the dashboard; the others carry on.
 
@@ -2445,6 +2484,44 @@ strategy's average result on each kind of day. Replayed history is labelled too,
 library's calendar archive ([section 33](#33-research-knowledge-that-grows-from-the-internet)) — but
 only for days the archive covers; older days count as "unknown", never as "quiet". The bot doesn't act
 on this yet: it needs weeks of observations before the difference means anything.
+
+### Letting the bot pick the market
+
+Set the market to **Auto** (Setup tab, or an account's **Market** in the Add/Edit form), or in
+`config.yaml`:
+
+```yaml
+instrument:
+  symbol: MNQ          # used on days no market shows an edge
+  auto_pick: true
+  candidates: []       # default: the micros your plan allows (MNQ, MES, M2K, MYM, MGC, MCL)
+```
+
+Each time the bot starts (so every trading day, after the daily restart) it replays the recent
+history of every candidate through **this account's** strategy, the same way training does. The
+replayed days are split: what it learns on the earlier two thirds decides which signals it would
+have taken on the last third, and **only that held-back part is scored**: R per day after costs,
+from trades sized with this account's risk (at most your trades-per-day). That keeps the choice
+honest: a market is picked for what worked on days the bot hadn't learned from, not for what it was
+fitted to.
+
+- A market needs at least 6 such trades and a result above zero. If none qualifies, the bot trades
+  `instrument.symbol` and says why.
+- Signals whose stop is too wide for even one contract at your risk per trade don't count; a market
+  where most are is skipped ("too big for your risk").
+- The current market is kept unless another beats it clearly (0.05R per day), so the bot doesn't
+  hop between markets on noise.
+- An open position on the account keeps its market. A pick is reused for 20 hours, so a restart
+  during the day doesn't pick again; changing the strategy, plan, risk or candidates picks again.
+- The **Market** tab's **Why this market** panel shows every candidate's result and the reason;
+  the pick is saved in `market_pick.json` in the account's folder.
+
+**Honest limits.** TopstepX keeps about 60 days of intraday history, so the held-back part is two to
+four weeks until the long-run memory has collected more (it uses up to 120 days when it has them).
+That is a short sample: the minimum and the margin make luck less likely to decide, not impossible.
+On the history tested while building this, no market showed an edge, and the bot correctly stayed
+on the set market rather than chasing the least-bad loser. Auto never makes the bot trade bigger
+or more often; every risk setting and Topstep rule applies as before.
 
 ---
 

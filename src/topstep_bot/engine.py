@@ -138,6 +138,7 @@ class TradingCore:
         # Cross-account check before any entry: side (+1/-1) -> reason it's not allowed, or None (crossaccount.py).
         self.entry_guard: Callable[[int], str | None] | None = None
         self.intel: MarketTracker | None = None  # live levels, news and headlines for what we trade (market_intel.py)
+        self.market_pick: dict | None = None  # why this market, when the bot picked it (market_pick.py)
         self.news_archive = None  # training only: past calendars from the research library (labels news days)
 
         orders.on_trade_closed = self._on_trade_closed
@@ -710,4 +711,5 @@ class TradingCore:
             "memory": self.memory.status() if self.memory else None,
             "intel": self.intel.brief(self.clock()) if self.intel else None,
             "funded": self.funded_status(),
+            "market_pick": self.market_pick,
         }

@@ -911,6 +911,14 @@ def cmd_accounts(args: argparse.Namespace) -> int:
     from topstep_bot.controller import resolve_modes
 
     cfg = _load(args)
+    if getattr(args, "check", False):
+        from topstep_bot import account_check
+
+        with console.status("Asking TopstepX about your accounts..."):
+            report = asyncio.run(account_check.check(cfg, load_secrets()))
+        console.print(Panel(account_check.text(report), title="What TopstepX says", border_style="cyan"))
+        if not cfg.multi:
+            return 1 if any(r["issues"] for r in report["accounts"]) else 0
     if not cfg.multi:
         console.print(Panel(
             "config.yaml trades a single account. To trade several Combines/accounts, add an [bold]accounts:[/] list -\n"
@@ -936,8 +944,11 @@ def cmd_accounts(args: argparse.Namespace) -> int:
         follow = f" (follows {a.follow})" if a.follow else ""
         login = secrets.login_for(t)
         key = "main" if login is None else login if login in secrets.logins else f"[red]{login} (missing)[/]"
+        from topstep_bot.market_pick import current_symbol
+
+        market = f"{current_symbol(t)} {t.instrument.timeframe_minutes}m" + (" (bot picks)" if t.instrument.auto_pick else "")
         table.add_row(a.name, who, key, f"{t.account.plan} {t.account.stage}", modes.get(a.name, t.mode),
-                      f"{t.instrument.symbol} {t.instrument.timeframe_minutes}m", t.strategy.name + follow,
+                      market, t.strategy.name + follow,
                       _money(t.risk.risk_per_trade), _money(t.risk.personal_daily_loss_limit), str(t.risk.max_trades_per_day))
     console.print(table)
     console.print("[bold]Who trades the same calls:[/]")
@@ -1390,8 +1401,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-a", "--account", help="which account (a name from 'accounts' in config.yaml; default: every account)")
     p.set_defaults(func=cmd_rules)
     sub.add_parser("telegram-test", help="send a test message to your Telegram bot").set_defaults(func=cmd_telegram_test)
-    sub.add_parser("accounts", help="list your accounts and which ones share the same trade calls").set_defaults(
-        func=cmd_accounts)
+    p = sub.add_parser("accounts", help="list your accounts and which ones share the same trade calls")
+    p.add_argument("--check", action="store_true",
+                   help="also ask TopstepX about each one: balance, can trade, open positions, today's trades")
+    p.set_defaults(func=cmd_accounts)
     account_help = "which account (a name from 'accounts' in config.yaml)"
     p = sub.add_parser("keys", help="list, add, remove or test stored TopstepX API keys")
     p.add_argument("action", nargs="?", default="list", choices=["list", "add", "remove", "test"])

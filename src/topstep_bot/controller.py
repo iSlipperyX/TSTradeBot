@@ -585,6 +585,8 @@ class Controller:
                              account=name, worker_command=worker_command, events=self.events, poll_seconds=poll_seconds)
             for name in account_list(cfg)
         }
+        self._monitors: dict[str, asyncio.Task] = {}
+        self._serving = False  # run() started: new bots get a monitor at once
         self.started_at = time.time()
         self.token = pysecrets.token_urlsafe(24)
         self.telegram = None
@@ -616,6 +618,11 @@ class Controller:
                 ("POST", "/api/setup/discord", lambda r: self.setup.discord_save(r.json())),
                 ("POST", "/api/setup/github_token", lambda r: self.setup.github_token(r.json())),
                 ("POST", "/api/setup/autostart", lambda r: self.setup.autostart(r.json())),
+                ("POST", "/api/setup/accounts/check", lambda r: self.setup.check_accounts(force=bool(r.json().get("force", True)))),
+                ("POST", "/api/setup/accounts/save", lambda r: self.setup.save_account(r.json())),
+                ("POST", "/api/setup/accounts/remove", lambda r: self.setup.remove_account(r.json())),
+                ("POST", "/api/setup/keys/add", lambda r: self.setup.add_key(r.json())),
+                ("POST", "/api/setup/keys/remove", lambda r: self.setup.remove_key(r.json())),
                 ("POST", "/api/phone/on", lambda r: self.phone.enable(source(r))),
                 ("POST", "/api/phone/off", lambda r: self.phone.disable(source(r), wait=not r.remote)),
                 ("POST", "/api/page-error", self._page_error),
@@ -663,17 +670,58 @@ class Controller:
         """One account's effective settings (the shared settings with a single account)."""
         return self.cfg.for_account(name if self.multi else None)
 
+    def sync_accounts(self) -> None:
+        """Match the bot processes to config.yaml's accounts after the Setup tab added, renamed or removed one.
+
+        Bots that stay keep running; the Setup tab refuses to drop a running bot. New accounts start
+        stopped, in the mode their entry or the dashboard chose (a new account: paper)."""
+        wanted = account_list(self.cfg)
+        multi = self.cfg.multi
+        for name, bot in list(self.bots.items()):
+            if name in wanted and bot.multi == multi:
+                continue
+            if bot.running:
+                raise RuntimeError(f"{bot.who} is still running")
+            task = self._monitors.pop(name, None)
+            if task:
+                task.cancel()
+            del self.bots[name]
+            spawn(bot.close(), name=f"bot-close-{name}")
+        modes = resolve_modes(self.cfg)
+        for name in wanted:
+            if name not in self.bots:
+                self.bots[name] = BotProcess(self.cfg, self.secrets, mode=modes[name], config_path=self.config_path,
+                                             account=name, worker_command=self.worker_command, events=self.events,
+                                             poll_seconds=self.poll_seconds)
+                if self._serving:
+                    self._monitors[name] = spawn(self.bots[name].monitor(), name=f"bot-monitor-{name}")
+        self.bots = {name: self.bots[name] for name in wanted}  # in config.yaml's order
+        if self.research is not None:
+            from topstep_bot.market_knowledge import product_for
+
+            self.research.roots = sorted({p.root for p in map(product_for, self._research_symbols()) if p})
+            self.research._status = None
+
+    def _research_symbols(self) -> set[str]:
+        """Every market the accounts trade, plus every candidate of an account that picks its own."""
+        from topstep_bot.market_pick import candidates_for, current_symbol
+
+        symbols = set()
+        for name in self.bots:
+            with contextlib.suppress(ValueError):
+                acfg = self.account_cfg(name)
+                symbols.add(current_symbol(acfg))
+                if acfg.instrument.auto_pick:
+                    symbols.update(candidates_for(acfg))
+        return symbols or {self.cfg.instrument.symbol}
+
     def _make_research(self):
         """The research collector (research.py) for every market the accounts trade, or None if turned off."""
         if not self.cfg.research.enabled:
             return None
         from topstep_bot.research import Research
 
-        symbols = set()
-        for name in self.bots:
-            with contextlib.suppress(ValueError):
-                symbols.add(self.account_cfg(name).instrument.symbol)
-        return Research(self.cfg, Path(self.cfg.data_dir) / "research", sorted(symbols or {self.cfg.instrument.symbol}),
+        return Research(self.cfg, Path(self.cfg.data_dir) / "research", sorted(self._research_symbols()),
                         alert=lambda text: self.bot._event("warning", text, alert=True))
 
     # ---------------------------------------------------------------- dashboard routes
@@ -919,8 +967,9 @@ class Controller:
                 f"Port {self.cfg.dashboard.port} is busy - is the bot already running? Open {self.server.url}"
             ) from None
         log.info("Dashboard: %s", self.server.url)
+        self._serving = True
         for bot in self.bots.values():
-            spawn(bot.monitor(), name=f"bot-monitor-{bot.account}")
+            self._monitors[bot.account] = spawn(bot.monitor(), name=f"bot-monitor-{bot.account}")
         await self.start_telegram()
         await self.phone.start()
         if start_bot:
@@ -945,6 +994,8 @@ class Controller:
 
     async def shutdown(self) -> None:
         log.info("Controller shutting down")
+        for task in self._monitors.values():
+            task.cancel()
         if self._research_task:
             self._research_task.cancel()
             await asyncio.wait([self._research_task], timeout=5)
