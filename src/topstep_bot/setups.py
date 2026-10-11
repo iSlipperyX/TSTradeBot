@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from topstep_bot.knowledge import NOT_STRATEGIES
 from topstep_bot.models import Signal
 from topstep_bot.strategies.base import Setup, Strategy
 
@@ -147,7 +148,7 @@ class SetupTracker:
         when = core.schedule.local(close_time).strftime("%H:%M")
         fired: set[tuple[str, str]] = set()
         for rec in list(core.recommender.items)[:20] if core.recommender else []:
-            if rec.created != close_time or rec.strategy == "manual":
+            if rec.created != close_time or rec.strategy in NOT_STRATEGIES:
                 continue
             side = "long" if rec.side.sign > 0 else "short"
             key = (rec.strategy, side)

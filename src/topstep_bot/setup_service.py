@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -126,6 +127,7 @@ class SetupService:
                 "symbol": cfg.instrument.symbol, "strategy": cfg.strategy.name,
                 "risk_per_trade": cfg.risk.risk_per_trade, "daily_loss_limit": cfg.risk.personal_daily_loss_limit,
                 "max_trades": cfg.risk.max_trades_per_day,
+                "first_trade": cfg.first_trade.enabled, "first_trade_minutes": cfg.first_trade.within_minutes,
             },
             "alerts": {
                 "telegram": bool(s.telegram_bot_token and s.telegram_chat_id),
@@ -214,7 +216,7 @@ class SetupService:
 
     # ---------------------------------------------------------------- config.yaml
 
-    def _changes(self, v: dict, old_goal: str | None, fresh: bool) -> dict:
+    def _changes(self, v: dict, old_goal: str | None, fresh: bool, has_first_trade: bool = False) -> dict:
         cfg = self.ctl.cfg
         plan, stage, goal = v["plan"], v["stage"], v["goal"]
         changes: dict[tuple[str | None, str], Any] = {
@@ -247,6 +249,8 @@ class SetupService:
                                 ("risk", "max_consecutive_losses"): 2, ("risk", "cooldown_minutes_after_loss"): REMOVE})
         elif goal == "learn":
             changes[("risk", "daily_profit_target")] = PLANS[plan].profit_target  # follows a plan change
+        # the first trade after starting: only for teaching the bot
+        changes[("first_trade", "enabled")] = True if v["first_trade"] else (False if has_first_trade else REMOVE)
         return changes
 
     @staticmethod
@@ -292,6 +296,8 @@ class SetupService:
             "risk_per_trade": number("risk_per_trade", "Risk per trade"),
             "daily_loss_limit": number("daily_loss_limit", "Daily loss limit"),
             "max_trades": int(max_trades),
+            # an educated trade within first_trade.within_minutes of starting: part of teaching the bot
+            "first_trade": goal == "learn" and bool(body.get("first_trade", True)),
         }
 
     def _fresh_text(self, v: dict) -> str:
@@ -313,10 +319,12 @@ class SetupService:
         fresh = original is None or bool(body.get("fresh"))
         if fresh:
             text = set_values(self._fresh_text(v), {("risk", "max_trades_per_day"): v["max_trades"],
-                                                    ("account", "account_name"): v["account_name"] or REMOVE})
+                                                    ("account", "account_name"): v["account_name"] or REMOVE,
+                                                    ("first_trade", "enabled"): v["first_trade"] or REMOVE})
         else:
             old_goal = None if self.config_error else goal_of(self.ctl.cfg)
-            text = set_values(original, self._changes(v, old_goal, fresh=False))
+            has_first_trade = re.search(r"^first_trade\s*:", original, re.MULTILINE) is not None
+            text = set_values(original, self._changes(v, old_goal, fresh=False, has_first_trade=has_first_trade))
             text = _goal_header(text, v["goal"])
         try:
             config_from_text(text, path.name)
@@ -326,8 +334,8 @@ class SetupService:
             path.with_name(path.name + ".bak").write_text(original, encoding="utf-8")
         path.write_text(text, encoding="utf-8")
         self._reload()
-        log.info("Setup saved from the dashboard (%s %s, %s, %s, goal %s)", v["plan"], v["stage"], v["symbol"],
-                 v["strategy"], v["goal"])
+        log.info("Setup saved from the dashboard (%s %s, %s, %s, goal %s, first trade %s)", v["plan"], v["stage"],
+                 v["symbol"], v["strategy"], v["goal"], "on" if v["first_trade"] else "off")
         self.ctl.bot._event("info", f"Setup saved from the dashboard: {v['plan']} {v['stage']}, {v['symbol']}, "
                                     f"{v['strategy']}, ${v['risk_per_trade']:,.0f} per trade")
         bot = self.ctl.bot

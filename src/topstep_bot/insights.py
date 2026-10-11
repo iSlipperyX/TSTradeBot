@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from topstep_bot.knowledge import MANUAL, KnowledgeBase, Observation
+from topstep_bot.knowledge import FIRST_TRADE, MANUAL, KnowledgeBase, Observation
 from topstep_bot.market_context import FEATURES, SIGNED
 
 MIN_BUCKET = 15  # observations a condition bucket needs before it can be called a hint
@@ -125,6 +125,8 @@ def build_report(kb: KnowledgeBase, strategies: list[tuple[str, str]], *, slippa
 
     rows = [_strategy_row(name, title, by_strategy[name]) for name, title in strategies if by_strategy.get(name)]
     manual = _strategy_row(MANUAL, "Your manual trades", by_strategy[MANUAL]) if by_strategy.get(MANUAL) else None
+    first = (_strategy_row(FIRST_TRADE, "First trades after starting", by_strategy[FIRST_TRADE])
+             if by_strategy.get(FIRST_TRADE) else None)
 
     fills = [o for o in obs if o.source in FILLED]
     slip_in = [o.slip_in for o in fills if o.slip_in is not None]
@@ -175,6 +177,7 @@ def build_report(kb: KnowledgeBase, strategies: list[tuple[str, str]], *, slippa
         },
         "strategies": rows,
         "manual": manual,
+        "first_trade": first,
         "execution": execution,
         "conditions": conditions,
         "hints": hints[:max_hints],
@@ -234,6 +237,9 @@ def report_text(rep: dict[str, Any], *, compact: bool = False) -> str:
     m = rep["manual"]
     if m and m["n"]:
         lines.append(f"Your manual trades: {_r(m['net_r'])} over {m['n']} ({round(100 * (m['win_rate'] or 0))}% won).")
+    f = rep.get("first_trade")
+    if f and f["n"]:
+        lines.append(f"First trades after starting: {_r(f['net_r'])} over {f['n']} ({round(100 * (f['win_rate'] or 0))}% won).")
     ex = execution_line(rep["execution"])
     if ex:
         lines.append(ex)
@@ -248,7 +254,7 @@ def report_text(rep: dict[str, Any], *, compact: bool = False) -> str:
 # --------------------------------------------------------------------------- export
 
 CSV_COLUMNS = ("day", "time", "strategy", "side", "slot", "regime", "source", "r", "cost_r", "net_r", "usd",
-               "mfe_r", "mae_r", "bars", "slip_in", "slip_out", "why")
+               "mfe_r", "mae_r", "bars", "slip_in", "slip_out", "why", "basis")
 
 
 def export_rows(obs: Iterable[Observation]) -> tuple[list[str], list[list[Any]]]:

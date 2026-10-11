@@ -207,6 +207,7 @@ class LiveRunner:
         await self._setup_knowledge()
         self._catch_up()
         await self._setup_news()
+        self._setup_first_trade()
         self._apply_ramp_up()
         return core
 
@@ -285,6 +286,18 @@ class LiveRunner:
         if ideas:
             core.event("info", f"Caught up on today so far: {len(ideas)} idea(s) from before the start, "
                                f"{added} new for the knowledge base, {still_open} still being followed.")
+
+    def _setup_first_trade(self) -> None:
+        """Teach the bot: an educated trade soon after starting (first_trade.py), if turned on."""
+        cfg, core = self.cfg, self.core
+        if core is None or not cfg.first_trade.enabled:
+            return
+        from topstep_bot.first_trade import FirstTradePlanner
+
+        planner = FirstTradePlanner(core, cfg.first_trade, journal=self.journal)
+        core.first_trade = planner
+        planner.request(self.started_at, restart=self.quiet_start)
+        core.event("info", f"First trade after starting: {planner.message}")
 
     def _setup_memory(self) -> None:
         """Open the long-run memory (memory.py): the bars downloaded so far go straight into its library."""
@@ -417,7 +430,11 @@ class LiveRunner:
         assert self.core and self.contract
         tf = self.cfg.instrument.timeframe_minutes
         end = self.now()
-        start = end - timedelta(days=int(self.cfg.data.warmup_days * 1.6) + 3)
+        # Enough history for every strategy (and the shadows the bot learns from) to be signal-ready
+        # on the first live bar, even if data.warmup_days was set lower than a strategy needs.
+        strategies = [self.core.strategy, *(self.core.recommender.shadows if self.core.recommender else [])]
+        days = max(self.cfg.data.warmup_days, *(s.warmup_days + 1 for s in strategies))
+        start = end - timedelta(days=int(days * 1.6) + 3)
         bars = await self.client.retrieve_bars_range(
             self.contract.id, start, end, BarUnit.MINUTE, tf, live=self.cfg.data.live_market_data
         )
