@@ -632,6 +632,7 @@ class Controller:
         self.updates = UpdateService(self)
         self.setup = SetupService(self, config_error)
         self.research = self._make_research()
+        self._research_task: asyncio.Task | None = None
         self.phone = PhoneAccess(self)  # after the dashboard's routes: the phone link serves some of them
 
     # ---------------------------------------------------------------- accounts
@@ -929,7 +930,7 @@ class Controller:
             await self.start_bots(only=only)
         await self.updates.start()
         if self.research is not None:
-            spawn(self.research.run(), name="research")
+            self._research_task = spawn(self.research.run(), name="research")
         if open_browser and self.cfg.dashboard.open_browser:
             webbrowser.open(self.server.url)
         try:
@@ -944,6 +945,9 @@ class Controller:
 
     async def shutdown(self) -> None:
         log.info("Controller shutting down")
+        if self._research_task:
+            self._research_task.cancel()
+            await asyncio.wait([self._research_task], timeout=5)
         await asyncio.gather(*(b.stop("controller shutdown") for b in self.bots.values() if b.running))
         if self._telegram_task:  # stop polling before its HTTP client is closed below
             self._telegram_task.cancel()

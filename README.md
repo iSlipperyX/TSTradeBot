@@ -110,13 +110,31 @@ No bot can guarantee passing the Combine or making a profit, and this one doesn'
   full dashboard in Telegram's built-in browser when you're away. Only your Telegram account can open it,
   LIVE can't be switched on from the phone, and the bot keeps running on your PC: a secure Cloudflare
   link carries only the dashboard, with no router changes ([how](docs/HOW_TO_USE.md#open-the-dashboard-on-your-phone-inside-telegram)).
+- **Several accounts at once** — one bot per Combine or funded account, from one dashboard and one
+  Telegram chat. Accounts can take the same calls, their own calls, or copy another account's calls,
+  each with its own risk and limits; a hedge guard stops opposite positions across accounts, which
+  Topstep prohibits ([how](docs/HOW_TO_USE.md#29-trading-several-accounts)).
+- **Several API keys** — one per account or per TopstepX login if you like, managed with
+  `topstep-bot keys` and masked in every log ([how](docs/HOW_TO_USE.md#30-several-api-keys)).
+- **Market knowledge** — the Market tab and `/market`: the contract's specs and what moves it, key
+  levels, the normal day's range, today's reports for your market and its headlines; a session journal
+  of market conditions next to your trades ([how](docs/HOW_TO_USE.md#31-what-the-bot-knows-about-the-market-and-the-news)).
+- **Funded-account goals** — progress to your Combine pass or next Express payout on either payout path
+  (`/funded`), and goal rules that only make the bot more careful, e.g. keeping a winning day a winning
+  day ([how](docs/HOW_TO_USE.md#32-funded-account-goals-and-topsteps-rules)).
+- **Research that grows from the internet** — while it runs, the bot archives every economic calendar
+  (so retraining knows past news days), headlines for your markets and ten years of daily prices, and
+  watches Topstep's rule pages, alerting you when one changes. Information only: it never trades on it
+  ([how](docs/HOW_TO_USE.md#33-research-knowledge-that-grows-from-the-internet)).
+- **Entries inside the bid/offer** — entry orders are limit orders capped at the best bid/offer (and a
+  few ticks of slippage at most), never through it.
 - **Journal** (SQLite) and Telegram/Discord alerts.
 - Realtime data via a built-in SignalR client with automatic reconnect and REST fallback.
 - **Updates from GitHub** — the bot checks for a newer version every few hours and tells you on the
   dashboard and Telegram what changed. It installs only when you confirm, only while no trade or order
   is open (or after the close), test-starts the new version, restarts itself, and puts the previous
   version back if anything fails. Your settings and data are kept ([how](docs/HOW_TO_USE.md#updating)).
-- 300+ automated tests, including end-to-end runs against a simulated TopstepX server and Telegram, and a test for every Topstep rule.
+- 450+ automated tests, including end-to-end runs against a simulated TopstepX server and Telegram, and a test for every Topstep rule.
 
 ## Commands
 
@@ -145,6 +163,10 @@ topstep-bot insights        what the bot has learned: results after costs, real 
 topstep-bot learn           grow the long-run memory: backfill history and replay it all (--import CSV, --days N)
 topstep-bot first-trade-test  backtest the first trade after starting against a coin flip (--days N)
 topstep-bot update          check GitHub for a newer version and install it (--check, --token, --undo)
+topstep-bot accounts        your accounts: what each trades, its key, which share the same calls
+topstep-bot keys            list, add, remove or test stored API keys (add NAME, remove NAME, test)
+
+With several accounts, add --account NAME to act on one (e.g. 'start --mode live --account c2').
 ```
 
 ## Project layout
@@ -163,7 +185,7 @@ src/topstep_bot/
   memory.py       long-run memory: the market library and replaying all of it
   forecast.py     when the next trade is likely;  briefing.py  what the bot knows, in plain words
   execution.py    order/trade lifecycle (entry, stop, target, OCO, reconciliation)
-  controller.py   dashboard + Telegram + supervision of the bot process
+  controller.py   dashboard + Telegram + supervision of the bot processes (one per account)
   setup_service.py  the dashboard's Setup tab;  config_edit.py  edits config.yaml keeping comments
   worker_api.py   the bot's private local API (used by the controller)
   web.py          tiny local HTTP server shared by both
@@ -172,6 +194,9 @@ src/topstep_bot/
   logging_setup.py    log files, redaction, crash reports
   service.py      bot <-> controller contract;  autostart.py, keepawake.py
   preflight.py    same-day readiness checks;  news.py  economic calendar
+  market_knowledge.py  each market's specs and what moves it;  market_intel.py  live levels and ranges
+  research.py     the research library: what the bot gathers from the internet
+  funded.py       progress to the Combine pass or next payout;  crossaccount.py  the hedge guard
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram
   manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
   setups.py       the trades each strategy is building toward (dashboard's Getting ready to trade)

@@ -71,3 +71,32 @@ dashboard:
   port: 8765
   open_browser: true
   phone_access: false           # open the dashboard in Telegram on your phone (switch it on in the dashboard's Settings tab)
+
+news:
+  per_instrument: true          # also pause around the medium-impact reports that move your market (e.g. EIA for crude)
+  headlines: true               # recent headlines about your market on the Market tab (information only)
+
+funded:                         # Express Funded payout goals (docs/HOW_TO_USE.md section 32)
+  # last_payout_date: "2026-10-02"  # progress toward the next payout restarts after this day
+  protect_winning_day: true     # standard path: once today is a $150+ winning day, keep it one
+
+research:                       # what the bot gathers from the internet while it runs (information only, never trades on it)
+  enabled: true                 # calendar archive, headlines, ten years of daily prices, Topstep rule-page alerts
+  sources: []                   # your own feeds/pages, e.g. [{name: myfeed, url: "https://...", kind: rss}]
+
+# ---- Several accounts (docs/HOW_TO_USE.md section 29). Leave this out to trade the one account above.
+# Everything above is shared; each account lists only what is different.
+# multi_account:
+#   hedge_guard: correlated     # no opposite positions across accounts (Topstep prohibits hedging)
+# accounts:
+#   - name: c1
+#     account_id: 111111
+#   - name: c2                  # same calls as c1, its own size
+#     account_id: 222222
+#     plan: "100K"
+#     risk: {risk_per_trade: 300}
+#   - name: c3                  # its own calls
+#     account_id: 333333
+#     strategy: {name: orb}
+#     instrument: {symbol: MES}
+#     login: second             # a stored API key ('topstep-bot keys add second')

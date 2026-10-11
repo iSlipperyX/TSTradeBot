@@ -63,6 +63,11 @@ Optional extras like training, backtests and tuning are in the text menu: `start
 26. [Files the bot creates](#26-files-the-bot-creates)
 27. [Troubleshooting](#27-troubleshooting)
 28. [Writing your own strategy](#28-writing-your-own-strategy)
+29. [Trading several accounts](#29-trading-several-accounts)
+30. [Several API keys](#30-several-api-keys)
+31. [What the bot knows about the market and the news](#31-what-the-bot-knows-about-the-market-and-the-news)
+32. [Funded-account goals and Topstep's rules](#32-funded-account-goals-and-topsteps-rules)
+33. [Research: knowledge that grows from the internet](#33-research-knowledge-that-grows-from-the-internet)
 
 ---
 
@@ -1055,6 +1060,11 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/startbot` | Starts the bot if it's stopped or crashed. Asks for confirmation. |
 | `/ideas` | Recommended trades with **Take** and **½ size** buttons ([section 16](#16-recommended-trades)) |
 | `/brief` | **What the bot knows**, in plain sentences: how much it has seen, what it would and wouldn't trade right now and why, what has worked after costs, lessons worth testing, and when it expects its next trade ([section 17](#what-the-bot-knows-and-when-it-trades-next)) |
+| `/market` | **Market brief** for the market this account trades: key levels, normal range, today's reports, headlines ([section 31](#31-what-the-bot-knows-about-the-market-and-the-news)) |
+| `/funded` | Progress toward passing the Combine or the next payout ([section 32](#32-funded-account-goals-and-topsteps-rules)) |
+| `/rules` | Every Topstep rule the bot knows and what it does about each |
+| `/research` | What the bot has gathered from the internet ([section 33](#33-research-knowledge-that-grows-from-the-internet)) |
+| `/accounts` | All your accounts at a glance ([section 29](#29-trading-several-accounts)) |
 | `/next` | **When the next trade is likely**, and what that estimate is based on (also a button under every message) |
 | `/learn` | Grow the long-run memory now: download the history it's missing and replay all of it ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 | `/knowledge` | What the bot has learned: per strategy and time of day, ✅ trades now / ❌ switched off / ❔ unproven, then results after costs, real fill slippage and conditions worth testing ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
@@ -1774,6 +1784,7 @@ account:
   mll_floor_override: null     # sync with Topstep's dashboard
   topstep_daily_loss_limit: null  # true = your plan's optional DLL ($1,000/$2,000/$3,000), or a dollar amount
   payout_path: standard        # Express Funded payout path: standard | consistency
+  login: null                  # which stored API key (section 30); default: the main key
 
 instrument:
   symbol: MNQ
@@ -1822,7 +1833,7 @@ risk:
   slippage_ticks: 1.0                  # used by paper trading and backtests
   ramp_up_days: 3                      # first N live trading days on an account...
   ramp_up_risk_fraction: 0.5           # ...risk this fraction of risk_per_trade
-  consistency_guard: true              # combine: close out at 50% of the profit target in a day
+  consistency_guard: true              # combine: close out at 50% of the profit target in a day (Topstep's line is 55%)
   stop_at_profit_target: true          # combine: stop trading once the profit target is reached
 
 session:
@@ -1867,6 +1878,23 @@ news:
   minutes_before: 5
   minutes_after: 10
   flatten_before: false        # true = also close open trades just before a release
+  per_instrument: true         # also pause around medium-impact reports that move your market
+  headlines: true              # recent headlines about your market (information only)
+
+funded:                        # Express Funded payout goals (section 32)
+  last_payout_date: null       # progress restarts after your last payout request
+  protect_winning_day: true    # standard path: keep a $150+ day a winning day
+  cycle_profit_goal: null      # consistency path: each day capped at 40% of this (default: the profit target)
+
+research:                      # what the bot gathers from the internet (section 33)
+  enabled: true
+  calendar: true
+  headlines: true
+  headline_minutes: 30
+  daily_history: true
+  rules_watch: true
+  rules_watch_hours: 12
+  sources: []                  # [{name: x, url: https://..., kind: rss|page}]
 
 service:                       # used by the controller ('start')
   keep_awake: true
@@ -1894,11 +1922,11 @@ backtest:
   data_file: null
   report_dir: reports          # backtest and tuning reports
 
-multi_account:                 # only matters with an accounts list (section 28)
+multi_account:                 # only matters with an accounts list (section 29)
   hedge_guard: correlated      # correlated | same_product | off - no opposite positions across accounts
   stagger_seconds: 3           # pause between starting each account's bot
 
-accounts: []                   # one entry per account; each overrides only what differs (section 28)
+accounts: []                   # one entry per account; each overrides only what differs (section 29)
 
 api:                           # only change if Topstep changes its endpoints
   base_url: https://api.topstepx.com
@@ -1945,6 +1973,9 @@ different config file.
 | `topstep-bot update [--check] [--yes] [--token] [--undo]` | Check GitHub for a newer version and install it; `--token` sets up a GitHub token (only for a private repository), `--undo` goes back to the version before the last update ([Updating](#updating)) |
 | `topstep-bot learn [--days N] [--import CSV] [--offline]` | Grow the long-run memory: download the history it's missing, add a CSV, then replay all of it through every strategy ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 | `topstep-bot first-trade-test [--days N] [--data F] [--download]` | Backtest the first trade after starting against a coin flip ([section 17](#the-first-trade-after-starting)) |
+| `topstep-bot accounts` | Every account: what it trades, its mode and key, and which accounts share the same calls ([section 29](#29-trading-several-accounts)) |
+| `topstep-bot keys [add\|remove\|test] [NAME]` | List, add (tests the login first), remove or test stored API keys ([section 30](#30-several-api-keys)) |
+| `... --account NAME` | With several accounts: `preflight`, `go-live`, `flatten`, `journal`, `logs`, `rules` and `start --mode` act on one account (default: all); `backtest`, `train`, `download`, `tune`, `learn`, `insights` use that account's strategy and market |
 | `topstep-bot insights [--csv FILE] [--longrun]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat menu` or
@@ -1969,6 +2000,10 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `data/market_library.sqlite` | The long-run memory's market library: every price bar the bot has downloaded or imported |
 | `data/knowledge_<SYMBOL>_<TF>m_longrun.json` | What every strategy did on the whole library (reports only; rebuilt daily, safe to delete) |
 | `data/news_cache.json` | This week's economic calendar |
+| `data/research/` | The research library ([section 33](#33-research-knowledge-that-grows-from-the-internet)): `calendar.json` (every calendar seen), `headlines_<ROOT>.jsonl`, `daily_<ROOT>.json` (daily history), `watched_pages.json` (rule pages). Safe to delete |
+| `data/market_journal.jsonl` | One line per finished session: range, gap, overnight levels, the day's reports and the bot's result |
+| `data/accounts/<name>/`, `logs/accounts/<name>/` | With several accounts: each account's journal, knowledge base, remote settings, heartbeat and logs ([section 29](#29-trading-several-accounts)) |
+| `data/positions/` | What each account holds, for the hedge guard (rewritten while the bots run) |
 | `data/controller.json` | The mode you chose last (Paper/Live) and whether phone access is on |
 | `data/tools/cloudflared.exe` | Cloudflare's tunnel program for phone access (downloaded the first time you turn it on) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
@@ -2171,7 +2206,7 @@ Backtest it with `topstep-bot backtest --strategy my_strategy`, and run the test
 
 ---
 
-## 28. Trading several accounts
+## 29. Trading several accounts
 
 If you have more than one Combine (or Express/Practice account) under the same TopstepX login, the
 bot can trade them together. Each account gets **its own bot process**, so one account crashing,
@@ -2187,7 +2222,7 @@ chat control all of them.
 | **Copy one account's calls** | `follow: c1` | The account trades whatever c1's strategy and market are (even if you change them later), with its own risk. |
 | **Same calls, different size** | Same strategy, different `risk:` | e.g. $150 per trade on a 50K, $300 on a 100K. |
 
-`topstep-bot accounts` (menu **15**) shows every account, what it trades, and which accounts share
+`topstep-bot accounts` (menu **21**) shows every account, what it trades, and which accounts share
 the same calls. The dashboard shows the same grouping under the account cards.
 
 ### Set it up
@@ -2267,7 +2302,9 @@ and position. **Click a card** to select that account — every tab (Overview, I
 Settings, Logs) and every button (Start/Stop/Restart, the Paper | Live switch, Pause, Flatten,
 setting changes, Take idea) then applies to that account only. The **All accounts** row below the
 cards pauses, resumes, starts, stops or flattens every account at once. The dashboard remembers
-which account you had selected.
+which account you had selected. The **Setup** tab edits the shared settings at the top of
+`config.yaml`; per-account differences live in the `accounts:` list (edit the file, or use the
+console setup, menu 1).
 
 ### Telegram with several accounts
 
@@ -2284,7 +2321,7 @@ Name the account after the command, or `all`:
 
 Leave the name out and the bot replies with a button per account (and **All accounts** for
 pause/resume/flatten/stop/restart/startbot/reset). `/ideas`, `/trades`, `/settings`, `/knowledge`,
-`/train` and `/log` work on one account at a time. Alerts say which account they're from, e.g.
+`/train`, `/log`, `/brief`, `/next`, `/learn`, `/market` and `/funded` work on one account at a time. Alerts say which account they're from, e.g.
 *[Topstep Bot (c2, live)] ENTRY ...*.
 
 ### Modes, files and logs
@@ -2319,7 +2356,7 @@ pause/resume/flatten/stop/restart/startbot/reset). `/ideas`, `/trades`, `/settin
 
 ---
 
-## 29. Several API keys
+## 30. Several API keys
 
 One API key works for every account on your TopstepX login, and that is all you need. You can store
 more, for two reasons:
@@ -2351,7 +2388,7 @@ accounts:
     login: second             # the "second" login's key
 ```
 
-Manage them with `topstep-bot keys` (menu **16**):
+Manage them with `topstep-bot keys` (menu **22**):
 
 | Command | What it does |
 |---|---|
@@ -2366,10 +2403,11 @@ stored key is masked in log files. If a key is missing when a bot starts, that a
 
 ---
 
-## 30. What the bot knows about the market and the news
+## 31. What the bot knows about the market and the news
 
 The bot now knows the market it trades, not just its own strategies. All of this is on the dashboard's
-**Market** tab and in Telegram **/brief**.
+**Market** tab and in Telegram **/market** (`/brief` is still "what the bot knows" about its own
+strategies, [section 17](#what-the-bot-knows-and-when-it-trades-next)).
 
 **The contract.** For each market (S&P, Nasdaq, Dow, Russell, gold, crude — minis and micros): exchange,
 contract months, expiry, how it rolls, regular hours, tick and point value, what moves it (e.g.
@@ -2383,6 +2421,7 @@ as much as ES; the Russell gaps and fakes out more often).
 | Key levels | Yesterday's regular-session high / low / close, today's overnight high / low, open, high and low, and how far price is from each |
 | Normal day's range | The average daily range of the last 14 sessions, in points and in dollars per contract (useful for sizing stops) |
 | Today so far | Today's range and what share of a normal day it has used; the opening gap |
+| Long-term context | Where the recent normal range sits among ten years of daily ranges, e.g. "wilder than 85% of days" (needs the research library, [section 33](#33-research-knowledge-that-grows-from-the-internet)) |
 | Notes | Plain-language observations: a big gap, an already-extended day, a quiet day, above/below/inside yesterday's range |
 
 **The news that matters for it.** Before, the bot paused around high-impact US releases. Now, with
@@ -2402,13 +2441,14 @@ conditions next to your trades.
 
 **It learns from the news.** Every live observation in the knowledge base now notes whether the day had
 a market-moving report. The Knowledge tab's **news / quiet days** column (and `/knowledge`) shows each
-strategy's average result on each kind of day. The bot doesn't act on this yet — it needs weeks of live
-observations before the difference means anything; replayed history has no calendar, so training
-observations count as "unknown".
+strategy's average result on each kind of day. Replayed history is labelled too, from the research
+library's calendar archive ([section 33](#33-research-knowledge-that-grows-from-the-internet)) — but
+only for days the archive covers; older days count as "unknown", never as "quiet". The bot doesn't act
+on this yet: it needs weeks of observations before the difference means anything.
 
 ---
 
-## 31. Funded-account goals and Topstep's rules
+## 32. Funded-account goals and Topstep's rules
 
 The bot knows the rules of each account stage and tracks your progress toward the goal that matters
 there. Overview's **Account goal** panel and Telegram **/funded** show it; **/rules** lists every rule
@@ -2416,7 +2456,7 @@ with what the bot does about it.
 
 | Stage | Goal | What the bot tracks | What the bot does |
 |---|---|---|---|
-| Combine | Hit the profit target ($3K / $6K / $9K) without touching the MLL | Profit vs target; best day as a share of total profit (must be under 50%) and the total you'd need if it isn't | Stops for the day at 40% of the target, so one big day can't break consistency |
+| Combine | Hit the profit target ($3K / $6K / $9K) without touching the MLL | Profit vs target; your best day against the Consistency Target (55% of the profit target) and the raised target if it's over | Stops for the day at 40% of the target and closes an open trade at 50%, so one big day can't raise the target ([section 14](#14-topstep-rules-what-the-bot-enforces-and-what-is-still-on-you)) |
 | Express — **standard** path | 5 winning days of $150+ net per payout | Winning days since your last payout, today's progress to $150, an estimate of what you could request (50% of balance, capped), your Scaling Plan limit | Once today is a winning day, sizes new trades so a stop-out leaves the day at $150+ (`protect_winning_day`) |
 | Express — **consistency** path | Best day ≤ 40% of profit over at least 3 trading days | Trading days, the ratio, the daily cap | Caps each day at 40% of `cycle_profit_goal` (default: the plan's profit target) |
 
@@ -2425,9 +2465,11 @@ Set your path and last payout so the counts are right:
 ```yaml
 account:
   stage: express
-funded:
   payout_path: standard        # or consistency - whatever you chose when the XFA was activated
-  last_payout_date: "2026-10-02"
+funded:
+  last_payout_date: "2026-10-02"   # progress restarts after your last payout request
+  protect_winning_day: true        # standard path: keep a winning day a winning day
+  cycle_profit_goal: null          # consistency path: profit to build per payout (default: the profit target)
 ```
 
 **Rules the bot knows** (checked against Topstep's help center on 2026-10-11): Maximum Loss Limit,
@@ -2442,6 +2484,49 @@ None of this makes the bot trade bigger or more often to reach a goal faster —
 settings still applies, and the goal-based rules only ever make it more careful. Rules change: the
 numbers in your TopstepX dashboard always win, and if they differ, tell the bot (`funded:` and `risk:`
 settings).
+
+---
+
+## 33. Research: knowledge that grows from the internet
+
+While the dashboard is open, the bot keeps gathering information from free public sources into a
+**research library** (`data/research/`). The library only grows: the longer the bot runs, the more
+it knows. The dashboard's **Market** tab ("What the bot gathers from the internet") and Telegram
+**/research** show what it holds and when each source was last collected.
+
+| What | From | How often | What it's used for |
+|---|---|---|---|
+| **Economic calendar archive** | The same free calendar the news filter uses | Every 6 hours | Every week's calendar is kept, so when the bot retrains it knows which past days had a report that moves your market (the knowledge base's news/quiet days) |
+| **Headline archive** | Yahoo Finance feeds for each market your accounts trade, and the ETF that tracks it | Every 30 minutes | A searchable record of what was said about your market, kept next to its sessions |
+| **Daily price history** | Yahoo Finance's daily chart for the continuous future | Daily | Up to ten years of daily ranges, so the Market tab can say whether today and recent days are unusually quiet or wild |
+| **Topstep's rule pages** | Eight help.topstep.com articles: Combine and Express Funded parameters, Maximum and Daily Loss Limits, the Consistency Target, the Scaling Plan, API access and prohibited strategies | Every 12 hours | If Topstep changes a page, you get an alert (Telegram/Discord and Activity) with a link. The bot never changes its own rules from a web page: you read the change and update your settings if needed |
+| **Your own sources** | RSS feeds or pages you list in `research.sources` | With the headlines | Feeds are archived like headlines; pages are watched for changes like the rule pages |
+
+```yaml
+research:
+  enabled: true
+  calendar: true
+  headlines: true
+  headline_minutes: 30          # 5-1440
+  daily_history: true
+  rules_watch: true
+  rules_watch_hours: 12         # 1-168
+  sources:
+    - {name: myfeed, url: "https://example.com/rss", kind: rss}     # archived
+    - {name: cme-margins, url: "https://example.com/page", kind: page}  # alert when it changes
+```
+
+Good to know:
+
+- **It never trades on any of it.** Nothing in the library places, sizes, blocks or closes a trade.
+  It feeds the reports, the Market tab, the knowledge base's news labels and the rule-change alerts.
+- **The controller collects, the bots read.** With several accounts the internet is asked once, for
+  every market the accounts trade; each account's bot reads the shared library.
+- **A failing source doesn't stop the others.** The panel shows which one failed and why; it tries
+  again next time.
+- **Polite and small.** A few requests per hour in total, a clear user agent, and the library stays
+  small (text and numbers only). Delete `data/research/` at any time to start it again.
+- **No internet, no problem.** Trading doesn't depend on it; turn it off with `research.enabled: false`.
 
 ---
 
