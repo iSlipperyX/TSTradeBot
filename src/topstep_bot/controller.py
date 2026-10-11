@@ -510,6 +510,23 @@ class ProxyActions:
             return "Research is turned off (research.enabled: false)."
         return self.ctl.research.text()
 
+    async def lab_text(self, account: str | None = None) -> str:
+        from topstep_bot.simlab import load_report, report_text
+
+        lab = self.ctl.lab
+        if lab.running:
+            done, total = lab.progress
+            return f"The Simulation Lab is running: {lab.stage or 'working'} ({done}/{total}). Ask again in a minute."
+        return report_text(load_report(self.ctl.account_cfg(self.ctl.bot.account)), top=5)
+
+    async def coach_text(self, account: str | None = None) -> str:
+        coach = self.ctl.coach
+        coach._sync()
+        text = coach.coach.status_text()
+        if coach.coach.running:
+            text += f"\nA session is running now: {coach.coach.stage or 'working'}."
+        return text + "\nStart a session or approve proposals on the dashboard's AI Coach tab."
+
     async def train(self, source: str, account: str | None = None) -> str:
         bot = self._one(account)
         return self._tag(bot, (await bot.action("train", {"source": source})).get("message") or "Done.")
@@ -629,6 +646,17 @@ class Controller:
                 ("POST", "/api/phone/on", lambda r: self.phone.enable(source(r))),
                 ("POST", "/api/phone/off", lambda r: self.phone.disable(source(r), wait=not r.remote)),
                 ("POST", "/api/page-error", self._page_error),
+                ("POST", "/api/lab/state", lambda r: self.lab.state()),
+                ("POST", "/api/lab/run", lambda r: self.lab.run(r.json(), source(r))),
+                ("POST", "/api/lab/apply", lambda r: self.lab.apply(r.json(), source(r))),
+                ("POST", "/api/coach/state", lambda r: self.coach.state()),
+                ("POST", "/api/coach/key", lambda r: self.coach.save_key(r.json())),
+                ("POST", "/api/coach/key/remove", lambda r: self.coach.remove_key()),
+                ("POST", "/api/coach/settings", lambda r: self.coach.settings(r.json())),
+                ("POST", "/api/coach/run", lambda r: self.coach.run(r.json(), source(r))),
+                ("POST", "/api/coach/cancel", lambda r: self.coach.cancel()),
+                ("POST", "/api/coach/proposal", lambda r: self.coach.decide(r.json(), source(r))),
+                ("POST", "/api/coach/lesson/forget", lambda r: self.coach.forget(r.json())),
             ],
             token=self.token,
             name="dashboard",
@@ -641,6 +669,10 @@ class Controller:
 
         self.updates = UpdateService(self)
         self.setup = SetupService(self, config_error)
+        from topstep_bot.lab_service import CoachService, LabService
+
+        self.lab = LabService(self)
+        self.coach = CoachService(self)
         self.research = self._make_research()
         self._research_task: asyncio.Task | None = None
         self.phone = PhoneAccess(self)  # after the dashboard's routes: the phone link serves some of them
@@ -774,6 +806,8 @@ class Controller:
             "viewer": "phone" if req.remote else "pc",
             "setup": self.setup.summary(),
             "research": self.research.status() if self.research else None,
+            "lab": self.lab.summary(),
+            "coach": self.coach.summary(),
             # market / trading-day countdowns: computed here so they show even while the bot is stopped
             "clock": self._clock(selected),
         }

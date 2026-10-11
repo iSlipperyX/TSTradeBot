@@ -363,6 +363,23 @@ class FirstTradeConfig(_Section):
     contracts: int = Field(default=1, ge=1, le=5, description="Size of that trade (1 = the smallest).")
 
 
+class CoachConfig(_Section):
+    """The AI coach (coach.py): Claude reviews the bot's evidence, runs simulations and writes lessons.
+
+    It needs a Claude API key (COACH_ANTHROPIC_API_KEY in .env, entered on the dashboard's Coach tab) and
+    API credits. It never places a trade or changes a setting by itself: what it proposes waits for you."""
+
+    enabled: bool = True
+    model: Literal["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"] = Field(
+        default="claude-opus-5-5", description="Claude model the coach uses (Opus 5.5 is the recommended default).")
+    effort: Literal["low", "medium", "high", "xhigh", "max"] = Field(
+        default="high", description="How hard Claude thinks: higher is more thorough and costs more.")
+    max_session_usd: float = Field(default=1.5, gt=0, le=50, description="Stop a coaching session once it has cost this much.")
+    monthly_budget_usd: float = Field(default=20.0, gt=0, le=1000, description="No new sessions once this month's spending reaches this.")
+    max_turns: int = Field(default=24, ge=2, le=80, description="Most back-and-forth steps in one session.")
+    allow_simulations: bool = Field(default=True, description="Let the coach run its own Simulation Lab experiments.")
+
+
 class ServiceConfig(_Section):
     """Unattended 24/7 operation (the controller started by 'topstep-bot start')."""
 
@@ -535,6 +552,7 @@ class BotConfig(_Section):
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     funded: FundedConfig = Field(default_factory=FundedConfig)
     research: ResearchConfig = Field(default_factory=ResearchConfig)
+    coach: CoachConfig = Field(default_factory=CoachConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     multi_account: MultiAccountConfig = Field(default_factory=MultiAccountConfig)
@@ -757,6 +775,7 @@ class Secrets(BaseModel):
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     github_token: str | None = None  # read-only token for update checks (only needed for a private repository)
+    anthropic_api_key: str | None = None  # the AI coach's Claude API key (coach.py)
     logins: dict[str, Login] = Field(default_factory=dict)  # extra named API keys (lower-case names)
     login_name: str | None = None  # which named login username/api_key came from (None = the main key)
 
@@ -788,7 +807,7 @@ class Secrets(BaseModel):
 
     def secret_values(self) -> list[str | None]:
         """Everything that must never appear in a log file."""
-        return [self.api_key, self.telegram_bot_token, self.discord_webhook_url, self.github_token,
+        return [self.api_key, self.telegram_bot_token, self.discord_webhook_url, self.github_token, self.anthropic_api_key,
                 *(login.api_key for login in self.logins.values())]
 
 
@@ -820,6 +839,7 @@ def load_secrets() -> Secrets:
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
         github_token=os.environ.get("GITHUB_TOKEN") or None,
+        anthropic_api_key=os.environ.get("COACH_ANTHROPIC_API_KEY") or None,
         logins={k: v for k, v in logins.items() if v.api_key},
     )
 

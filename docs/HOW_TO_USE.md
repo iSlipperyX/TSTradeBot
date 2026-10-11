@@ -31,6 +31,11 @@ enforces it, see [TOPSTEP_RULES.md](TOPSTEP_RULES.md).
 Optional extras like training, backtests and tuning are in the text menu: `start.bat menu`
 ([section 6](#6-the-text-menu-optional)).
 
+**New in 2.0:** a redesigned dashboard, the **Simulations** tab, which replays the bot through history
+as hundreds of fresh Combines ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)), and the
+**AI Coach**, where Claude reviews the evidence, tests ideas and proposes changes you approve
+([section 35](#35-the-ai-coach-claude-teaches-the-bot)).
+
 ---
 
 ## Contents
@@ -68,6 +73,8 @@ Optional extras like training, backtests and tuning are in the text menu: `start
 31. [What the bot knows about the market and the news](#31-what-the-bot-knows-about-the-market-and-the-news)
 32. [Funded-account goals and Topstep's rules](#32-funded-account-goals-and-topsteps-rules)
 33. [Research: knowledge that grows from the internet](#33-research-knowledge-that-grows-from-the-internet)
+34. [Simulation Lab: hundreds of Combines from history](#34-simulation-lab-hundreds-of-combines-from-history)
+35. [The AI coach: Claude teaches the bot](#35-the-ai-coach-claude-teaches-the-bot)
 
 ---
 
@@ -541,17 +548,23 @@ that file.
 
 ### The dashboard
 
-**Top bar** (always visible):
+The dashboard is laid out like a trading desk: a **navigation rail** on the left (Trading: Overview,
+Trade, Ideas, Market; Learning: Knowledge, Simulations, AI Coach; System: Settings, Setup, Logs), a
+**status bar** along the top, and the page you picked underneath. On a phone or a narrow window the
+rail becomes a row of tabs across the top. Counts on the rail show live ideas, a running simulation
+and coach proposals waiting for you. At the bottom of the rail: the **Logs** badge, the phone-link
+badge and the **Auto / Light / Dark** theme switch (Auto follows your computer).
+
+**Status bar** (always visible):
 
 - **Paper | Live** switch. Switching to Live asks you to type `LIVE`. It's refused while a trade is
   open, so flatten first. The bot restarts in the new mode, and the choice is remembered for next time.
 - **Bot status:** Running, Starting…, Stopped, Crashed or Failed to start, plus uptime.
 - **Start, Restart and Stop** for the bot process. Stop closes any position first; the dashboard stays up.
-- **Log badge:** warnings and errors so far. Click it for the Logs tab.
-- **📱 Phone link on** (only while phone access is on): the dashboard can be opened in Telegram on
+- **Logs badge** (rail): warnings and errors so far. Click it for the Logs tab.
+- **Phone link on** (rail, only while phone access is on): the dashboard can be opened in Telegram on
   your phone. Click it for its settings ([how it works](#open-the-dashboard-on-your-phone-inside-telegram)).
-- **Theme button** (◐): follow your computer's light/dark setting, or force light or dark. The
-  dashboard remembers it, and it remembers which tab you were on.
+- **Theme switch** (rail): Auto, Light or Dark. The dashboard remembers it, and which tab you were on.
 - **Market clock** (just under the top bar, works even while the bot is stopped): whether the market
   is open, the time in Chicago, and live countdowns to the next:
   - **Market opens / closes:** the CME Globex session, 17:00–16:00 CT, closed Friday 16:00 to Sunday 17:00.
@@ -612,6 +625,14 @@ see [section 31](#31-funded-account-goals-and-topsteps-rules).
 result per signal and whether the adaptive strategy trades it right now — with a **Retrain now** button,
 plus a **Your manual trades** panel: your record by time of day and regime and your latest trades.
 See [section 17](#17-training-and-the-knowledge-base-how-the-bot-learns).
+
+**Simulations tab:** the Simulation Lab — the bot replayed through history as fresh Combines,
+every playbook (market + strategy) scored, and a **Use** button to make one the bot's. See
+[section 34](#34-simulation-lab-hundreds-of-combines-from-history). The Overview shows a summary.
+
+**AI Coach tab:** Claude reviews the bot's evidence, runs its own simulations, records lessons and
+proposes changes you approve. Your Claude API key, credits and spending limits are here too. See
+[section 35](#35-the-ai-coach-claude-teaches-the-bot).
 
 **Settings tab:** change risk, limits, times, the news pause and the auto-traded strategy — see
 [section 19](#19-changing-settings-from-the-dashboard-or-telegram).
@@ -1075,6 +1096,8 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/funded` | Progress toward passing the Combine or the next payout ([section 32](#32-funded-account-goals-and-topsteps-rules)) |
 | `/rules` | Every Topstep rule the bot knows and what it does about each |
 | `/research` | What the bot has gathered from the internet ([section 33](#33-research-knowledge-that-grows-from-the-internet)) |
+| `/lab` | The Simulation Lab's latest results: Combines passed/failed, the best playbooks, the held-out check and its suggestion ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
+| `/coach` | The AI coach: latest lessons, proposals waiting for you, and this month's spending ([section 35](#35-the-ai-coach-claude-teaches-the-bot)) |
 | `/accounts` | All your accounts at a glance ([section 29](#29-trading-several-accounts)) |
 | `/next` | **When the next trade is likely**, and what that estimate is based on (also a button under every message) |
 | `/learn` | Grow the long-run memory now: download the history it's missing and replay all of it ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
@@ -1935,6 +1958,15 @@ backtest:
   data_file: null
   report_dir: reports          # backtest and tuning reports
 
+coach:                         # the AI coach (section 35); the API key goes in .env, never here
+  enabled: true
+  model: claude-opus-5-5       # claude-opus-5-5 | claude-sonnet-5-5 | claude-haiku-5-5 | claude-fable-5-1
+  effort: high                 # low | medium | high | xhigh | max - higher is more thorough and costs more
+  max_session_usd: 1.5         # a session stops by itself at this cost
+  monthly_budget_usd: 20       # no new session once this month's spending reaches this
+  max_turns: 24                # most back-and-forth steps in one session
+  allow_simulations: true      # let the coach run its own Simulation Lab experiments
+
 multi_account:                 # only matters with an accounts list (section 29)
   hedge_guard: correlated      # correlated | same_product | off - no opposite positions across accounts
   stagger_seconds: 3           # pause between starting each account's bot
@@ -1989,6 +2021,8 @@ different config file.
 | `topstep-bot accounts [--check]` | Every account: what it trades, its mode and key, and which accounts share the same calls; `--check` also asks TopstepX about each one (balance, can trade, open positions and orders, today's trades) ([section 29](#29-trading-several-accounts)) |
 | `topstep-bot keys [add\|remove\|test] [NAME]` | List, add (tests the login first), remove or test stored API keys ([section 30](#30-several-api-keys)) |
 | `... --account NAME` | With several accounts: `preflight`, `go-live`, `flatten`, `journal`, `logs`, `rules` and `start --mode` act on one account (default: all); `backtest`, `train`, `download`, `tune`, `learn`, `insights` use that account's strategy and market |
+| `topstep-bot simulate [--starts N] [--symbols A,B] [--strategies A,B] [--no-teach] [--show]` | Simulation Lab: replay the bot through history as fresh Combines started on N days per market and strategy, score every playbook, then teach the long-run memory every market's history; `--show` prints the last report ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
+| `topstep-bot coach ["question"] [--status]` | Run an AI coaching session (uses your Claude API credits), or `--status` for lessons, proposals and spending ([section 35](#35-the-ai-coach-claude-teaches-the-bot)) |
 | `topstep-bot insights [--csv FILE] [--longrun]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
 On Windows you can also pass commands through the launcher, e.g. `start.bat menu` or
@@ -2001,7 +2035,7 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | Path | Contents |
 |---|---|
 | `config.yaml` | Your settings (`config.yaml.bak`: the version before `tune` last saved settings) |
-| `.env` | Your API credentials, Telegram token and webhook URLs — **private** |
+| `.env` | Your API credentials, Telegram token, webhook URLs and the coach's Claude API key — **private** |
 | `data/journal_paper.db`, `data/journal_live.db` | Trade journal, daily results, MLL floor, paper balance |
 | `data/<SYMBOL>_1m.csv` | Downloaded history |
 | `reports/*.html` | Backtest and tuning reports (tuning also writes a `.json` with every detail) |
@@ -2018,6 +2052,8 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `data/accounts/<name>/`, `logs/accounts/<name>/` | With several accounts: each account's journal, knowledge base, remote settings, heartbeat and logs ([section 29](#29-trading-several-accounts)) |
 | `data/positions/` | What each account holds, for the hedge guard (rewritten while the bots run) |
 | `market_pick.json` (in the account's folder) | With the market on Auto: today's pick, the reason, and every candidate's score |
+| `data/simlab/` | The Simulation Lab: `report.json` (the latest), `runs.csv` (every simulated Combine, opens in Excel), `history/` (the last 20 reports). Safe to delete |
+| `data/coach/` | The AI coach: `lessons.json`, `proposals.json`, `sessions/` (each session's report, tool calls and cost), `latest_report.md`, `usage.jsonl` (every API call's tokens and cost) |
 | `data/controller.json` | The mode you chose last (Paper/Live) and whether phone access is on |
 | `data/tools/cloudflared.exe` | Cloudflare's tunnel program for phone access (downloaded the first time you turn it on) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
@@ -2630,6 +2666,131 @@ Good to know:
 
 ---
 
+## 34. Simulation Lab: hundreds of Combines from history
+
+The Simulation Lab answers the question that matters most: **if the bot started a Combine with this
+market and strategy, how would it have gone?** It replays the bot through the price history on your
+PC, as if it were trading live, many times over.
+
+**What one simulation is.** A fresh Combine account (your plan: target, trailing Maximum Loss Limit,
+consistency rule) started on one particular day and played bar by bar through the bot's *own*
+trading code: the same risk manager, Topstep guards, sizing, stops and 15:10 CT flatten that trade
+live, with simulated fills that include your assumed slippage and fees. It ends when the Combine is
+passed, failed, or the history runs out ("still open"). Each playbook is started on several different
+days, so one lucky or unlucky start can't decide the result.
+
+**Playbooks.** A playbook is a market plus a strategy, e.g. *MNQ · orb_momentum*. The lab tries every
+micro your plan allows that has history on this PC (MNQ, MES, M2K, MYM, …) with every strategy:
+4 markets × 8 strategies × 4 start days = **128 live-like Combines** by default, plus one full-history
+run per playbook. The adaptive strategy starts each simulation knowing only what it would have known
+that morning: it is trained on the days before the start, never on the days it is about to trade.
+
+**Run it.** Simulations tab → choose the start days per playbook (4 is about a minute; 12 gives 384
+Combines) → **Run simulations**. Or `topstep-bot simulate --starts 6`. The bot keeps trading meanwhile.
+
+**Reading the results.**
+
+| What | Means |
+|---|---|
+| Live-like Combines: passed / failed / still open | The fresh-account runs. With two months of history most end "still open": the target is $3,000 on a 50K, and few playbooks get there that fast |
+| Verdict | **Edge**: made money in *both* halves of the history after costs, with neither half close to flat. **Mixed**: made money overall, but most of it in one half (likely luck). **Losing**: lost money. **Too few**: under 10 trades, nothing to judge |
+| 1st half / 2nd half | The history split in two. An edge that appears in only one half is the most common way a backtest fools you |
+| Resampled | Monte Carlo: 2,000 Combines built by drawing the playbook's own simulated days at random, up to 60 days each. A rough pass / fail probability for a Combine longer than your history. Green = passed, red = failed |
+| Held-out check | The playbook that looks best on the *first* half alone, scored on the second half it never saw. Comparing 32 playbooks always produces a winner by luck; this shows how much of the winner's result survives |
+| Equity | Each playbook's cumulative profit over the history |
+
+**Use a playbook.** The **Use** button on a row (or the button under a confirmed edge) writes that
+market and strategy into `config.yaml` (the old file is kept as `config.yaml.bak`). A running bot keeps
+its settings until you restart it. Nothing is changed without that click.
+
+**Teaching.** With **Teach long-run memory** ticked, every market's history is also added to the
+long-run memory and replayed through every strategy, so the Knowledge tab's *Long run* view and the
+AI coach cover every market the bot could trade. The knowledge base the bot actually trades with is
+still retrained by the bot itself from fresh history each day.
+
+**Honest expectations.** On the history this PC had in October 2026 (about two months), no playbook
+showed a dependable edge: the strongest, MNQ with the adaptive strategy, made nearly all of its money
+in the second half, and the held-out check did not confirm the ranking. That is the lab doing its
+job. More history makes it far more useful: the bot saves everything it downloads, so run the lab
+again every week or two. Results are evidence, not a promise.
+
+## 35. The AI coach: Claude teaches the bot
+
+The AI coach is Claude, Anthropic's AI model, working as a trading research analyst for your bot. In
+a coaching session it reads everything the bot knows, runs its own experiments in the Simulation Lab,
+writes down what it learned, and proposes changes. You decide what to apply.
+
+**What it can do in a session:**
+
+- **Read:** your account and Topstep's rules, the bot's settings, the Simulation Lab report, the
+  knowledge base (what each strategy's signals have been worth by time of day and volatility), the
+  long-run memory, your trade journal and every strategy's settings.
+- **Test:** run Simulation Lab experiments of its own: chosen markets and strategies, different
+  strategy settings, or a smaller risk per trade. Experiments never replace the lab's main report.
+- **Teach:** record **lessons** with their evidence and its confidence. They appear on the AI Coach
+  tab and every later session starts from them, so what it learns builds up over time. You can
+  remove any lesson with **Forget**.
+- **Propose:** a different playbook (market + strategy), or a *lower* risk setting (risk per trade,
+  daily loss limit, trades per day). Proposals wait on the AI Coach tab with **Apply** and
+  **Dismiss**. Applying writes `config.yaml` (with a backup); the bot uses it after a restart.
+
+**What it can't do:** place, close or size a trade; change a setting by itself; raise your risk; or
+touch your TopstepX account. It is instructed to be honest about small samples and to say "no edge
+found" rather than tune results until they look good.
+
+### Set it up (5 minutes)
+
+1. **Create a Claude API account and key.** Open
+   [platform.claude.com/settings/keys](https://platform.claude.com/settings/keys) (the **Create an API
+   key** button on the AI Coach tab), sign in or sign up, and create a key. It starts with `sk-ant-`.
+2. **Buy credits.** The Claude API is prepaid. On the AI Coach tab press **Buy credits** (it opens
+   [platform.claude.com/settings/billing](https://platform.claude.com/settings/billing)) and add
+   credits there, with your own card on Anthropic's site. The bot never sees or handles payment
+   details. $5–$10 is plenty to start.
+3. **Paste the key** into **Claude API → API key** and press **Test and save**. The bot checks it with
+   Claude (a free call), then saves it in `.env` on this PC as `COACH_ANTHROPIC_API_KEY`. It is never
+   shown again, never sent to the phone, and masked in every log.
+4. **Set your limits** under **Spending**: the model, how hard it thinks (effort), the most one session
+   may cost, and the most per month. Press **Save limits**.
+
+### Run a session
+
+Type what you want looked into, or leave it empty for a full review, and press **Start session**.
+Examples: *"Is MNQ a better market than M2K for my 50K Combine?"*, *"Should I lower my risk per
+trade?"*, *"Why has orb been losing lately?"*. The panel shows what the coach is doing (reading the
+journal, simulating orb on MNQ, …), the time so far and the cost so far. A full review usually takes
+a few minutes. When it finishes you get a written report, plus any lessons and proposals.
+
+From the command line: `topstep-bot coach "Should I trade MNQ instead?"`. In Telegram, `/coach`
+shows the latest lessons, proposals and spending.
+
+### Cost
+
+You pay Anthropic per token (roughly per word read and written). Every call is priced and logged in
+`data/coach/usage.jsonl`, and the AI Coach tab shows this month's total.
+
+| Model | Price per million tokens (input / output) | Use it for |
+|---|---|---|
+| Claude Opus 5.5 (default) | $4 / $20 | The recommended choice: thorough and careful |
+| Claude Sonnet 5.5 | $2 / $10 | About half the price, still strong |
+| Claude Haiku 5.5 | $0.10 / $0.50 | Quick, cheap check-ins |
+| Claude Fable 5.1 | $10 / $50 | Anthropic's most capable model, for the hardest questions |
+
+A full review on Opus at High effort typically costs well under a dollar. The two limits make
+surprises impossible: a session stops itself at `coach.max_session_usd` (it is asked to write its
+report as the limit approaches) and no session starts once `coach.monthly_budget_usd` is reached.
+
+**Good to know:**
+
+- **Your data.** A session sends Anthropic the evidence it reads: settings, simulation results,
+  knowledge summaries and your trade journal (no API keys, passwords or account credentials).
+- **If a request is declined** for safety reasons, Claude's API automatically retries it on another
+  Claude model, and the cost of each attempt is counted.
+- **Errors in plain words:** a refused key, too little credit ("Buy credits at …"), a rate limit or no
+  internet are shown on the tab and in the Activity feed. Nothing about trading depends on the coach.
+- **Turn it off** with `coach.enabled: false`, or simply never add a key.
+
+---
 
 
 *Trading futures involves substantial risk of loss and is not suitable for everyone. This software

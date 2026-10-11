@@ -2,347 +2,551 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Topstep Bot</title>
-<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Topstep Bot Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2311161f'/%3E%3Cpath d='M7 21l6-6 4 4 8-9' stroke='%237ea4f2' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
-:root { color-scheme: light; --bg:#f5f5f3; --surface:#ffffff; --surface2:#f3f2ef; --border:#e4e3df; --text:#111110; --text2:#55544f;
-  --muted:#8a8984; --track:#ecebe7; --accent:#2a78d6; --good:#0ca30c; --warn:#d99a00; --crit:#d03b3b;
-  --neg:#b02a2a; --pos:#0a7a0a; --buy:#0f8a3c; --sell:#c43333; --live:#d03b3b; --paper:#2a78d6;
-  --goodbg:#e7f5e7; --warnbg:#fdf3dc; --badbg:#fbe9e9; --shadow:0 1px 2px rgba(0,0,0,.04); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; --bg:#111110;
-  --surface:#1a1a19; --surface2:#222220; --border:#2e2e2b; --text:#f5f5f3; --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27;
-  --accent:#3987e5; --neg:#ff8a8a; --pos:#7ddc7d; --buy:#1f9d4c; --sell:#d24545; --paper:#3987e5; --warn:#e6a817;
-  --goodbg:#16281a; --warnbg:#2c2410; --badbg:#2e1717; --shadow:none; } }
-:root[data-theme="dark"] { color-scheme: dark; --bg:#111110; --surface:#1a1a19; --surface2:#222220; --border:#2e2e2b; --text:#f5f5f3;
-  --text2:#c3c2b7; --muted:#8f8e86; --track:#2a2a27; --accent:#3987e5; --neg:#ff8a8a; --pos:#7ddc7d; --buy:#1f9d4c; --sell:#d24545;
-  --paper:#3987e5; --warn:#e6a817; --goodbg:#16281a; --warnbg:#2c2410; --badbg:#2e1717; --shadow:none; }
+/* Layout: a fixed navigation rail on the left, a sticky status bar, and content panels on a two-column grid.
+   A trading-desk console: dense, numbers in a monospaced face, colour reserved for state (P&L, risk, mode). */
+:root {
+  color-scheme: light;
+  --bg:#eef0f3; --surface:#ffffff; --surface2:#f6f7f9; --sunken:#e9ecf0; --border:#dde1e7; --border2:#c3c9d3;
+  --text:#121721; --text2:#475063; --muted:#768092; --track:#e3e7ec;
+  --accent:#2c59b8; --accent-soft:#e6ecf8; --on-accent:#ffffff;
+  --good:#16834a; --goodbg:#e3f2e9; --warn:#a36400; --warnbg:#fbf0d9; --crit:#c23434; --badbg:#fae6e6;
+  --pos:#137a43; --neg:#bd2e2e; --buy:#15804a; --sell:#c13434; --live:#c93333; --paper:#2c59b8;
+  --rail:#121822; --rail2:#1a2230; --rail-line:#232d3d; --rail-text:#c3cad6; --rail-muted:#7c8697; --rail-on:#ffffff;
+  --font-ui:"IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-label:"IBM Plex Sans Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+  --font-num:"IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --r:6px; --gap:14px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark;
+  --bg:#0b0f15; --surface:#121821; --surface2:#171e29; --sunken:#0e131a; --border:#222b38; --border2:#344152;
+  --text:#e6eaf1; --text2:#a7b0c0; --muted:#737e91; --track:#202936;
+  --accent:#7ea4f2; --accent-soft:#18233a; --on-accent:#0b0f15;
+  --good:#3dbb7b; --goodbg:#11271c; --warn:#e2a23a; --warnbg:#2a2112; --crit:#ee6363; --badbg:#2c1618;
+  --pos:#4cc78a; --neg:#f17171; --buy:#23874f; --sell:#c84444; --live:#e05252; --paper:#6f96ea;
+  --rail:#080b10; --rail2:#111722; --rail-line:#1b2330; } }
+:root[data-theme="dark"] { color-scheme: dark;
+  --bg:#0b0f15; --surface:#121821; --surface2:#171e29; --sunken:#0e131a; --border:#222b38; --border2:#344152;
+  --text:#e6eaf1; --text2:#a7b0c0; --muted:#737e91; --track:#202936;
+  --accent:#7ea4f2; --accent-soft:#18233a; --on-accent:#0b0f15;
+  --good:#3dbb7b; --goodbg:#11271c; --warn:#e2a23a; --warnbg:#2a2112; --crit:#ee6363; --badbg:#2c1618;
+  --pos:#4cc78a; --neg:#f17171; --buy:#23874f; --sell:#c84444; --live:#e05252; --paper:#6f96ea;
+  --rail:#080b10; --rail2:#111722; --rail-line:#1b2330; }
+
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }
-body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
-main { max-width:1180px; margin:0 auto; padding:16px 16px 48px; }
-h2 { font-size:13px; margin:0 0 10px; color:var(--text2); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
-h3 { font-size:12.5px; margin:14px 0 6px; color:var(--text2); font-weight:600; }
-button { font:inherit; font-weight:600; padding:7px 13px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer; }
-button:hover:not(:disabled) { border-color:var(--text2); } button:disabled { opacity:.45; cursor:default; }
-button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+html, body { height:100%; }
+body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 var(--font-ui); -webkit-font-smoothing:antialiased; }
+a { color:var(--accent); }
+code { font:12.5px var(--font-num); background:var(--sunken); padding:1px 5px; border-radius:4px; }
+h2 { font:600 12px/1.2 var(--font-label); margin:0 0 12px; color:var(--text2); text-transform:uppercase; letter-spacing:.07em; }
+h3 { font:600 11.5px/1.2 var(--font-label); margin:16px 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.07em; }
+button { font:inherit; font-weight:500; padding:7px 13px; border-radius:var(--r); border:1px solid var(--border2); background:var(--surface);
+  color:var(--text); cursor:pointer; line-height:1.2; }
+button:hover:not(:disabled) { border-color:var(--text2); background:var(--surface2); }
+button:disabled { opacity:.45; cursor:default; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+button.primary { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
+button.primary:hover:not(:disabled) { background:var(--accent); filter:brightness(1.08); }
 button.danger { background:var(--crit); color:#fff; border-color:var(--crit); }
-button.small { padding:4px 10px; font-size:12.5px; }
-button.link { border:0; background:none; padding:0; color:var(--accent); font-weight:600; }
+button.danger:hover:not(:disabled) { background:var(--crit); filter:brightness(1.08); }
+button.small { padding:5px 10px; font-size:12.5px; }
+button.link { border:0; background:none; padding:0; color:var(--accent); font-weight:500; text-decoration:underline; text-underline-offset:2px; }
+button.link:hover:not(:disabled) { background:none; }
+input, select, textarea { font:inherit; color:var(--text); background:var(--surface); border:1px solid var(--border2); border-radius:var(--r); }
 .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .spacer { flex:1; }
 .muted { color:var(--muted); } .neg { color:var(--neg); } .pos { color:var(--pos); }
-.hint { color:var(--muted); font-size:12px; margin:8px 0 0; }
-.num { font-variant-numeric:tabular-nums; }
-
-/* top bar */
-.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 14px; background:var(--surface);
-  border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); }
-.brand { font-weight:750; font-size:17px; }
-.seg { display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; }
-.seg button { border:0; border-radius:0; padding:5px 12px; background:transparent; color:var(--text2); }
-.seg button.on.paper { background:var(--paper); color:#fff; } .seg button.on.live { background:var(--live); color:#fff; }
-.pill { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; padding:3px 10px; border-radius:999px; border:1px solid var(--border); background:var(--surface); }
-button.pill { font-weight:500; }
-.dot { width:8px; height:8px; border-radius:50%; display:inline-block; background:var(--muted); }
-.meta { color:var(--text2); font-size:12px; }
-
-.banner { margin-top:12px; padding:12px 14px; border-radius:12px; border:1px solid var(--border); background:var(--surface); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-.banner.bad { border-color:var(--crit); } .banner.warn { border-color:var(--warn); } .banner.ok { border-color:var(--good); }
-.banner b { font-size:14px; }
-
-/* tabs */
-.tabs { display:flex; gap:4px; margin:16px 0 12px; border-bottom:1px solid var(--border); overflow-x:auto; }
-.tabs button { border:0; border-radius:8px 8px 0 0; background:transparent; color:var(--text2); padding:8px 14px; border-bottom:2px solid transparent; white-space:nowrap; }
-.tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
-.tabs .count { font-size:11px; background:var(--accent); color:#fff; border-radius:999px; padding:0 6px; margin-left:4px; }
-section.tab { display:none; } section.tab.on { display:block; }
-
-.grid { display:grid; gap:12px; }
-.cards { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); }
-.two { grid-template-columns:1fr 1fr; } @media (max-width:760px) { .two { grid-template-columns:1fr; } }
-.ticketgrid { grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); } @media (max-width:860px) { .ticketgrid { grid-template-columns:1fr; } }
-.panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; min-width:0; box-shadow:var(--shadow); }
-.label { color:var(--text2); font-size:12px; } .value { font-size:22px; font-weight:680; font-variant-numeric:tabular-nums; margin-top:2px; }
-.sub { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; margin-top:1px; min-height:17px; }
-.meter { margin-bottom:12px; } .meter .mrow { display:flex; justify-content:space-between; gap:10px; font-size:12.5px; margin-bottom:4px; }
-.meter .mrow span:last-child { font-variant-numeric:tabular-nums; color:var(--text2); text-align:right; }
-.meter .note { font-size:11.5px; color:var(--muted); margin-top:3px; }
-.track { height:7px; background:var(--track); border-radius:4px; overflow:hidden; }
-.fill { height:100%; border-radius:4px; background:var(--accent); transition:width .4s; }
-dl { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; margin:0; font-size:13px; }
-dt { color:var(--text2); } dd { margin:0; font-variant-numeric:tabular-nums; min-width:0; }
-.feed { max-height:340px; overflow:auto; font-size:12.5px; }
-.feed div { padding:5px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; }
-.feed time { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
-.lvl-warning::before { content:"⚠ "; } .lvl-error::before, .lvl-critical::before { content:"⛔ "; }
-.lvl-error, .lvl-critical { color:var(--neg); }
+.hint { color:var(--muted); font-size:12.5px; margin:10px 0 0; max-width:78ch; }
+.num { font-family:var(--font-num); font-variant-numeric:tabular-nums; }
 .empty { color:var(--muted); padding:6px 0; }
 
-/* current trade */
-.tradehead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
-.tradehead .big { font-size:18px; font-weight:700; }
-.tradepnl { font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; }
+/* ---------- shell: rail + main ---------- */
+.app { display:grid; grid-template-columns:220px minmax(0,1fr); min-height:100%; }
+.rail { background:var(--rail); color:var(--rail-text); display:flex; flex-direction:column; position:sticky; top:0; height:100vh;
+  border-right:1px solid var(--rail-line); }
+.brandbox { display:flex; align-items:center; gap:10px; padding:18px 18px 16px; border-bottom:1px solid var(--rail-line); }
+.mark { width:30px; height:30px; flex:none; }
+.brand { font:600 15px/1.1 var(--font-ui); color:var(--rail-on); letter-spacing:.01em; }
+.brand small { display:block; font:500 10.5px/1.3 var(--font-label); color:var(--rail-muted); text-transform:uppercase; letter-spacing:.09em; margin-top:2px; }
+.tabs { display:flex; flex-direction:column; gap:1px; padding:10px 8px; overflow-y:auto; flex:1; }
+.tabs .grp { font:600 10.5px/1 var(--font-label); color:var(--rail-muted); text-transform:uppercase; letter-spacing:.1em; padding:14px 10px 6px; }
+.tabs button { display:flex; align-items:center; gap:10px; width:100%; text-align:left; border:0; border-radius:5px; background:transparent;
+  color:var(--rail-text); padding:8px 10px; font-weight:500; font-size:13.5px; }
+.tabs button svg { width:16px; height:16px; flex:none; stroke:currentColor; fill:none; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; opacity:.8; }
+.tabs button:hover:not(:disabled) { background:var(--rail2); color:var(--rail-on); border-color:transparent; }
+.tabs button.on { background:var(--rail2); color:var(--rail-on); box-shadow:inset 2px 0 0 #7ea4f2; }
+.tabs button.on svg { opacity:1; }
+.tabs .count { margin-left:auto; font:600 11px/1 var(--font-num); background:#7ea4f2; color:#0b0f15; border-radius:3px; padding:3px 5px; }
+.railfoot { padding:12px 14px 16px; border-top:1px solid var(--rail-line); display:grid; gap:8px; }
+.railfoot .pill { background:transparent; color:var(--rail-text); border-color:var(--rail-line); justify-content:flex-start; }
+.railfoot .pill:hover:not(:disabled) { background:var(--rail2); color:var(--rail-on); }
+.themeseg { display:grid; grid-template-columns:repeat(3,1fr); border:1px solid var(--rail-line); border-radius:5px; overflow:hidden; }
+.themeseg button { border:0; border-radius:0; background:transparent; color:var(--rail-muted); font:500 11.5px var(--font-label); padding:6px 0;
+  text-transform:uppercase; letter-spacing:.06em; }
+.themeseg button.on { background:var(--rail2); color:var(--rail-on); }
+main { min-width:0; padding:0 24px 56px; }
 
-/* ideas */
-.ideas { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
-.idea { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--surface2); }
-.idea .t { display:flex; justify-content:space-between; gap:8px; font-weight:650; }
-.idea .why { color:var(--text2); font-size:12.5px; margin:4px 0 8px; }
-.idea dl { font-size:12.5px; margin-bottom:8px; }
-.side-LONG { color:var(--pos); } .side-SHORT { color:var(--neg); }
-.tablewrap { overflow-x:auto; }
+/* ---------- status bar ---------- */
+.top { position:sticky; top:env(safe-area-inset-top, 0px); z-index:5; display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap;
+  margin:0 -24px; padding:12px 24px; background:var(--bg); border-bottom:1px solid var(--border); }
+.seg { display:inline-flex; border:1px solid var(--border2); border-radius:var(--r); overflow:hidden; background:var(--surface); }
+.seg button { border:0; border-radius:0; padding:6px 13px; background:transparent; color:var(--text2); font:600 12px/1.2 var(--font-label);
+  text-transform:uppercase; letter-spacing:.08em; }
+.seg button + button { border-left:1px solid var(--border); }
+.seg button.on.paper { background:var(--paper); color:#fff; } .seg button.on.live { background:var(--live); color:#fff; }
+.seg button.on { background:var(--accent); color:var(--on-accent); }
+.pill { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; padding:5px 10px; border-radius:var(--r); border:1px solid var(--border);
+  background:var(--surface); font-weight:500; }
+.dot { width:8px; height:8px; border-radius:50%; display:inline-block; background:var(--muted); flex:none; }
+.meta { color:var(--text2); font-size:12.5px; }
+.top .meta { font-family:var(--font-num); font-size:12px; }
+
+.banner { margin-top:14px; padding:12px 14px; border-radius:var(--r); border:1px solid var(--border); border-left-width:4px;
+  background:var(--surface); display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap; }
+.banner.bad { border-left-color:var(--crit); background:var(--badbg); } .banner.warn { border-left-color:var(--warn); background:var(--warnbg); }
+.banner.ok { border-left-color:var(--good); }
+.banner b { font-size:14px; }
+.offline { display:none; margin-top:14px; background:var(--crit); color:#fff; padding:10px 14px; border-radius:var(--r); font-weight:600; }
+.offline.updating { background:var(--accent); color:var(--on-accent); }
+.pageerror { margin-top:14px; background:var(--warnbg); border:1px solid var(--warn); padding:10px 14px; border-radius:var(--r); font-size:13.5px; }
+.pageerror button { margin-left:6px; }
+
+/* market clock: one strip, cells divided by rules */
+.clock { display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); margin-top:14px; background:var(--surface);
+  border:1px solid var(--border); border-radius:var(--r); overflow:hidden; }
+.clock .c { padding:9px 13px; min-width:0; border-right:1px solid var(--border); border-bottom:1px solid var(--border); margin:0 -1px -1px 0; }
+.clock .cl { font:600 10.5px/1.3 var(--font-label); color:var(--muted); text-transform:uppercase; letter-spacing:.07em; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:6px; }
+.clock .cv { font:500 17px/1.3 var(--font-num); font-variant-numeric:tabular-nums; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.clock .c:first-child .cv { font-size:15.5px; }
+.clock .cs { font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.clock .soon .cv { color:var(--warn); }
+.clock .holiday { grid-column:1 / -1; font-size:12.5px; color:var(--warn); padding:8px 13px; }
+.clock .next { cursor:pointer; background:var(--accent-soft); }
+.clock .next .cv { color:var(--accent); }
+
+/* ---------- panels and grids ---------- */
+section.tab { display:none; } section.tab.on { display:block; }
+.pagehead { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; margin:22px 0 14px; }
+.pagehead h1 { font:600 21px/1.2 var(--font-ui); margin:0; letter-spacing:-.005em; }
+.pagehead p { margin:3px 0 0; color:var(--muted); font-size:13px; max-width:80ch; }
+.grid { display:grid; gap:var(--gap); }
+.stack { display:grid; gap:var(--gap); align-content:start; min-width:0; }
+.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.main-side { grid-template-columns:minmax(0,1.65fr) minmax(300px,1fr); align-items:start; }
+.ticketgrid { grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); align-items:start; }
+@media (max-width:1100px) { .main-side { grid-template-columns:1fr; } }
+@media (max-width:860px) { .two, .ticketgrid { grid-template-columns:1fr; } }
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:16px 18px; min-width:0; }
+.panel > .head { display:flex; align-items:center; gap:8px 10px; flex-wrap:wrap; margin:-2px 0 12px; }
+.panel > .head h2 { margin:0; }
+.gap-top { margin-top:var(--gap); }
+
+/* KPI strip */
+.kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--r); overflow:hidden; }
+.kpis > div { padding:14px 18px; border-right:1px solid var(--border); min-width:0; }
+.kpis > div:last-child { border-right:0; }
+.label { font:600 10.5px/1.3 var(--font-label); color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+.value { font:500 24px/1.25 var(--font-num); font-variant-numeric:tabular-nums; margin-top:4px; letter-spacing:-.01em; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+.sub { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; margin-top:2px; min-height:17px; }
+@media (max-width:760px) { .kpis { grid-template-columns:1fr 1fr; } .kpis > div:nth-child(2) { border-right:0; }
+  .kpis > div:nth-child(-n+2) { border-bottom:1px solid var(--border); } }
+
+/* meters */
+.meter { margin-bottom:14px; }
+.meter .mrow { display:flex; justify-content:space-between; gap:10px; font-size:13px; margin-bottom:5px; }
+.meter .mrow span:last-child { font:12.5px var(--font-num); color:var(--text2); text-align:right; }
+.meter .note { font-size:12px; color:var(--muted); margin-top:4px; }
+.track { height:6px; background:var(--track); border-radius:3px; overflow:hidden; }
+.fill { width:0; height:100%; border-radius:3px; background:var(--accent); transition:width .4s; }
+@media (prefers-reduced-motion: reduce) { .fill { transition:none; } }
+
+dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:5px 16px; margin:0; font-size:13px; }
+dt { color:var(--muted); } dd { margin:0; font-variant-numeric:tabular-nums; min-width:0; }
+.feed { max-height:340px; overflow:auto; font-size:12.5px; }
+.feed > div { padding:6px 0; border-bottom:1px solid var(--border); display:flex; gap:12px; }
+.feed > div:last-child { border-bottom:0; }
+.feed time { color:var(--muted); white-space:nowrap; font-family:var(--font-num); font-size:12px; }
+.lvl-warning { color:var(--warn); } .lvl-error, .lvl-critical { color:var(--neg); font-weight:500; }
+
+/* tables */
+.tablewrap { overflow-x:auto; margin:0 -2px; }
 table { border-collapse:collapse; width:100%; font-size:12.5px; }
-th, td { text-align:left; padding:6px 7px; border-bottom:1px solid var(--border); white-space:nowrap; }
-th { color:var(--text2); font-weight:600; } td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--border); white-space:nowrap; vertical-align:top; }
+th { font:600 10.5px/1.3 var(--font-label); color:var(--muted); text-transform:uppercase; letter-spacing:.07em; background:var(--surface2); }
+tbody tr:hover td { background:var(--surface2); }
+td.num, th.num { text-align:right; font-family:var(--font-num); font-variant-numeric:tabular-nums; }
 td.note { white-space:normal; color:var(--text2); min-width:200px; }
-.tag { font-size:11px; padding:1px 6px; border-radius:999px; border:1px solid var(--border); color:var(--text2); white-space:nowrap; }
+td.dim { color:var(--muted); }
+tr.on td { background:var(--accent-soft); }
+
+/* tags and chips */
+.tag { display:inline-block; font:600 10.5px/1.5 var(--font-label); padding:0 6px; border-radius:3px; border:1px solid var(--border2);
+  color:var(--text2); white-space:nowrap; text-transform:uppercase; letter-spacing:.05em; }
 .tag.auto { border-color:var(--accent); color:var(--accent); }
 .tag.manual { border-color:var(--warn); color:var(--warn); }
 .tag.first { border-color:var(--good); color:var(--good); }
+.tag.blocked { border-color:var(--warn); color:var(--warn); }
+.side-LONG { color:var(--pos); } .side-SHORT { color:var(--neg); }
+
+/* current trade */
+.tradehead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.tradehead .big { font:600 18px var(--font-num); }
+.tradepnl { font:600 18px var(--font-num); font-variant-numeric:tabular-nums; }
+
+/* ideas */
+.ideas { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); }
+.idea { border:1px solid var(--border); border-radius:var(--r); padding:12px 14px; background:var(--surface2); }
+.idea .t { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+.idea .why { color:var(--text2); font-size:12.5px; margin:4px 0 8px; }
+.idea dl { font-size:12.5px; margin-bottom:10px; }
 
 /* first trade after starting */
 .firsthead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
-.firstleft { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
-.firststate { font-size:11.5px; padding:1px 8px; border-radius:999px; border:1px solid var(--border); color:var(--text2); }
+.firstleft { font:500 22px var(--font-num); font-variant-numeric:tabular-nums; }
+.firststate { font:600 10.5px/1.6 var(--font-label); padding:0 7px; border-radius:3px; border:1px solid var(--border2); color:var(--text2);
+  text-transform:uppercase; letter-spacing:.05em; }
 .firststate.watching, .firststate.waiting { border-color:var(--accent); color:var(--accent); }
 .firststate.blocked { border-color:var(--warn); color:var(--warn); }
 .firststate.done { border-color:var(--good); color:var(--good); }
 
-/* knowledge */
-.kb { display:inline-block; font-size:12px; padding:2px 7px; border-radius:6px; border:1px solid var(--border); white-space:nowrap; font-variant-numeric:tabular-nums; }
-.kb.ok { color:var(--pos); border-color:var(--pos); } .kb.bad { color:var(--neg); border-color:var(--neg); } .kb.unk { color:var(--muted); }
+/* knowledge cells */
+.kb { display:inline-flex; align-items:center; gap:6px; font:12px var(--font-num); padding:2px 7px; border-radius:3px; border:1px solid var(--border);
+  white-space:nowrap; font-variant-numeric:tabular-nums; }
+.kb::before { content:""; width:7px; height:7px; border-radius:1px; background:var(--border2); flex:none; }
+.kb.ok { color:var(--pos); border-color:var(--pos); } .kb.ok::before { background:var(--pos); }
+.kb.bad { color:var(--neg); border-color:var(--neg); } .kb.bad::before { background:var(--neg); }
+.kb.unk { color:var(--muted); }
 .kb-cell { display:flex; flex-direction:column; gap:3px; }
-th.now, td.now { background:var(--surface2); }
+th.now, td.now { background:var(--accent-soft) !important; }
 .hints { list-style:none; margin:0; padding:0; font-size:13px; }
-.hints li { padding:7px 0; border-bottom:1px solid var(--border); }
-.hints li .why { color:var(--text2); font-size:12.5px; margin-top:3px; display:flex; gap:6px; flex-wrap:wrap; }
-.picker { font:inherit; font-size:12.5px; padding:4px 8px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color:var(--text); }
-td.dim { color:var(--muted); }
+.hints li { padding:8px 0; border-bottom:1px solid var(--border); }
+.hints li .why { color:var(--text2); font-size:12.5px; margin-top:4px; display:flex; gap:6px; flex-wrap:wrap; }
+.picker { font:inherit; font-size:12.5px; padding:5px 8px; border-radius:var(--r); border:1px solid var(--border2); background:var(--surface); color:var(--text); }
 @media (max-width:760px) { #ins-table td:first-child, #ins-cond td:first-child { white-space:normal; min-width:120px; } }
 
 /* trade ticket */
-.sidepick { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
-.sidepick button { padding:12px 10px; font-size:15px; border-width:2px; }
-.sidepick button small { display:block; font-size:11.5px; font-weight:500; color:var(--muted); }
+.sidepick { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+.sidepick button { padding:12px 10px; font-size:15px; font-weight:600; border-width:1px; }
+.sidepick button small { display:block; font-size:11.5px; font-weight:400; color:var(--muted); margin-top:2px; }
 .sidepick button.buy.on { background:var(--buy); border-color:var(--buy); color:#fff; }
 .sidepick button.sell.on { background:var(--sell); border-color:var(--sell); color:#fff; }
 .sidepick button.on small { color:rgba(255,255,255,.85); }
 .quote { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin:-2px 0 10px; }
-.quote .px { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
-.field { display:grid; grid-template-columns:76px minmax(0,1fr); gap:4px 10px; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); }
+.quote .px { font:500 24px var(--font-num); font-variant-numeric:tabular-nums; }
+.field { display:grid; grid-template-columns:76px minmax(0,1fr); gap:4px 12px; align-items:center; padding:9px 0; border-bottom:1px solid var(--border); }
 .field > label { font-weight:600; font-size:13px; }
 .field .ctl { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0; }
-.field input { font:inherit; padding:6px 9px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color:var(--text); width:150px; font-variant-numeric:tabular-nums; }
-.field input.wide { flex:1; min-width:0; width:auto; }
-.field .help { grid-column:2; font-size:11.5px; color:var(--muted); }
-.chip { font-size:12px; padding:3px 9px; border-radius:999px; font-weight:600; }
-.chip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
-.summary { margin-top:12px; padding:10px 12px; border-radius:10px; background:var(--surface2); font-size:13px; }
+.field input { padding:7px 9px; width:150px; font-family:var(--font-num); font-variant-numeric:tabular-nums; }
+.field input.wide { flex:1; min-width:0; width:auto; font-family:var(--font-ui); }
+.field .help { grid-column:2; font-size:12px; color:var(--muted); }
+.chip { font-size:12px; padding:4px 9px; font-weight:500; }
+.chip.on { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+.summary { margin-top:12px; padding:11px 13px; border-radius:var(--r); background:var(--surface2); border:1px solid var(--border); font-size:13px; }
 .summary .line { display:flex; justify-content:space-between; gap:2px 10px; padding:2px 0; flex-wrap:wrap; }
-.summary .line span:last-child { font-variant-numeric:tabular-nums; text-align:right; }
-.summary .warnline { color:var(--warn); font-size:12px; margin-top:4px; }
-.blockmsg { margin-top:10px; padding:9px 12px; border-radius:10px; background:var(--badbg); color:var(--neg); font-weight:600; font-size:13px; }
-.placebtn { width:100%; margin-top:12px; padding:11px; font-size:15px; }
+.summary .line span:last-child { font-family:var(--font-num); text-align:right; }
+.summary .warnline { color:var(--warn); font-size:12.5px; margin-top:4px; }
+.blockmsg { margin-top:12px; padding:10px 12px; border-radius:var(--r); background:var(--badbg); color:var(--neg); font-weight:500; font-size:13px;
+  border-left:3px solid var(--crit); }
+.placebtn { width:100%; margin-top:12px; padding:11px; font-size:15px; font-weight:600; }
 .placebtn.buy { background:var(--buy); border-color:var(--buy); color:#fff; } .placebtn.sell { background:var(--sell); border-color:var(--sell); color:#fff; }
 .checks { list-style:none; margin:0; padding:0; font-size:12.5px; }
-.checks li { padding:4px 0 4px 22px; position:relative; border-bottom:1px solid var(--border); }
-.checks li::before { position:absolute; left:2px; top:4px; }
-.checks li.ok::before { content:"✔"; color:var(--pos); } .checks li.warn::before { content:"⚠"; color:var(--warn); }
-.checks li.bad::before { content:"⛔"; } .checks li.bad { color:var(--neg); }
-.verdict { display:inline-block; font-weight:700; padding:4px 12px; border-radius:999px; font-size:13.5px; }
+.checks li { padding:6px 0 6px 18px; position:relative; border-bottom:1px solid var(--border); }
+.checks li::before { content:""; position:absolute; left:2px; top:11px; width:8px; height:8px; border-radius:2px; background:var(--border2); }
+.checks li.ok::before { background:var(--pos); } .checks li.warn::before { background:var(--warn); }
+.checks li.bad::before { background:var(--crit); } .checks li.bad { color:var(--neg); }
+.checks li.empty::before { display:none; }
+.verdict { display:inline-block; font:600 11.5px/1.7 var(--font-label); padding:0 9px; border-radius:3px; text-transform:uppercase; letter-spacing:.06em; }
 .verdict.good { background:var(--goodbg); color:var(--pos); } .verdict.bad { background:var(--badbg); color:var(--neg); }
-.verdict.neutral { background:var(--surface2); color:var(--text2); }
-.reasons { margin:8px 0 0; padding-left:18px; font-size:12.5px; }
+.verdict.neutral { background:var(--surface2); color:var(--text2); border:1px solid var(--border); }
+.reasons { margin:10px 0 0; padding-left:18px; font-size:12.5px; }
 .reasons li { margin:3px 0; } .reasons li.plus::marker { color:var(--pos); } .reasons li.minus::marker { color:var(--neg); }
-.kbrow { display:flex; justify-content:space-between; gap:10px; padding:4px 0; border-bottom:1px solid var(--border); font-size:12.5px; }
-.kbrow span:last-child { font-variant-numeric:tabular-nums; color:var(--text2); white-space:nowrap; }
-.idealine { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:12.5px; flex-wrap:wrap; }
+.kbrow { display:flex; justify-content:space-between; gap:10px; padding:5px 0; border-bottom:1px solid var(--border); font-size:12.5px; }
+.kbrow span:last-child { font-family:var(--font-num); color:var(--text2); white-space:nowrap; }
+.idealine { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:12.5px; flex-wrap:wrap; }
 .idealine .grow { flex:1; min-width:140px; }
 
-/* setups (what the bot is getting ready to trade) */
-.setups { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
-.setup { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--surface2); min-width:0; }
+/* setups */
+.setups { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
+.setup { border:1px solid var(--border); border-radius:var(--r); padding:12px 14px; background:var(--surface2); min-width:0; }
 .setup.bot { border-color:var(--accent); }
-.setup.ready { border-color:var(--warn); box-shadow:0 0 0 1px var(--warn) inset; }
-.setup .t { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-weight:650; }
+.setup.ready { border-color:var(--warn); box-shadow:inset 3px 0 0 var(--warn); }
+.setup .t { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-weight:600; }
 .setup .t .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.setup .t > span:last-child { white-space:nowrap; }
-.tag.blocked { border-color:var(--warn); color:var(--warn); }
-.setup .prog { display:flex; align-items:center; gap:8px; margin:6px 0 4px; font-size:11.5px; color:var(--text2); }
-.setup .prog .track { flex:1; height:5px; }
+.setup .t > span:last-child { white-space:nowrap; font-family:var(--font-num); font-size:12.5px; }
+.setup .prog { display:flex; align-items:center; gap:8px; margin:8px 0 6px; font-size:11.5px; color:var(--text2); }
+.setup .prog .track { flex:1; height:4px; }
 .conds { list-style:none; margin:4px 0 8px; padding:0; font-size:12.5px; }
-.conds li { padding:2px 0 2px 20px; position:relative; }
-.conds li::before { position:absolute; left:2px; top:2px; content:"○"; color:var(--muted); }
-.conds li.met::before { content:"✔"; color:var(--pos); }
+.conds li { padding:2px 0 2px 18px; position:relative; }
+.conds li::before { content:""; position:absolute; left:2px; top:8px; width:7px; height:7px; border-radius:50%; border:1px solid var(--muted); }
+.conds li.met::before { background:var(--pos); border-color:var(--pos); }
 .conds li:not(.met) { color:var(--text2); }
 .setup dl { font-size:12.5px; }
 .setup .why { color:var(--muted); font-size:11.5px; margin-top:6px; }
 .setup .blk { color:var(--warn); font-size:12px; margin-top:6px; }
-.setupnote { margin:0 0 10px; padding:8px 12px; border-radius:10px; background:var(--warnbg); color:var(--text); font-size:12.5px; }
-.evkind { font-size:11px; font-weight:700; padding:0 6px; border-radius:999px; border:1px solid var(--border); white-space:nowrap; text-transform:uppercase; letter-spacing:.03em; }
+.setupnote { margin:0 0 12px; padding:9px 12px; border-radius:var(--r); background:var(--warnbg); color:var(--text); font-size:12.5px; border-left:3px solid var(--warn); }
+.evkind { font:600 10px/1.6 var(--font-label); padding:0 6px; border-radius:3px; border:1px solid var(--border2); white-space:nowrap;
+  text-transform:uppercase; letter-spacing:.06em; }
 .evkind.forming { color:var(--accent); border-color:var(--accent); } .evkind.fired { color:var(--pos); border-color:var(--pos); }
 .evkind.cancelled { color:var(--muted); }
-.feed .evkind { align-self:flex-start; flex:none; line-height:17px; }
+.feed .evkind { align-self:flex-start; flex:none; }
 
 /* settings */
-.setting { display:grid; grid-template-columns:1fr 160px 70px; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); }
-.setting .name { font-size:13px; font-weight:600; } .setting .name small { display:block; color:var(--muted); font-size:11.5px; font-weight:400; }
-.setting input, .setting select { font:inherit; padding:5px 8px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color:var(--text); width:100%; }
+.setting { display:grid; grid-template-columns:1fr 170px 70px; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); }
+.setting .name { font-size:13px; font-weight:600; } .setting .name small { display:block; color:var(--muted); font-size:12px; font-weight:400; margin-top:1px; }
+.setting input, .setting select { padding:6px 8px; width:100%; font-family:var(--font-num); }
 .setting input[type=checkbox] { width:18px; height:18px; justify-self:start; }
-.changed { color:var(--accent); font-size:11px; font-weight:700; margin-left:4px; }
+.changed { color:var(--accent); font:600 10.5px var(--font-label); text-transform:uppercase; letter-spacing:.06em; margin-left:6px; }
 @media (max-width:560px) { .setting { grid-template-columns:1fr 1fr; } .setting .name { grid-column:1 / -1; }
   .field { grid-template-columns:1fr; } .field .help { grid-column:1; } .field input { width:120px; } }
-pre { white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace,Consolas,monospace; max-height:340px; overflow:auto; margin:0;
-  background:var(--surface2); border-radius:8px; padding:10px; }
-.toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:10px 16px;
-  border-radius:10px; font-weight:600; max-width:90vw; display:none; z-index:10; white-space:pre-line; }
+pre { white-space:pre-wrap; word-break:break-word; font:12px/1.5 var(--font-num); max-height:360px; overflow:auto; margin:0;
+  background:var(--sunken); border:1px solid var(--border); border-radius:var(--r); padding:10px 12px; }
+.toast { position:fixed; left:50%; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); background:var(--text); color:var(--bg);
+  padding:10px 16px; border-radius:var(--r); font-weight:500; max-width:min(90vw,560px); display:none; z-index:30; white-space:pre-line; }
 .toast.bad { background:var(--crit); color:#fff; }
-/* market clock */
-.clock { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); margin-top:12px; }
-.clock .c { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:8px 11px; min-width:0; box-shadow:var(--shadow); }
-.clock .cl { font-size:11.5px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.clock .cv { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:1px; }
-.clock .cs { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.clock .soon .cv { color:var(--warn); }
-.clock .holiday { grid-column:1 / -1; font-size:12px; color:var(--warn); padding:2px 2px 0; }
-.clock .next { cursor:pointer; border-color:var(--accent); }
-.clock .next .cv { color:var(--accent); }
+
 /* next trade + what the bot knows */
-.nexthead { font-size:16px; font-weight:650; margin:2px 0 10px; }
-.stats { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); margin-bottom:10px; }
-.stat { background:var(--surface2); border-radius:10px; padding:8px 11px; min-width:0; }
-.stat .sv { font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.stat .ss { font-size:11px; color:var(--muted); }
+.nexthead { font-size:15.5px; font-weight:600; margin:2px 0 12px; }
+.stats { display:grid; gap:0; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); margin-bottom:12px; border:1px solid var(--border);
+  border-radius:var(--r); overflow:hidden; }
+.stat { padding:9px 12px; min-width:0; border-right:1px solid var(--border); border-bottom:1px solid var(--border); margin:0 -1px -1px 0; }
+.stat .sv { font:500 15px var(--font-num); font-variant-numeric:tabular-nums; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.stat .ss { font-size:11.5px; color:var(--muted); }
 .basis { margin:0; padding-left:18px; font-size:12.5px; color:var(--text2); }
 .basis li { margin:3px 0; }
 .brief h3:first-child { margin-top:0; }
 .brief ul { margin:0; padding-left:18px; font-size:13px; }
-.brief li { margin:3px 0; }
-.memline { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; padding:10px 12px; border-radius:10px; background:var(--surface2); font-size:12.5px; }
+.brief li { margin:4px 0; }
+.memline { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:14px; padding:11px 13px; border-radius:var(--r); background:var(--surface2);
+  border:1px solid var(--border); font-size:12.5px; }
 .memline .grow { flex:1; min-width:200px; }
-.memline .track { height:6px; margin-top:6px; }
-.seg.small button { padding:3px 10px; font-size:12px; }
-.seg button.on { background:var(--accent); color:#fff; }
+.memline .track { height:5px; margin-top:6px; }
+.seg.small button { padding:4px 10px; font-size:11px; }
+
 /* market */
-.lv { display:grid; grid-template-columns:1fr auto auto; gap:3px 14px; font-size:13px; font-variant-numeric:tabular-nums; }
-.lv .px { font-weight:650; text-align:right; } .lv .dist { color:var(--muted); text-align:right; }
-.lv .now { color:var(--accent); font-weight:700; }
+.lv { display:grid; grid-template-columns:1fr auto auto; gap:4px 16px; font-size:13px; font-variant-numeric:tabular-nums; }
+.lv .px { font-family:var(--font-num); text-align:right; } .lv .dist { font-family:var(--font-num); color:var(--muted); text-align:right; }
+.lv .now { color:var(--accent); font-weight:600; }
 ul.plain { margin:0; padding-left:18px; } ul.plain li { margin:3px 0; }
 .hl a { color:var(--text); text-decoration:none; } .hl a:hover { text-decoration:underline; }
-.hl time { color:var(--muted); font-size:11.5px; margin-right:6px; font-variant-numeric:tabular-nums; }
-.imp { font-size:11px; padding:0 6px; border-radius:999px; border:1px solid var(--border); }
+.hl time { color:var(--muted); font-size:11.5px; margin-right:6px; font-family:var(--font-num); }
+.imp { font:600 10px/1.6 var(--font-label); padding:0 6px; border-radius:3px; border:1px solid var(--border2); text-transform:uppercase; letter-spacing:.05em; }
 .imp.High { border-color:var(--crit); color:var(--crit); } .imp.Medium { border-color:var(--warn); color:var(--warn); }
 
-/* accounts */
-.accts { margin-top:12px; display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); }
-.acct { text-align:left; font-weight:400; padding:9px 12px; border-radius:10px; background:var(--surface); display:flex; flex-direction:column; gap:2px; min-width:0; }
-.acct.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
-.acct .n { display:flex; align-items:center; gap:6px; font-weight:700; }
-.acct .m { font-size:11px; font-weight:700; padding:0 6px; border-radius:999px; color:#fff; background:var(--paper); }
+/* accounts strip */
+.accts { margin-top:14px; display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); }
+.acct { text-align:left; font-weight:400; padding:10px 12px; border-radius:var(--r); background:var(--surface); display:flex; flex-direction:column; gap:3px; min-width:0;
+  border:1px solid var(--border); }
+.acct.on { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
+.acct .n { display:flex; align-items:center; gap:7px; font-weight:600; }
+.acct .m { font:600 10px/1.6 var(--font-label); padding:0 6px; border-radius:3px; color:#fff; background:var(--paper); text-transform:uppercase; letter-spacing:.06em; }
 .acct .m.live { background:var(--live); }
 .acct .d { font-size:12px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.acct .v { font-variant-numeric:tabular-nums; font-size:13px; }
-.allbar { margin-top:8px; }
+.acct .v { font-family:var(--font-num); font-size:12.5px; }
+.allbar { margin-top:10px; }
 .who { font-weight:700; color:var(--accent); }
-.offline { display:none; margin-top:12px; background:var(--crit); color:#fff; padding:10px 14px; border-radius:10px; font-weight:600; }
-.offline.updating { background:var(--accent); }
-.pageerror { margin-top:12px; background:var(--warnbg); border:1px solid var(--warn); padding:10px 14px; border-radius:10px; font-size:13.5px; }
-.pageerror button { margin-left:6px; }
+
 /* updates */
 .changes { list-style:none; margin:10px 0 0; padding:0; font-size:13px; }
-.changes li { padding:6px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:baseline; }
-.changes time { color:var(--muted); font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.changes code { color:var(--muted); font-size:11.5px; margin-left:auto; padding-left:8px; }
+.changes li { padding:7px 0; border-bottom:1px solid var(--border); display:flex; gap:12px; align-items:baseline; }
+.changes time { color:var(--muted); font:12px var(--font-num); white-space:nowrap; }
+.changes code { color:var(--muted); margin-left:auto; }
 .changes .more { color:var(--muted); }
-/* phone access (Telegram) */
-.phonestate { display:grid; grid-template-columns:auto 1fr; gap:3px 8px; align-items:baseline; margin-top:8px; font-size:13px; }
+.phonestate { display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-items:baseline; margin-top:8px; font-size:13px; }
 .phonestate .meta { grid-column:2; }
-.modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:flex-end; justify-content:center; z-index:20; padding:12px; }
-.modal .box { background:var(--surface); color:var(--text); border-radius:14px; padding:16px; width:100%; max-width:460px; max-height:80vh; overflow:auto;
-  margin-bottom:max(12px, env(safe-area-inset-bottom)); }
-.modal p { white-space:pre-wrap; margin:0 0 14px; font-size:14.5px; } .modal button { padding:9px 16px; }
+.modal { position:fixed; inset:0; background:rgba(5,8,12,.55); display:flex; align-items:flex-end; justify-content:center; z-index:40; padding:12px; }
+.modal .box { background:var(--surface); color:var(--text); border-radius:8px; padding:18px; width:100%; max-width:460px; max-height:80vh; overflow:auto;
+  margin-bottom:max(12px, env(safe-area-inset-bottom)); border:1px solid var(--border); }
+.modal p { white-space:pre-wrap; margin:0 0 16px; font-size:14.5px; } .modal button { padding:9px 16px; }
 .ended { max-width:420px; margin:18vh auto 0; text-align:center; }
-/* phones: roomier tap targets, the top bar wraps into rows, wide tables scroll inside their panel */
-@media (max-width:560px) {
-  main { padding:10px 10px 40px; padding-left:max(10px, env(safe-area-inset-left)); padding-right:max(10px, env(safe-area-inset-right)); }
-  .top { gap:8px 10px; padding:10px 12px; } .top .spacer { display:none; } .top .meta { flex-basis:100%; order:9; }
-  .brand { font-size:16px; }
-  button.small { padding:7px 12px; font-size:13px; }
-  .tabs button { padding:9px 12px; }
-  .panel { padding:12px; }
-  .cards { grid-template-columns:1fr 1fr; } .value { font-size:19px; }
-  .clock { grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; } .clock .c { padding:6px 9px; } .clock .cv { font-size:15px; }
-}
+
 /* setup */
-.stepnum { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; background:var(--accent);
-  color:#fff; font-size:12px; font-weight:700; margin-right:8px; flex:none; }
-.steptitle { display:flex; align-items:center; margin:0 0 4px; font-size:15px; font-weight:680; color:var(--text); text-transform:none; letter-spacing:0; }
-.welcome { border-color:var(--accent); }
+.stepnum { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:4px; background:var(--accent);
+  color:var(--on-accent); font:600 12px var(--font-num); margin-right:10px; flex:none; }
+.steptitle { display:flex; align-items:center; margin:0 0 6px; font:600 15px var(--font-ui); color:var(--text); text-transform:none; letter-spacing:0; }
+.welcome { border-left:4px solid var(--accent); }
 .welcome p { margin:6px 0 0; }
-.sfield { display:grid; grid-template-columns:190px minmax(0,1fr); gap:4px 14px; align-items:center; padding:9px 0; border-top:1px solid var(--border); }
+.sfield { display:grid; grid-template-columns:200px minmax(0,1fr); gap:5px 16px; align-items:center; padding:10px 0; border-top:1px solid var(--border); }
 h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 .sfield > label, .sfield > .lbl { font-weight:600; font-size:13px; }
 .sfield .ctl { display:flex; gap:8px; align-items:center; flex-wrap:wrap; min-width:0; }
-.sfield input[type=text], .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select {
-  font:inherit; padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text);
-  width:260px; max-width:100%; font-variant-numeric:tabular-nums; }
+.sfield input[type=text], .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select, .sfield textarea {
+  padding:7px 10px; width:270px; max-width:100%; font-variant-numeric:tabular-nums; }
 .sfield input.short { width:130px; }
 .sfield input[type=checkbox] { width:18px; height:18px; margin:0; }
 .sfield .help { grid-column:2; font-size:12px; color:var(--muted); }
 .sfield .help.bad { color:var(--neg); } .sfield .help.warn { color:var(--warn); }
 .checkline { display:flex; gap:8px; align-items:flex-start; font-size:13px; cursor:pointer; }
 .checkline input { margin-top:2px; flex:none; }
-.choices { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); width:100%; }
-.choice { text-align:left; font-weight:400; padding:10px 12px; border-radius:10px; background:var(--surface2); }
-.choice b { display:block; font-weight:650; } .choice small { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
-.choice.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; background:var(--surface); }
+.choices { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); width:100%; }
+.choice { text-align:left; font-weight:400; padding:10px 12px; border-radius:var(--r); background:var(--surface2); border-color:var(--border); }
+.choice b { display:block; font-weight:600; } .choice small { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
+.choice.on { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); background:var(--accent-soft); }
 .choice:disabled { opacity:.55; }
 .msg { font-size:12.5px; margin-top:8px; min-height:0; }
 .msg.ok { color:var(--pos); } .msg.bad { color:var(--neg); }
-.savebar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:14px; }
+.savebar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:16px; }
 .savebar .placebtn { width:auto; margin:0; padding:10px 22px; }
 .steps { margin:6px 0 10px; padding-left:20px; font-size:13px; } .steps li { margin:3px 0; }
-.connected { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--pos); }
-.aclist { display:grid; gap:10px; margin:8px 0 4px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
-.accard { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--surface2); min-width:0; }
+.connected { display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--pos); }
+.connected::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--pos); }
+.aclist { display:grid; gap:12px; margin:8px 0 4px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
+.accard { border:1px solid var(--border); border-radius:var(--r); padding:12px 14px; background:var(--surface2); min-width:0; }
 .accard .hd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .accard .hd b { font-size:14px; }
 .accard .hd .sub { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
-.st { font-size:11.5px; font-weight:700; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+.st { font:600 10.5px/1.7 var(--font-label); padding:0 7px; border-radius:3px; white-space:nowrap; text-transform:uppercase; letter-spacing:.05em; }
 .st.ok { background:var(--goodbg); color:var(--pos); } .st.bad { background:var(--badbg); color:var(--neg); }
-.st.idle { background:var(--track); color:var(--muted); }
-.accard dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 12px; margin:8px 0 0; font-size:12.5px; }
+.st.idle { background:var(--track); color:var(--muted); } .st.warn { background:var(--warnbg); color:var(--warn); }
+.st.info { background:var(--accent-soft); color:var(--accent); }
+.accard dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:4px 12px; margin:10px 0 0; font-size:12.5px; }
 .accard dt { color:var(--muted); } .accard dd { margin:0; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .accard ul { margin:8px 0 0; padding-left:18px; font-size:12.5px; } .accard li.issue { color:var(--neg); }
 .accard li.note { color:var(--muted); }
-.accard .row { margin-top:8px; }
-.acform { border:1px solid var(--accent); border-radius:10px; padding:4px 14px 12px; margin-top:12px; }
-.keyrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:13px; padding:7px 0; border-top:1px solid var(--border); }
+.accard .row { margin-top:10px; }
+.acform { border:1px solid var(--accent); border-radius:var(--r); padding:6px 16px 14px; margin-top:14px; }
+.keyrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:13px; padding:8px 0; border-top:1px solid var(--border); }
 .keyrow .meta { font-size:12px; }
-@media (max-width:620px) { .sfield { grid-template-columns:1fr; } .sfield .help { grid-column:1; } .sfield input[type=text],
-  .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select { width:100%; } }
+
+/* ---------- simulation lab ---------- */
+.labkpis { grid-template-columns:repeat(6,minmax(0,1fr)); }
+@media (max-width:1100px) { .labkpis { grid-template-columns:repeat(3,minmax(0,1fr)); } .labkpis > div:nth-child(3) { border-right:0; }
+  .labkpis > div:nth-child(-n+3) { border-bottom:1px solid var(--border); } }
+@media (max-width:560px) { .labkpis { grid-template-columns:1fr 1fr; } .labkpis > div { border-bottom:1px solid var(--border); }
+  .labkpis > div:nth-child(odd) { border-right:1px solid var(--border); } .labkpis > div:nth-child(even) { border-right:0; } }
+.callout { padding:14px 16px; border-radius:var(--r); border:1px solid var(--border); border-left:4px solid var(--accent); background:var(--surface); }
+.callout.none { border-left-color:var(--warn); }
+.callout p { margin:6px 0 0; max-width:90ch; }
+.callout .label { color:var(--text2); }
+.vd { display:inline-block; font:600 10.5px/1.7 var(--font-label); padding:0 7px; border-radius:3px; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+.vd.edge { background:var(--goodbg); color:var(--pos); } .vd.mixed { background:var(--warnbg); color:var(--warn); }
+.vd.losing { background:var(--badbg); color:var(--neg); } .vd.thin { background:var(--track); color:var(--muted); }
+.spark { width:96px; height:26px; display:block; }
+.spark path.line { fill:none; stroke-width:1.5; }
+.spark path.area { stroke:none; opacity:.14; }
+.spark line { stroke:var(--border2); stroke-width:1; stroke-dasharray:2 2; }
+.dist { display:flex; height:8px; width:96px; border-radius:2px; overflow:hidden; background:var(--track); }
+.dist span { display:block; height:100%; }
+.dist .p { background:var(--pos); } .dist .f { background:var(--neg); }
+.legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+.legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+.progress { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:12px; font-size:12.5px; color:var(--text2); }
+.progress .track { flex:1; min-width:160px; height:6px; }
+details.more { margin-top:12px; }
+details.more summary { cursor:pointer; font:600 11.5px var(--font-label); color:var(--text2); text-transform:uppercase; letter-spacing:.07em; padding:4px 0; }
+.status-passed { color:var(--pos); } .status-failed { color:var(--neg); } .status-open { color:var(--text2); } .status-error { color:var(--warn); }
+
+a.btnlink { display:inline-block; font-weight:500; font-size:12.5px; line-height:1.2; padding:6px 11px; border-radius:var(--r); border:1px solid var(--border2);
+  background:var(--surface); color:var(--text); text-decoration:none; }
+a.btnlink:hover { border-color:var(--text2); }
+a.btnlink.primary { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
+
+/* ---------- coach ---------- */
+.report { font-size:13.5px; line-height:1.6; max-width:82ch; }
+.report h1, .report h2, .report h3, .report h4 { font:600 14.5px/1.3 var(--font-ui); color:var(--text); text-transform:none; letter-spacing:0; margin:18px 0 6px; }
+.report > :first-child { margin-top:0; }
+.report p { margin:6px 0; }
+.report ul, .report ol { margin:6px 0; padding-left:20px; }
+.report li { margin:3px 0; }
+.lesson { padding:11px 0; border-bottom:1px solid var(--border); display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:4px 12px; align-items:start; }
+.lesson:last-child { border-bottom:0; }
+.lesson .ev { grid-column:2; font-size:12px; color:var(--muted); }
+.conf { font:600 10px/1.7 var(--font-label); padding:0 6px; border-radius:3px; text-transform:uppercase; letter-spacing:.05em; margin-top:1px; }
+.conf.high { background:var(--goodbg); color:var(--pos); } .conf.medium { background:var(--accent-soft); color:var(--accent); }
+.conf.low { background:var(--track); color:var(--muted); }
+.proposal { border:1px solid var(--border); border-left:4px solid var(--accent); border-radius:var(--r); padding:12px 14px; background:var(--surface2); }
+.proposal + .proposal { margin-top:10px; }
+.proposal .t { font-weight:600; }
+.proposal p { margin:4px 0 0; font-size:12.5px; color:var(--text2); }
+.proposal .ev { color:var(--muted); }
+.proposal.applied { border-left-color:var(--good); } .proposal.dismissed { border-left-color:var(--border2); opacity:.75; }
+textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; line-height:1.45; }
+.spend { font-family:var(--font-num); }
+.working { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:var(--r); background:var(--accent-soft); color:var(--text);
+  font-size:13px; margin-top:12px; }
+.working .pulse { width:8px; height:8px; border-radius:50%; background:var(--accent); animation:pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity:.25; } }
+@media (prefers-reduced-motion: reduce) { .working .pulse { animation:none; } }
+
+/* ---------- narrow screens: the rail becomes a top bar with scrolling tabs ---------- */
+@media (max-width:900px) {
+  .app { grid-template-columns:minmax(0,1fr); }
+  .rail { min-width:0; position:sticky; top:0; height:auto; z-index:6; flex-direction:column; border-right:0; border-bottom:1px solid var(--rail-line);
+    padding-top:env(safe-area-inset-top, 0px); }
+  .brandbox { padding:10px 16px; border-bottom:0; }
+  .tabs { flex-direction:row; overflow-x:auto; padding:0 8px 8px; gap:2px; flex:none; }
+  .tabs .grp { display:none; }
+  .tabs button { width:auto; white-space:nowrap; padding:7px 10px; font-size:13px; }
+  .tabs button svg { display:none; }
+  .tabs button.on { box-shadow:inset 0 -2px 0 #7ea4f2; }
+  .railfoot { display:none; }
+  main { padding:0 16px 48px; padding-left:max(16px, env(safe-area-inset-left)); padding-right:max(16px, env(safe-area-inset-right)); }
+  .top { position:static; margin:0 -16px; padding:10px 16px; }
+}
+@media (max-width:560px) {
+  .top { gap:8px; } .top .spacer { display:none; } .top .meta { flex-basis:100%; order:9; }
+  button.small { padding:7px 11px; font-size:13px; }
+  .panel { padding:14px; }
+  .value { font-size:20px; }
+  .clock { grid-template-columns:repeat(2, minmax(0,1fr)); } .clock .cv { font-size:15px; }
+  .sfield { grid-template-columns:1fr; } .sfield .help { grid-column:1; }
+  .sfield input[type=text], .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select { width:100%; }
+  .pagehead { margin-top:16px; }
+}
 </style>
 </head>
 <body>
+<div class="app">
+<aside class="rail">
+  <div class="brandbox">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="#1d2636"/><path d="M7 21l6-6 4 4 8-9" stroke="#7ea4f2" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div class="brand">Topstep Bot<small>Futures console · v2.0</small></div>
+  </div>
+  <nav class="tabs" aria-label="Sections">
+    <div class="grp">Trading</div>
+    <button data-tab="overview" class="on"><svg viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="5.5" height="5.5"/><rect x="9" y="1.5" width="5.5" height="5.5"/><rect x="1.5" y="9" width="5.5" height="5.5"/><rect x="9" y="9" width="5.5" height="5.5"/></svg>Overview</button>
+    <button data-tab="trade"><svg viewBox="0 0 16 16"><path d="M2 11l4-4 3 3 5-6"/><path d="M10 4h4v4"/></svg>Trade</button>
+    <button data-tab="ideas"><svg viewBox="0 0 16 16"><path d="M8 1.5a4.5 4.5 0 0 0-2.5 8.2V12h5V9.7A4.5 4.5 0 0 0 8 1.5z"/><path d="M6 14.5h4"/></svg>Ideas <span class="count" id="ideacount" hidden></span></button>
+    <button data-tab="market"><svg viewBox="0 0 16 16"><path d="M4 2v12M4 5h-1.5v5H4M12 3v11M12 6h-1.5v4H12M8 1v13M8 4H6.5v7H8"/></svg>Market</button>
+    <div class="grp">Learning</div>
+    <button data-tab="knowledge"><svg viewBox="0 0 16 16"><path d="M2 3.5h4.5a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 0-1.5-1.5H2zM14 3.5H9.5A1.5 1.5 0 0 0 8 5v8.5a1.5 1.5 0 0 1 1.5-1.5H14z"/></svg>Knowledge</button>
+    <button data-tab="lab"><svg viewBox="0 0 16 16"><path d="M6 1.5v4.2L2.2 12.6A1.3 1.3 0 0 0 3.3 14.5h9.4a1.3 1.3 0 0 0 1.1-1.9L10 5.7V1.5M5 1.5h6M4.2 10h7.6"/></svg>Simulations <span class="count" id="labflag" hidden>run</span></button>
+    <button data-tab="coach"><svg viewBox="0 0 16 16"><path d="M2.5 3h11v7.5H8L4.5 13v-2.5h-2z"/><path d="M5.5 6.5h5"/></svg>AI Coach <span class="count" id="coachcount" hidden></span></button>
+    <div class="grp">System</div>
+    <button data-tab="settings"><svg viewBox="0 0 16 16"><path d="M2 4h7M12 4h2M2 12h2M7 12h7M2 8h3M8 8h6"/><circle cx="10.5" cy="4" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/><circle cx="6.5" cy="8" r="1.5"/></svg>Settings</button>
+    <button data-tab="setup"><svg viewBox="0 0 16 16"><circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/></svg>Setup <span class="count" id="setupflag" hidden>!</span></button>
+    <button data-tab="logs"><svg viewBox="0 0 16 16"><path d="M3 2.5h10v11H3zM5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></svg>Logs</button>
+  </nav>
+  <div class="railfoot">
+    <button class="pill" id="phonepill" hidden title="Phone access through Telegram - open Settings"></button>
+    <button class="pill" id="logpill" title="Warnings and errors from the bot - open the Logs tab">Logs</button>
+    <div class="themeseg" id="theme" role="group" aria-label="Theme">
+      <button data-theme-set="">Auto</button><button data-theme-set="light">Light</button><button data-theme-set="dark">Dark</button>
+    </div>
+  </div>
+</aside>
 <main>
   <div class="top">
-    <span class="brand">Topstep Bot</span>
+    <span class="pill" id="botpill"><span class="dot"></span><span>…</span></span>
     <span class="seg" title="Paper = simulated orders on real prices. Live = real orders.">
       <button id="m-paper" class="paper">Paper</button><button id="m-live" class="live">Live</button>
     </span>
-    <span class="pill" id="botpill"><span class="dot"></span><span>…</span></span>
     <span class="row">
       <button class="small primary" id="b-start">Start</button>
       <button class="small" id="b-restart">Restart</button>
       <button class="small" id="b-stop">Stop</button>
     </span>
     <span class="spacer"></span>
-    <button class="pill" id="phonepill" hidden title="Phone access through Telegram - open Settings"></button>
-    <button class="pill" id="logpill" title="Warnings and errors from the bot - open the Logs tab">log</button>
     <span class="meta" id="meta"></span>
-    <button class="small" id="theme" title="Light / dark / follow your system">◐</button>
   </div>
   <div id="acctwrap" hidden>
     <div class="accts" id="accts"></div>
@@ -360,104 +564,98 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
   <div class="banner" id="banner" hidden></div>
   <div class="banner ok" id="updbanner" hidden></div>
 
-  <nav class="tabs">
-    <button data-tab="overview" class="on">Overview</button>
-    <button data-tab="trade">Trade</button>
-    <button data-tab="ideas">Ideas <span class="count" id="ideacount" hidden></span></button>
-    <button data-tab="market">Market</button>
-    <button data-tab="knowledge">Knowledge</button>
-    <button data-tab="settings">Settings</button>
-    <button data-tab="setup">Setup <span class="count" id="setupflag" hidden>!</span></button>
-    <button data-tab="logs">Logs</button>
-  </nav>
-
   <!-- OVERVIEW -->
   <section class="tab on" id="tab-overview">
-    <div class="grid cards">
-      <div class="panel"><div class="label">Balance</div><div class="value" id="balance">–</div><div class="sub" id="balance-sub"></div></div>
-      <div class="panel"><div class="label">Today's P&amp;L</div><div class="value" id="daypnl">–</div><div class="sub" id="daypnl-sub"></div></div>
-      <div class="panel"><div class="label">Open P&amp;L</div><div class="value" id="openpnl">–</div><div class="sub" id="openpnl-sub"></div></div>
-      <div class="panel"><div class="label">Position</div><div class="value" id="position">–</div><div class="sub" id="position-sub"></div></div>
+    <div class="pagehead"><div><h1>Overview</h1><p>Account, open risk and what the bot is doing right now.</p></div></div>
+    <div class="kpis">
+      <div><div class="label">Balance</div><div class="value" id="balance">–</div><div class="sub" id="balance-sub"></div></div>
+      <div><div class="label">Today's P&amp;L</div><div class="value" id="daypnl">–</div><div class="sub" id="daypnl-sub"></div></div>
+      <div><div class="label">Open P&amp;L</div><div class="value" id="openpnl">–</div><div class="sub" id="openpnl-sub"></div></div>
+      <div><div class="label">Position</div><div class="value" id="position">–</div><div class="sub" id="position-sub"></div></div>
     </div>
-    <div class="grid two" style="margin-top:12px">
-      <div class="panel">
-        <h2>Guardrails</h2>
-        <div class="meter"><div class="mrow"><span>Room above Max Loss Limit</span><span id="mll-txt"></span></div><div class="track"><div class="fill" id="mll-bar"></div></div></div>
-        <div class="meter"><div class="mrow"><span>Daily loss limit used</span><span id="dll-txt"></span></div><div class="track"><div class="fill" id="dll-bar"></div></div></div>
-        <div class="meter" id="tdll-meter" hidden><div class="mrow"><span>Topstep daily loss limit used</span><span id="tdll-txt"></span></div><div class="track"><div class="fill" id="tdll-bar"></div></div></div>
-        <div class="meter" id="target-meter"><div class="mrow"><span>Combine profit target</span><span id="tgt-txt"></span></div><div class="track"><div class="fill" id="tgt-bar"></div></div><div class="note" id="tgt-note"></div></div>
-        <div class="meter"><div class="mrow"><span>Trades today</span><span id="trades-txt"></span></div><div class="track"><div class="fill" id="trades-bar"></div></div></div>
-        <div class="row" style="margin-top:4px">
-          <button class="small" id="pause">Pause new trades</button>
-          <button class="small" id="resume">Resume</button>
-          <button class="small danger" id="flatten">Flatten &amp; halt</button>
+    <div class="grid main-side gap-top">
+      <div class="stack">
+        <div class="panel">
+          <div class="head"><h2>Current trade</h2><span class="spacer"></span><button class="small" id="newtrade">New manual trade</button></div>
+          <div id="trade"></div>
+          <h3>Strategy</h3>
+          <dl id="strategy"></dl>
         </div>
-        <p class="hint">Pause blocks automatic entries (an open trade keeps its stop; you can still trade manually and take ideas).
-          Flatten &amp; halt closes everything and stops trading until the bot is restarted.</p>
+        <div class="panel" id="next-panel">
+          <div class="head"><h2>Next trade</h2><span class="spacer"></span><span class="meta">Estimate from past signals</span></div>
+          <div id="next-head" class="nexthead">–</div>
+          <div id="next-stats" class="stats"></div>
+          <ul id="next-basis" class="basis"></ul>
+          <p class="hint" id="next-caveat"></p>
+        </div>
+        <div class="panel" id="first-panel" hidden>
+          <div class="firsthead"><h2 style="margin:0">First trade after starting</h2><span class="firststate" id="first-state"></span>
+            <span class="spacer"></span><span class="firstleft" id="first-left"></span></div>
+          <p id="first-msg" style="margin:8px 0 0"></p>
+          <p class="hint" id="first-pick" style="margin:6px 0 0"></p>
+          <p class="hint">If no strategy has traded by then, the bot takes the setup its knowledge base supports best, at the smallest size,
+            with every rule applied. At most once a trading day. It is there to learn, not because it is expected to make money.</p>
+        </div>
+        <div class="panel" id="setups-panel">
+          <div class="head"><h2>Getting ready to trade</h2><span class="spacer"></span><span class="meta" id="setups-meta"></span></div>
+          <p class="hint" style="margin:-4px 0 12px">Trades each strategy is building toward, checked against the live price as if the bar closed now.
+            Filled dots are conditions already met. Nothing here places a trade.</p>
+          <div id="setups-block" class="setupnote" hidden></div>
+          <div id="setups" class="setups"></div>
+          <div id="setups-waiting" class="hint"></div>
+          <h3>Setup history</h3>
+          <div class="feed" id="setups-history" style="max-height:220px"></div>
+        </div>
+        <div class="panel">
+          <h2>Today's trades</h2>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Closed</th><th>By</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Exit</th>
+              <th class="num">P&amp;L</th><th class="num">R</th><th>How it ended</th></tr></thead>
+            <tbody id="todaytrades"></tbody></table></div>
+        </div>
       </div>
-      <div class="panel" id="fundedpanel">
-        <h2 id="funded-title">Account goal</h2>
-        <div class="meter" id="funded-meter"><div class="mrow"><span id="funded-label"></span><span id="funded-txt"></span></div><div class="track"><div class="fill" id="funded-bar"></div></div></div>
-        <ul class="plain meta" id="funded-lines"></ul>
-        <p class="hint">From your trade journal and Topstep's rules (checked October 2026 — your TopstepX dashboard always wins).
-          Settings: <code>funded:</code> in config.yaml.</p>
+      <div class="stack">
+        <div class="panel">
+          <h2>Guardrails</h2>
+          <div class="meter"><div class="mrow"><span>Room above Max Loss Limit</span><span id="mll-txt"></span></div><div class="track"><div class="fill" id="mll-bar"></div></div></div>
+          <div class="meter"><div class="mrow"><span>Daily loss limit used</span><span id="dll-txt"></span></div><div class="track"><div class="fill" id="dll-bar"></div></div></div>
+          <div class="meter" id="tdll-meter" hidden><div class="mrow"><span>Topstep daily loss limit used</span><span id="tdll-txt"></span></div><div class="track"><div class="fill" id="tdll-bar"></div></div></div>
+          <div class="meter" id="target-meter"><div class="mrow"><span>Combine profit target</span><span id="tgt-txt"></span></div><div class="track"><div class="fill" id="tgt-bar"></div></div><div class="note" id="tgt-note"></div></div>
+          <div class="meter"><div class="mrow"><span>Trades today</span><span id="trades-txt"></span></div><div class="track"><div class="fill" id="trades-bar"></div></div></div>
+          <div class="row" style="margin-top:6px">
+            <button class="small" id="pause">Pause new trades</button>
+            <button class="small" id="resume">Resume</button>
+            <button class="small danger" id="flatten">Flatten &amp; halt</button>
+          </div>
+          <p class="hint">Pause blocks automatic entries; an open trade keeps its stop. Flatten &amp; halt closes everything and stops trading until restart.</p>
+        </div>
+        <div class="panel" id="fundedpanel">
+          <h2 id="funded-title">Account goal</h2>
+          <div class="meter" id="funded-meter"><div class="mrow"><span id="funded-label"></span><span id="funded-txt"></span></div><div class="track"><div class="fill" id="funded-bar"></div></div></div>
+          <ul class="plain meta" id="funded-lines"></ul>
+          <p class="hint">From your trade journal and Topstep's rules as checked in October 2026. Your TopstepX dashboard is the final word.</p>
+        </div>
+        <div class="panel" id="lab-mini">
+          <div class="head"><h2>Simulation Lab</h2><span class="spacer"></span><button class="small" onclick="openTab('lab')">Open</button></div>
+          <div id="lab-mini-body" class="meta">No simulations yet.</div>
+        </div>
+        <div class="panel"><h2>Activity</h2><div class="feed" id="activity"></div></div>
       </div>
-      <div class="panel">
-        <div class="row"><h2 style="margin:0">Current trade</h2><span class="spacer"></span>
-          <button class="small" id="newtrade">New manual trade</button></div>
-        <div id="trade" style="margin-top:10px"></div>
-        <h2 style="margin-top:16px">Strategy</h2>
-        <dl id="strategy"></dl>
-      </div>
     </div>
-    <div class="panel" style="margin-top:12px" id="next-panel">
-      <div class="row"><h2 style="margin:0">Next trade</h2><span class="spacer"></span><span class="meta">an estimate, not a promise</span></div>
-      <div id="next-head" class="nexthead">–</div>
-      <div id="next-stats" class="stats"></div>
-      <ul id="next-basis" class="basis"></ul>
-      <p class="hint" id="next-caveat"></p>
-    </div>
-    <div class="panel" style="margin-top:12px" id="first-panel" hidden>
-      <div class="firsthead"><h2 style="margin:0">First trade after starting</h2><span class="firststate" id="first-state"></span>
-        <span class="spacer"></span><span class="firstleft" id="first-left"></span></div>
-      <p id="first-msg" style="margin:6px 0 0"></p>
-      <p class="hint" id="first-pick" style="margin:6px 0 0"></p>
-      <p class="hint" style="margin:6px 0 0">Teach the bot: if no strategy has traded by then, it takes the setup its knowledge base supports
-        best, at the smallest size, with every Topstep rule and risk limit applied. At most once a trading day. It is there to learn,
-        not because it is expected to make money.</p>
-    </div>
-    <div class="panel" style="margin-top:12px" id="setups-panel">
-      <div class="row"><h2 style="margin:0">Getting ready to trade</h2><span class="spacer"></span>
-        <span class="meta" id="setups-meta"></span></div>
-      <p class="hint" style="margin:4px 0 10px">The trades each strategy is building toward right now, checked against the live price
-        as if the current bar closed here. ✔ = condition met, ○ = still waiting. Nothing here places a trade.</p>
-      <div id="setups-block" class="setupnote" hidden></div>
-      <div id="setups" class="setups"></div>
-      <div id="setups-waiting" class="hint"></div>
-      <h3>Setup history</h3>
-      <div class="feed" id="setups-history" style="max-height:220px"></div>
-    </div>
-    <div class="panel" style="margin-top:12px">
-      <h2>Today's trades</h2>
-      <div class="tablewrap"><table>
-        <thead><tr><th>Closed</th><th>By</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Exit</th>
-          <th class="num">P&amp;L</th><th class="num">R</th><th>How it ended</th></tr></thead>
-        <tbody id="todaytrades"></tbody></table></div>
-    </div>
-    <div class="panel" style="margin-top:12px"><h2>Activity</h2><div class="feed" id="activity"></div></div>
   </section>
 
   <!-- TRADE (manual trade ticket) -->
   <section class="tab" id="tab-trade">
+    <div class="pagehead"><div><h1>Trade ticket</h1><p>Place your own trade with the bot's stop, sizing and Topstep checks.</p></div></div>
     <div class="grid ticketgrid">
-      <div>
+      <div class="stack">
         <div class="panel">
-          <h2>Trade ticket</h2>
+          <h2>Order</h2>
           <div id="tk-off" class="empty" hidden></div>
           <div id="tk-body">
             <div class="sidepick">
-              <button class="buy" id="tk-buy">Buy<small>long: profit if price rises</small></button>
-              <button class="sell" id="tk-sell">Sell<small>short: profit if price falls</small></button>
+              <button class="buy" id="tk-buy">Buy<small>Long: profit if price rises</small></button>
+              <button class="sell" id="tk-sell">Sell<small>Short: profit if price falls</small></button>
             </div>
             <div class="quote"><span class="label" id="tk-contract">Price</span><span class="px" id="tk-price">–</span>
               <span class="meta" id="tk-modeinfo"></span></div>
@@ -471,137 +669,260 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
                   <button class="small chip" data-r="1">1R</button><button class="small chip" data-r="1.5">1.5R</button>
                   <button class="small chip" data-r="2">2R</button><button class="small chip" data-r="3">3R</button>
                   <button class="small chip" data-r="none">None</button></span></div>
-              <div class="help" id="tk-targethelp">Take profit here. R = how far the stop is (2R = twice the risk).</div></div>
+              <div class="help" id="tk-targethelp">Take profit here. R is the stop distance: 2R is twice the risk.</div></div>
             <div class="field"><label for="tk-size">Size</label>
               <div class="ctl"><input id="tk-size" inputmode="numeric" autocomplete="off" placeholder="max">
-                <button class="small chip" id="tk-sizemax">Max</button><button class="small chip" id="tk-sizehalf">½</button>
+                <button class="small chip" id="tk-sizemax">Max</button><button class="small chip" id="tk-sizehalf">Half</button>
                 <button class="small chip" id="tk-size1">1</button></div>
               <div class="help" id="tk-sizehelp">Contracts. Never more than your risk rules allow.</div></div>
             <div class="field"><label for="tk-note">Note</label>
               <div class="ctl"><input id="tk-note" class="wide" maxlength="200" autocomplete="off" placeholder="Why this trade? (optional)"></div>
-              <div class="help">Saved with the trade in the journal and activity log.</div></div>
+              <div class="help">Saved with the trade in the journal.</div></div>
             <div id="tk-summary" class="summary"><span class="muted">Pick Buy or Sell to see the trade, its risk and what the bot knows.</span></div>
             <div id="tk-block" class="blockmsg" hidden></div>
             <button class="placebtn" id="tk-place" disabled>Place trade</button>
-            <div class="row" style="margin-top:8px"><button class="small" id="tk-reset">Clear</button>
+            <div class="row" style="margin-top:10px"><button class="small" id="tk-reset">Clear</button>
               <span class="hint" style="margin:0">Market order, protected by its stop at once, managed like the bot's own trades and closed by 15:10 CT.</span></div>
           </div>
         </div>
-        <div class="panel" style="margin-top:12px">
+        <div class="panel">
           <h2>Rule checks</h2>
           <ul class="checks" id="tk-checks"><li class="empty" style="padding-left:0">Pick a side to check the rules.</li></ul>
-          <p class="hint">The same checks the bot runs before its own trades: Topstep's limits, your loss limits, the
-            trading window, news and the order guard. Manual trades may go past the daily trade count; nothing else is relaxed.</p>
+          <p class="hint">The checks the bot runs before its own trades: Topstep's limits, your loss limits, the trading window, news and the order guard.</p>
         </div>
       </div>
       <div class="panel">
         <h2>What the bot knows</h2>
         <div id="kn-body"><div class="empty">Pick Buy or Sell to see what the knowledge base says about it right now.</div></div>
-        <p class="hint">Evidence from past signals and trades, not a forecast. Your manual trades are added to the knowledge base
-          (tagged manual) when they close, so this panel learns your record too.</p>
+        <p class="hint">Evidence from past signals and trades, not a forecast. Your manual trades are added to the knowledge base when they close.</p>
       </div>
     </div>
   </section>
 
   <!-- IDEAS -->
   <section class="tab" id="tab-ideas">
+    <div class="pagehead"><div><h1>Ideas</h1><p>Signals from every strategy, and how today's ideas turned out.</p></div></div>
     <div class="panel">
       <h2>Recommended right now</h2>
       <div id="ideas" class="ideas"></div>
-      <p class="hint">★ = your auto-traded strategy (the bot takes these itself). Other ideas are only traded if you press Take:
-        re-priced at the market, protected by a stop and sized by your risk rules — never larger. Ideas can be taken for 15 minutes.</p>
+      <p class="hint">Ideas tagged Auto come from the strategy the bot trades itself. Others are only traded if you press Take: re-priced at the market,
+        protected by a stop and sized by your risk rules. Ideas can be taken for 15 minutes.</p>
     </div>
-    <div class="panel" style="margin-top:12px">
+    <div class="panel gap-top">
       <h2>Today's results</h2>
-      <div id="scoreboard" class="meta" style="margin-bottom:8px"></div>
+      <div id="scoreboard" class="meta" style="margin-bottom:10px"></div>
       <div class="tablewrap"><table>
         <thead><tr><th>Time</th><th>Strategy</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Stop</th>
           <th class="num">Target</th><th class="num">Risk</th><th class="num">R:R</th><th>Status</th><th class="num">Result</th><th>Notes</th></tr></thead>
         <tbody id="recs"></tbody></table></div>
-      <p class="hint">* hypothetical: ideas that weren't traded are followed to their stop, target or the session end (stop first if a bar touches both).</p>
+      <p class="hint">* Hypothetical: ideas that weren't traded are followed to their stop, target or the session end (stop first if a bar touches both).</p>
     </div>
   </section>
 
   <!-- MARKET -->
   <section class="tab" id="tab-market">
-    <div class="panel" id="mk-pick-panel" style="margin-bottom:12px" hidden>
+    <div class="pagehead"><div><h1>Market</h1><p>Today's range, key levels, scheduled reports and headlines.</p></div></div>
+    <div class="panel" id="mk-pick-panel" style="margin-bottom:14px" hidden>
       <h2>Why this market</h2><div id="mk-pick"></div>
-      <p class="hint">Market set to Auto: when it starts, the bot replays recent history for each candidate and scores only the
-        days held back from what it learned, after costs and sized with this account's risk. It picks again each day.</p>
+      <p class="hint">Market set to Auto: at each start the bot replays recent history for every candidate and scores only days it held back from
+        training, after costs and sized with this account's risk.</p>
     </div>
     <div class="grid two">
       <div class="panel"><h2>Today</h2><div id="mk-today"></div></div>
       <div class="panel"><h2>Key levels</h2><div id="mk-levels"></div></div>
     </div>
-    <div class="grid two" style="margin-top:12px">
+    <div class="grid two gap-top">
       <div class="panel"><h2>Reports that move it</h2><div id="mk-events"></div>
-        <p class="hint">No new trades from a few minutes before to a few minutes after each of these (news settings).</p></div>
+        <p class="hint">No new trades from a few minutes before to a few minutes after each of these.</p></div>
       <div class="panel"><h2>Headlines</h2><div id="mk-headlines" class="feed hl"></div>
-        <p class="hint">For your information — the bot does not trade on headlines.</p></div>
+        <p class="hint">For information only. The bot does not trade on headlines.</p></div>
     </div>
-    <div class="panel" style="margin-top:12px"><h2>About this market</h2><dl id="mk-profile"></dl></div>
-    <div class="panel" style="margin-top:12px" id="research-panel" hidden>
-      <h2>What the bot gathers from the internet</h2>
+    <div class="panel gap-top"><h2>About this market</h2><dl id="mk-profile"></dl></div>
+    <div class="panel gap-top" id="research-panel" hidden>
+      <h2>Research library</h2>
       <div id="research"></div>
-      <p class="hint">The research library in data/research grows while the bot runs: every economic calendar (so past
-        news days are known when it retrains), headlines for your markets, ten years of daily prices, and Topstep's rule
-        pages, watched for changes. It is information: nothing here places, sizes or blocks a trade by itself.</p>
+      <p class="hint">Grows while the bot runs: economic calendars, headlines, ten years of daily prices, and Topstep's rule pages (watched for changes).
+        None of it places, sizes or blocks a trade by itself.</p>
     </div>
   </section>
 
   <!-- KNOWLEDGE -->
   <section class="tab" id="tab-knowledge">
+    <div class="pagehead"><div><h1>Knowledge</h1><p>What each strategy's signals have been worth, by time of day and volatility.</p></div></div>
     <div class="panel brief">
-      <div class="row"><h2 style="margin:0">What the bot knows</h2><span class="spacer"></span><span class="meta" id="brief-meta"></span></div>
-      <div id="brief" style="margin-top:8px"><div class="empty">Start the bot to hear what it knows.</div></div>
+      <div class="head"><h2>What the bot knows</h2><span class="spacer"></span><span class="meta" id="brief-meta"></span></div>
+      <div id="brief"><div class="empty">Start the bot to hear what it knows.</div></div>
       <div class="memline" id="mem-line" hidden>
         <div class="grow"><b>Long-run memory.</b> <span id="mem-text"></span>
           <div class="track" id="mem-track" hidden><div class="fill" id="mem-bar"></div></div></div>
         <button class="small" id="learn" title="Download the history the bot is still missing and replay all of it through every strategy">Learn from history now</button>
       </div>
-      <p class="hint">The long-run memory keeps every price bar the bot sees and, once a day outside trading hours, replays all of them
-        through every strategy. It feeds these reports; the bot still decides its trades from the recent knowledge base below, with every risk rule unchanged.</p>
     </div>
-    <div class="panel" style="margin-top:12px">
-      <div class="row"><h2 style="margin:0">What works when</h2><span class="spacer"></span><button class="small" id="train">Retrain now</button></div>
-      <div id="kb-meta" class="meta" style="margin:6px 0 10px"></div>
+    <div class="panel gap-top">
+      <div class="head"><h2>What works when</h2><span class="spacer"></span><button class="small" id="train">Retrain now</button></div>
+      <div id="kb-meta" class="meta" style="margin:0 0 12px"></div>
       <div class="tablewrap"><table id="kb-table"><thead></thead><tbody></tbody></table></div>
-      <p class="hint">Average result per signal in R (1R = the risk of that trade) and the number of signals seen, by time of day
-        (Chicago) and volatility regime. <span class="kb ok">✔</span> the Adaptive strategy trades it now,
-        <span class="kb bad">✘</span> switched off because it has been losing, <span class="kb unk">?</span> not enough evidence yet.
-        The bot adds every signal it sees — traded or not — while it runs, and retrains on recent history each day. Older evidence fades out.</p>
+      <p class="hint">Average result per signal in R (1R is the risk of that trade) with the number of signals, by Chicago time of day and volatility
+        regime. Green: the Adaptive strategy trades it now. Red: switched off because it has been losing. Grey: not enough evidence yet.</p>
     </div>
-    <div class="panel" style="margin-top:12px">
-      <div class="row"><h2 style="margin:0">What the bot has learned</h2><span class="spacer"></span>
+    <div class="panel gap-top">
+      <div class="head"><h2>What the bot has learned</h2><span class="spacer"></span>
         <span class="seg small" id="ins-scope" title="Recent: the knowledge base the bot trades with. Long run: everything in its long-run memory.">
           <button data-scope="recent" class="on">Recent</button><button data-scope="longrun">Long run</button></span>
         <button class="small" id="ins-csv" title="Every observation, one row each, with its market snapshot">Download CSV</button></div>
-      <div id="ins-meta" class="meta" style="margin:6px 0 10px"></div>
+      <div id="ins-meta" class="meta" style="margin:0 0 12px"></div>
       <div class="tablewrap"><table id="ins-table"><thead></thead><tbody></tbody></table></div>
-      <p class="hint">Average result per signal in R. <b>After costs</b> takes out fees and, for ideas that weren't traded,
-        the slippage your backtests assume; real fills already include their slippage. <b>Best / worst point</b>: how far a signal
-        went for and against it on average before it ended. <b>Losers up 1R first</b>: losing signals that were 1R in profit
-        on the way, a sign a breakeven stop or a target might help. Observations from before these were measured count before costs.</p>
+      <p class="hint">After costs removes fees and, for ideas that weren't traded, the slippage your backtests assume. Best and worst point: how far a
+        signal went for and against it on average. Losers up 1R first: losing signals that were 1R in profit on the way.</p>
       <div id="ins-fills" class="summary" hidden></div>
       <h3>Conditions worth testing</h3>
       <ul id="ins-hints" class="hints"></ul>
-      <div class="row" style="margin-top:12px"><h3 style="margin:0">Compare by</h3><select id="ins-feature" class="picker"></select></div>
+      <div class="row" style="margin-top:14px"><h3 style="margin:0">Compare by</h3><select id="ins-feature" class="picker"></select></div>
       <div id="ins-feature-help" class="hint" style="margin-top:4px"></div>
       <div class="tablewrap"><table id="ins-cond"><thead></thead><tbody></tbody></table></div>
-      <p class="hint">Hints, not proven: the bot compares many strategies on many measurements, so some differences are luck.
-        Nothing here changes how the bot trades; a condition earns a place in its decisions only after it holds up on data it never saw.
-        Faded numbers have fewer than <span id="ins-min">15</span> observations.</p>
+      <p class="hint">Hints, not proof: comparing many strategies on many measurements turns up some differences by luck. Faded numbers have fewer than
+        <span id="ins-min">15</span> observations.</p>
     </div>
-    <div class="panel" style="margin-top:12px">
+    <div class="panel gap-top">
       <h2>Your manual trades</h2>
       <div id="kb-manual"></div>
-      <p class="hint">Trades you placed from the Trade tab, by time of day and regime. They never switch a strategy on or off; the
-        trade ticket shows your record next to the strategies' so you can see where your own trades work.</p>
+      <p class="hint">Trades you placed from the Trade tab, by time of day and regime. They never switch a strategy on or off.</p>
     </div>
   </section>
 
+  <!-- SIMULATION LAB -->
+  <section class="tab" id="tab-lab">
+    <div class="pagehead"><div><h1>Simulation Lab</h1>
+      <p>The bot's real trading code, replayed through history as fresh Topstep Combines started on many different days.</p></div>
+      <span class="spacer"></span>
+      <div class="row">
+        <label class="meta" for="lab-starts">Start days per playbook</label>
+        <select id="lab-starts" class="picker"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option><option value="8">8</option><option value="12">12</option></select>
+        <label class="checkline meta" style="align-items:center"><input type="checkbox" id="lab-teach" checked><span>Teach long-run memory</span></label>
+        <button class="primary" id="lab-run">Run simulations</button>
+      </div>
+    </div>
+    <div class="panel" id="lab-progress" hidden>
+      <div class="working"><span class="pulse"></span><span id="lab-stage">Starting…</span><span class="spacer"></span><span class="num" id="lab-count"></span></div>
+      <div class="progress"><div class="track"><div class="fill" id="lab-bar" style="width:0"></div></div><span class="num" id="lab-elapsed"></span></div>
+    </div>
+    <div class="blockmsg" id="lab-error" hidden></div>
+    <div id="lab-empty" class="panel" hidden>
+      <h2>No simulations yet</h2>
+      <p style="margin:0 0 6px">Press <b>Run simulations</b>. Each market with history on this PC is played through every strategy, as fresh Combines started on
+        different days, with your plan's rules and your risk per trade. About a minute for 128 Combines.</p>
+      <p class="hint" id="lab-history"></p>
+    </div>
+    <div id="lab-body" hidden>
+      <div class="kpis labkpis">
+        <div><div class="label">Live-like Combines</div><div class="value" id="lk-sims">–</div><div class="sub" id="lk-sims-sub"></div></div>
+        <div><div class="label">Passed</div><div class="value pos" id="lk-pass">–</div><div class="sub">hit the profit target</div></div>
+        <div><div class="label">Failed</div><div class="value neg" id="lk-fail">–</div><div class="sub">touched the loss limit</div></div>
+        <div><div class="label">Still open</div><div class="value" id="lk-open">–</div><div class="sub">history ran out first</div></div>
+        <div><div class="label">Resampled paths</div><div class="value" id="lk-mc">–</div><div class="sub">Monte Carlo Combines</div></div>
+        <div><div class="label">History</div><div class="value" id="lk-days">–</div><div class="sub" id="lk-days-sub"></div></div>
+      </div>
+      <div class="callout gap-top" id="lab-rec"></div>
+      <div class="panel gap-top">
+        <div class="head"><h2>Playbooks</h2><span class="spacer"></span>
+          <span class="legend"><span><i style="background:var(--pos)"></i>Resampled pass</span><span><i style="background:var(--neg)"></i>Resampled fail</span>
+            <span><i style="background:var(--track)"></i>Still open after 60 days</span></span></div>
+        <div class="tablewrap"><table id="lab-table"><thead><tr><th>Market</th><th>Strategy</th><th>Verdict</th><th class="num">Net</th>
+          <th class="num">Per day</th><th class="num">Trades</th><th class="num">Win</th><th class="num">PF</th><th class="num">1st half</th><th class="num">2nd half</th>
+          <th class="num">Max DD</th><th>Combines P / F / O</th><th>Resampled</th><th>Equity</th><th></th></tr></thead><tbody></tbody></table></div>
+        <p class="hint" id="lab-meta"></p>
+      </div>
+      <div class="grid two gap-top">
+        <div class="panel"><h2>Held-out check</h2><div id="lab-holdout" class="meta"></div></div>
+        <div class="panel"><h2>Read this before trusting it</h2><ul class="plain meta" id="lab-caveats"></ul></div>
+      </div>
+      <div class="panel gap-top">
+        <details class="more"><summary>Every live-like Combine (<span id="lab-runcount">0</span>)</summary>
+          <div class="tablewrap" style="margin-top:10px"><table id="lab-runs"><thead><tr><th>Market</th><th>Strategy</th><th>Started</th><th>Ended</th><th>Result</th>
+            <th class="num">Days</th><th class="num">Profit</th><th class="num">Trades</th><th class="num">Worst day</th><th class="num">Max DD</th><th>Detail</th></tr></thead><tbody></tbody></table></div>
+        </details>
+        <div id="lab-taught" class="hint"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AI COACH -->
+  <section class="tab" id="tab-coach">
+    <div class="pagehead"><div><h1>AI Coach</h1>
+      <p>Claude reviews the bot's evidence, runs its own simulations, records lessons and proposes changes. You approve every change.</p></div></div>
+    <div class="grid main-side">
+      <div class="stack">
+        <div class="panel">
+          <div class="head"><h2>Coaching session</h2><span class="spacer"></span><span class="meta" id="co-model-line"></span></div>
+          <label for="co-question" class="meta">What should the coach look into? Leave empty for a full review.</label>
+          <textarea id="co-question" class="ask" maxlength="600" placeholder="e.g. Is MNQ a better market than M2K for passing my 50K Combine? Should I lower my risk per trade?"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="primary" id="co-run" disabled>Start session</button>
+            <button id="co-cancel" hidden>Stop</button>
+            <span class="meta" id="co-cost-note"></span>
+          </div>
+          <div class="working" id="co-working" hidden><span class="pulse"></span><span id="co-stage">Thinking…</span><span class="spacer"></span><span class="num" id="co-live"></span></div>
+          <div class="blockmsg" id="co-error" hidden></div>
+        </div>
+        <div class="panel">
+          <div class="head"><h2>Latest report</h2><span class="spacer"></span><span class="meta" id="co-report-meta"></span></div>
+          <div id="co-report" class="report"><div class="empty">No coaching session yet.</div></div>
+        </div>
+        <div class="panel">
+          <div class="head"><h2>Proposals</h2><span class="spacer"></span><span class="meta">Nothing changes until you press Apply</span></div>
+          <div id="co-proposals"><div class="empty">None yet.</div></div>
+          <p class="hint">A proposal either switches the market and strategy, or lowers a risk setting. The coach can never raise risk.
+            Applied changes go into config.yaml (the old file is kept as config.yaml.bak) and take effect when the bot restarts.</p>
+        </div>
+        <div class="panel">
+          <div class="head"><h2>Lessons the bot has learned</h2><span class="spacer"></span><span class="meta" id="co-lessons-meta"></span></div>
+          <div id="co-lessons"><div class="empty">None yet. The coach records lessons with their evidence; every later session builds on them.</div></div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="panel" id="co-keypanel">
+          <h2>Claude API</h2>
+          <div id="co-key-state" class="meta"></div>
+          <div id="co-key-form">
+            <div class="sfield" style="grid-template-columns:1fr;border-top:0"><label for="co-key">API key</label>
+              <div class="ctl"><input type="password" id="co-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" style="width:100%"></div>
+              <div class="help" style="grid-column:1">Tested with Claude, then saved in the .env file on this PC. It is never shown again or sent anywhere else.</div></div>
+            <div class="row"><button class="small primary" id="co-key-save">Test and save</button><button class="small" id="co-key-remove" hidden>Remove key</button></div>
+            <div class="msg" id="co-key-msg"></div>
+          </div>
+          <h3>Credits</h3>
+          <p class="meta" style="margin:0 0 8px">Coaching is billed to your Claude API account. Buy prepaid credits on the Claude Console. The bot itself never
+            handles payment.</p>
+          <div class="row"><a class="btnlink primary" id="co-buy" href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener noreferrer">Buy credits</a>
+            <a class="btnlink" id="co-keys-link" href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener noreferrer">Create an API key</a></div>
+        </div>
+        <div class="panel">
+          <h2>Spending</h2>
+          <div class="meter"><div class="mrow"><span>This month</span><span id="co-spend-txt"></span></div><div class="track"><div class="fill" id="co-spend-bar"></div></div></div>
+          <div class="sfield" style="grid-template-columns:130px minmax(0,1fr)"><label for="co-model">Model</label>
+            <div class="ctl"><select id="co-model" style="width:100%"></select></div></div>
+          <div class="sfield" style="grid-template-columns:130px minmax(0,1fr)"><label for="co-effort">Effort</label>
+            <div class="ctl"><select id="co-effort" style="width:100%"><option value="low">Low: quick and cheap</option><option value="medium">Medium</option>
+              <option value="high">High: recommended</option><option value="xhigh">Extra high</option><option value="max">Max: most thorough</option></select></div></div>
+          <div class="sfield" style="grid-template-columns:130px minmax(0,1fr)"><label for="co-session">Per session ($)</label>
+            <div class="ctl"><input type="number" id="co-session" class="short" min="0.05" max="50" step="0.25"></div></div>
+          <div class="sfield" style="grid-template-columns:130px minmax(0,1fr)"><label for="co-month">Per month ($)</label>
+            <div class="ctl"><input type="number" id="co-month" class="short" min="0.5" max="1000" step="1"></div></div>
+          <div class="row" style="margin-top:8px"><button class="small" id="co-settings-save">Save limits</button></div>
+          <div class="msg" id="co-settings-msg"></div>
+          <p class="hint">A session stops by itself at its limit, and no session starts once the monthly limit is reached. A full review usually costs
+            well under a dollar on Opus at High effort.</p>
+        </div>
+        <div class="panel">
+          <h2>Past sessions</h2>
+          <div class="tablewrap"><table><thead><tr><th>When</th><th>Asked</th><th class="num">Steps</th><th class="num">Cost</th></tr></thead><tbody id="co-history"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+  </section>
   <!-- SETTINGS -->
   <section class="tab" id="tab-settings">
+    <div class="pagehead"><div><h1>Settings</h1><p>Adjust the running bot, phone access and updates.</p></div></div>
     <div class="panel">
       <div class="row"><h2 style="margin:0">Settings</h2><span class="spacer"></span><button class="small" id="reset">Undo all changes</button></div>
       <div id="settings" style="margin-top:6px"></div>
@@ -609,7 +930,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
         config.yaml is not rewritten here — “Undo all changes” goes back to it. Your account, market, strategy and the risk the
         bot starts with are on the <button class="link" onclick="openTab('setup')">Setup tab</button>; Topstep's own rules never change.</p>
     </div>
-    <div class="panel" style="margin-top:12px" id="phone">
+    <div class="panel" style="margin-top:14px" id="phone">
       <div class="row"><h2 style="margin:0">Phone access (Telegram)</h2><span class="spacer"></span>
         <button class="small primary" id="ph-on">Turn on</button><button class="small danger" id="ph-off" hidden>Turn off</button></div>
       <div class="phonestate" id="ph-state"></div>
@@ -619,7 +940,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
         internet connection; a secure Cloudflare link carries only the dashboard to your phone, with no router changes. On the phone you can
         do everything you can here except switch to LIVE and turn phone access on. In Telegram, /dashboard opens it and /dashboard off turns it off.</p>
     </div>
-    <div class="panel" style="margin-top:12px" id="updates">
+    <div class="panel" style="margin-top:14px" id="updates">
       <div class="row"><h2 style="margin:0">Updates</h2><span class="spacer"></span><button class="small" id="upd-check">Check now</button></div>
       <div id="upd-meta" class="meta" style="margin:6px 0 0"></div>
       <div id="upd-state"></div>
@@ -631,11 +952,11 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
           spellcheck="false" placeholder="github_pat_…"><button class="small" id="upd-token-save">Save token</button></div>
       </div>
       <ul id="upd-changes" class="changes"></ul>
-      <div class="row" id="upd-actions" style="margin-top:12px" hidden>
+      <div class="row" id="upd-actions" style="margin-top:14px" hidden>
         <button class="small primary" id="upd-now">Install now</button>
         <button class="small" id="upd-tonight">Install after the close</button>
       </div>
-      <div class="row" id="upd-sched" style="margin-top:12px" hidden>
+      <div class="row" id="upd-sched" style="margin-top:14px" hidden>
         <span class="meta" id="upd-sched-txt"></span><button class="small" id="upd-cancel">Cancel</button>
       </div>
       <p class="hint" id="upd-hint"></p>
@@ -644,7 +965,8 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 
   <!-- SETUP (what the setup wizard used to ask in the console window) -->
   <section class="tab" id="tab-setup">
-    <div class="panel welcome" id="su-welcome" hidden>
+    <div class="pagehead"><div><h1>Setup</h1><p>Login, accounts, market, strategy, risk and alerts.</p></div></div>
+    <div class="panel welcome" id="su-welcome" hidden style="margin-bottom:14px">
       <h2 class="steptitle">Welcome to Topstep Bot</h2>
       <p>Fill in the four steps below and press <b>Save</b>, then press <b>Start</b> at the top. The bot starts in
         <b>Paper</b> mode: real prices, simulated orders. Everything here can be changed later.</p>
@@ -659,7 +981,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
           fix only the settings on this page and keep the rest of your file.</span></label>
     </div>
 
-    <div class="panel" style="margin-top:12px">
+    <div class="panel" style="margin-top:14px">
       <h2 class="steptitle"><span class="stepnum">1</span>TopstepX login</h2>
       <p class="hint" style="margin:0 0 6px">You need a TopstepX API subscription (TopstepX &gt; Settings &gt; API; Topstep traders get
         50% off with code <b>topstep</b>). Create an API key on the same page.</p>
@@ -693,7 +1015,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
       </div>
     </div>
 
-    <div class="panel" style="margin-top:12px">
+    <div class="panel" style="margin-top:14px">
       <h2 class="steptitle"><span class="stepnum">2</span><span id="su-acct-title">Account</span></h2>
       <p class="hint" style="margin:0 0 4px">What TopstepX reports for each account, read with its API key: balance, whether it
         can trade, open positions and orders, today's trades. Checked when you open this tab.</p>
@@ -774,7 +1096,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
         <div class="help">Chosen when the Express Funded Account was activated.</div></div>
     </div>
 
-    <div class="panel" style="margin-top:12px">
+    <div class="panel" style="margin-top:14px">
       <h2 class="steptitle"><span class="stepnum">3</span>What to trade</h2>
       <div class="sfield"><label for="su-symbol">Market</label>
         <div class="ctl"><select id="su-symbol"></select></div><div class="help" id="su-symbol-help"></div></div>
@@ -782,7 +1104,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
         <div class="ctl"><select id="su-strategy"></select></div><div class="help" id="su-strategy-help"></div></div>
     </div>
 
-    <div class="panel" style="margin-top:12px">
+    <div class="panel" style="margin-top:14px">
       <h2 class="steptitle"><span class="stepnum">4</span>Risk</h2>
       <p class="hint" style="margin:0 0 4px" id="su-risk-intro"></p>
       <div class="sfield"><label for="su-risk">Risk per trade ($)</label>
@@ -803,11 +1125,11 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
       <div class="msg" id="su-save-msg"></div>
     </div>
 
-    <div class="panel" style="margin-top:12px">
+    <div class="panel" style="margin-top:14px">
       <h2 class="steptitle">Alerts and remote control <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
       <h3>Telegram</h3>
       <div id="su-tg-on" hidden>
-        <div class="row"><span class="connected">✔ Connected</span><span class="meta" id="su-tg-chat"></span></div>
+        <div class="row"><span class="connected">Connected</span><span class="meta" id="su-tg-chat"></span></div>
         <label class="checkline" style="margin-top:8px"><input type="checkbox" id="su-tg-ctl">
           <span>Let Telegram control the bot (status, pause, flatten, start and stop, settings). Off = alerts only.</span></label>
         <div class="row" style="margin-top:8px"><button class="small" id="su-tg-test">Send a test message</button>
@@ -836,7 +1158,7 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
       <div class="msg" id="su-dc-msg"></div>
     </div>
 
-    <div class="panel" style="margin-top:12px">
+    <div class="panel" style="margin-top:14px">
       <h2 class="steptitle">Start with Windows <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
       <label class="checkline" style="margin-top:6px"><input type="checkbox" id="su-auto">
         <span>Start Topstep Bot about 30 seconds after I sign in to Windows, and start the bot in the mode used last.
@@ -847,18 +1169,20 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 
   <!-- LOGS -->
   <section class="tab" id="tab-logs">
+    <div class="pagehead"><div><h1>Logs</h1><p>Bot process events, warnings and the latest log.</p></div></div>
     <div class="grid two">
       <div class="panel"><h2>Bot process events</h2><div class="feed" id="ctlevents"></div></div>
       <div class="panel"><h2>Recent warnings &amp; errors</h2><pre id="log-errors">…</pre></div>
     </div>
-    <div class="panel" style="margin-top:12px" id="crashpanel" hidden><h2>Latest crash report</h2><pre id="log-crash"></pre></div>
-    <div class="panel" style="margin-top:12px">
+    <div class="panel" style="margin-top:14px" id="crashpanel" hidden><h2>Latest crash report</h2><pre id="log-crash"></pre></div>
+    <div class="panel" style="margin-top:14px">
       <div class="row"><h2 style="margin:0" id="logtitle">Bot log (latest)</h2><span class="spacer"></span><button class="small" id="reloadlogs">Refresh</button></div>
       <pre id="log-bot" style="margin-top:8px">…</pre>
       <p class="hint" id="logfolder"></p>
     </div>
   </section>
 </main>
+</div>
 <div class="toast" id="toast"></div>
 <div class="modal" id="modal" hidden><div class="box" role="dialog" aria-modal="true"><p id="modal-text"></p>
   <div class="row"><span class="spacer"></span><button id="modal-no">Cancel</button><button class="primary" id="modal-yes">OK</button></div></div></div>
@@ -977,11 +1301,9 @@ const store = {get(k) { try { return localStorage.getItem(k); } catch (e) { retu
 // ---- theme: follow the system, or a remembered light/dark choice
 function applyTheme(t) { if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
   else delete document.documentElement.dataset.theme;
-  $("theme").textContent = t === "light" ? "☀" : t === "dark" ? "☾" : "◐";
-  $("theme").title = t === "light" ? "Light theme (click for dark)" : t === "dark" ? "Dark theme (click to follow your system)" : "Following your system theme (click for light)"; }
+  document.querySelectorAll("[data-theme-set]").forEach(b => b.classList.toggle("on", b.dataset.themeSet === (t === "light" || t === "dark" ? t : ""))); }
 applyTheme(store.get("tsb-theme"));
-$("theme").onclick = () => { const cur = store.get("tsb-theme"); const next = cur === "light" ? "dark" : cur === "dark" ? "" : "light";
-  store.set("tsb-theme", next); applyTheme(next); };
+document.querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { store.set("tsb-theme", b.dataset.themeSet); applyTheme(b.dataset.themeSet); });
 
 // ---- tabs (the open tab is kept in the address, so a reload stays put)
 const tabOpen = name => !!$("tab-" + name)?.classList.contains("on");
@@ -994,6 +1316,8 @@ function showTab(name) {
   if (name === "trade") loadTicket();
   if (name === "knowledge") { loadInsights(true); loadBrief(true); }
   if (name === "setup") loadSetup(false);
+  if (name === "lab") loadLab(true);
+  if (name === "coach") loadCoach(true);
 }
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 const openTab = showTab;
@@ -1113,8 +1437,8 @@ function renderTop(s) {
   const b = s.bot;
   $("meta").textContent = b ? `${b.account} · ${b.plan} · ${b.contract} ${b.timeframe}m · ${b.time}` : (c.telegram ? "Telegram control on" : "");
   const lp = $("logpill");
-  if (s.log) { lp.textContent = `log: ${plural(s.log.errors, "error")}, ${plural(s.log.warnings, "warning")}`;
-    lp.style.color = s.log.errors ? css("--crit") : ""; } else { lp.textContent = "logs"; lp.style.color = ""; }
+  if (s.log) { lp.textContent = `Logs: ${plural(s.log.errors, "error")}, ${plural(s.log.warnings, "warning")}`;
+    lp.style.color = s.log.errors ? css("--crit") : ""; } else { lp.textContent = "Logs"; lp.style.color = ""; }
 
   // banner: anything you should know right now
   const bn = $("banner"); let html = "", cls = "";
@@ -1165,7 +1489,7 @@ function tickClock() {
     const soon = left > 0 && left < 15 * 60000 && ["market", "entries", "flatten", "topstep"].includes(e.key) && !/open|starts/i.test(e.label);
     return `<div class="c${soon ? " soon" : ""}" title="${esc(e.detail)}"><div class="cl">${esc(e.label)}</div><div class="cv">${fmtLeft(left)}</div>
       <div class="cs">at ${esc(e.local)}</div></div>`; }).join("");
-  $("clock").innerHTML = state + nextTile(now) + evs + (c.holiday ? `<div class="holiday">⚠ ${esc(c.holiday)}</div>` : "");
+  $("clock").innerHTML = state + nextTile(now) + evs + (c.holiday ? `<div class="holiday">${esc(c.holiday)}</div>` : "");
   tickFirst();
 }
 // the bot's own estimate of its next trade (forecast.py): a countdown tile next to the market's
@@ -1322,7 +1646,7 @@ function renderSetups(b) {
       <ul class="conds">${i.conditions.map(c => `<li class="${c.met ? "met" : ""}">${esc(c.text)}</li>`).join("")}</ul>
       <dl><dt>Entry</dt><dd>${entry}</dd><dt>Stop</dt><dd>${i.stop != null ? px(p.stop ?? i.stop) : "set when it fires"}</dd>
         <dt>Target</dt><dd>${(p.target ?? i.target) != null ? px(p.target ?? i.target) : "trail / session end"}</dd><dt>Size</dt><dd>${size}</dd></dl>
-      ${skip ? `<div class="blk">⚠ The bot would skip it: ${esc(skip)}</div>` : ""}
+      ${skip ? `<div class="blk">The bot would skip it: ${esc(skip)}</div>` : ""}
       ${i.note ? `<div class="why">${esc(i.note)}</div>` : ""}
       ${i.stop != null && !skip && !(b.manual_block) ? `<div class="row" style="margin-top:8px"><button class="small" data-setup="${esc(i.key)}"
         title="Fill the trade ticket with this setup's side, stop and target. A manual trade enters at the market price now, not at the setup's trigger.">Open in trade ticket</button></div>` : ""}
@@ -1436,7 +1760,7 @@ function renderTicket() {
         <span>market ~${px(d.price)}${p.limit != null ? `, fills no worse than ${px(p.limit)}` : ""}</span></div>
       <div class="line"><span>Stop ${px(p.stop)} (${p.stop_ticks} ticks)</span><span class="neg">risk ${money(p.risk_usd)}</span></div>
       <div class="line"><span>${p.target != null ? `Target ${px(p.target)}` : "No target"}</span><span class="pos">${p.reward_usd != null ? `reward ${money(p.reward_usd)}` : ""}${p.rr != null ? ` · ${p.rr}R` : ""}</span></div>`
-      + p.notes.map(n => `<div class="warnline">⚠ ${esc(cap(n))}</div>`).join("");
+      + p.notes.map(n => `<div class="warnline">${esc(cap(n))}</div>`).join("");
   }
   tk("summary").innerHTML = html;
   tk("block").hidden = !d.blocked; tk("block").textContent = cap(d.blocked || "");
@@ -1457,7 +1781,7 @@ function renderKnowledgePanel(d) {
   if (!k.enabled) html += `<p class="hint">The knowledge base is turned off (knowledge.enabled).</p>`;
   if (k.strategies.length) {
     html += `<h3>Strategies at ${esc(k.slot)} · ${esc(k.regime)}</h3>` + k.strategies.slice(0, 6).map(s =>
-      `<div class="kbrow" title="${esc(s.why)}"><span><span class="kb ${s.allowed ? "ok" : s.level !== "unproven" ? "bad" : "unk"}">${s.allowed ? "✔" : s.level !== "unproven" ? "✘" : "?"}</span> ${esc(s.title)}</span>
+      `<div class="kbrow" title="${esc(s.why)}"><span><span class="kb ${s.allowed ? "ok" : s.level !== "unproven" ? "bad" : "unk"}">${s.allowed ? "on" : s.level !== "unproven" ? "off" : "new"}</span> ${esc(s.title)}</span>
         <span>${s.n ? `${signed(s.mean_r)}R · ${s.n}` : "no data"}</span></div>`).join("");
   }
   if (k.sides) {
@@ -1516,7 +1840,7 @@ function renderIdeas(b) {
     const half = Math.max(1, Math.floor(r.size / 2));
     const sum = n => esc(`${r.side} ${n} ${b.contract} (${r.title})`);
     return `<div class="idea">
-      <div class="t"><span>${r.active ? "★ " : ""}${esc(r.title)}</span><span class="side-${esc(r.side)}">${esc(r.side)} ${r.size || "–"}</span></div>
+      <div class="t"><span>${esc(r.title)}${r.active ? ' <span class="tag auto">auto</span>' : ""}</span><span class="side-${esc(r.side)}">${esc(r.side)} ${r.size || "–"}</span></div>
       <div class="why">${esc(r.reason)}</div>
       <dl><dt>Entry ~</dt><dd>${px(r.entry)}</dd><dt>Stop</dt><dd>${px(r.stop)}</dd><dt>Target</dt><dd>${r.target != null ? px(r.target) : "trail / session end"}</dd>
         <dt>Risk</dt><dd>${money0(r.risk_usd)}${r.rr ? ` · R:R ${r.rr}` : ""}</dd>${r.note ? `<dt>Note</dt><dd style="white-space:normal">${esc(r.note)}</dd>` : ""}</dl>
@@ -1527,11 +1851,11 @@ function renderIdeas(b) {
     </div>`; }).join("") || `<div class="empty">No live ideas right now — they appear when a strategy signals on a closed bar.
       You can still open your own trade on the <button class="link" onclick="openTab('trade')">Trade tab</button>.</div>`;
   box.querySelectorAll("[data-take]").forEach(x => x.onclick = () => takeIdea(x.dataset.take, +x.dataset.size, x.dataset.sum));
-  $("scoreboard").innerHTML = (recs.summary || []).map(x => `${x.active ? "★ " : ""}${esc(x.title)}: ${plural(x.ideas, "idea")}, ${x.wins}/${x.closed} won,
+  $("scoreboard").innerHTML = (recs.summary || []).map(x => `${x.active ? "Auto · " : ""}${esc(x.title)}: ${plural(x.ideas, "idea")}, ${x.wins}/${x.closed} won,
     <span class="${x.pnl < 0 ? "neg" : x.pnl > 0 ? "pos" : ""}">${money0(x.pnl)}</span>`).join(" &nbsp;·&nbsp; ");
   $("recs").innerHTML = (recs.items || []).map(r => {
     const res = r.result ? `<span class="${r.result === "won" ? "pos" : r.result === "lost" ? "neg" : ""}">${r.outcome_usd != null ? money0(r.outcome_usd) : (r.outcome_r ?? 0) + "R"}${r.hypothetical ? "*" : ""}</span>` : "–";
-    const tag = r.strategy === "manual" ? `<span class="tag manual">you</span> ` : r.active ? `<span class="tag auto">★</span> ` : "";
+    const tag = r.strategy === "manual" ? `<span class="tag manual">you</span> ` : r.active ? `<span class="tag auto">auto</span> ` : "";
     return `<tr><td>${esc(r.time)}</td><td>${tag}${esc(r.title)}</td><td class="side-${esc(r.side)}">${esc(r.side)}</td>
       <td class="num">${r.size || "–"}</td><td class="num">${px(r.entry)}</td><td class="num">${px(r.stop)}</td><td class="num">${px(r.target)}</td>
       <td class="num">${money0(r.risk_usd)}</td><td class="num">${r.rr ?? "–"}</td><td>${esc(r.status)}${r.result ? " · " + esc(r.result) : ""}</td>
@@ -1562,7 +1886,7 @@ function renderPick(p) {
   const rows = [...p.candidates].sort((a, b) => (b.r_per_day ?? -99) - (a.r_per_day ?? -99));
   $("mk-pick").innerHTML = `<p style="margin:4px 0 8px"><b>${esc(p.symbol)}</b> - ${esc(p.reason)} <span class="meta">(${esc(p.at.replace("T", " "))})</span></p>
     ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Market</th><th class="num">R / day</th><th class="num">$ / day</th><th class="num">Trades</th><th class="num">Won</th><th>Note</th></tr></thead><tbody>
-    ${rows.map(c => `<tr${c.symbol === p.symbol ? ' class="on"' : ""}><td>${c.symbol === p.symbol ? "▶ " : ""}${esc(c.symbol)}</td>
+    ${rows.map(c => `<tr${c.symbol === p.symbol ? ' class="on"' : ""}><td>${c.symbol === p.symbol ? "<b>" + esc(c.symbol) + "</b>" : esc(c.symbol)}</td>
       <td class="num ${c.r_per_day > 0 ? "pos" : c.r_per_day < 0 ? "neg" : ""}">${c.r_per_day != null ? (c.r_per_day > 0 ? "+" : "") + c.r_per_day.toFixed(2) : "–"}</td>
       <td class="num">${c.usd_per_day != null ? money0(c.usd_per_day) : "–"}</td><td class="num">${c.trades || 0}${c.test_days ? ` / ${c.test_days}d` : ""}</td>
       <td class="num">${c.win_rate != null ? Math.round(c.win_rate * 100) + "%" : "–"}</td><td class="meta">${esc(c.note)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
@@ -1581,7 +1905,7 @@ function renderMarket(b) {
       + (f.range_pct != null ? `; today so far: ${Math.round(f.range_pct * 100)}%` : "") : "waiting for the research library's daily history"]];
   $("mk-today").innerHTML = `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` +
     (m.notes.length ? `<ul class="plain meta" style="margin-top:10px">${m.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : "");
-  const levels = [...f.levels]; if (f.price != null) levels.push({name: "▶ now", price: f.price, distance: null, now: true});
+  const levels = [...f.levels]; if (f.price != null) levels.push({name: "Now", price: f.price, distance: null, now: true});
   levels.sort((a, b) => b.price - a.price);
   $("mk-levels").innerHTML = levels.length ? `<div class="lv">${levels.map(l => `<span class="${l.now ? "now" : ""}">${esc(l.name)}</span><span class="px ${l.now ? "now" : ""}">${l.price}</span>
     <span class="dist">${l.distance != null ? (l.distance > 0 ? "+" : "") + Number(l.distance).toFixed(2) : ""}</span>`).join("")}</div>`
@@ -1621,8 +1945,7 @@ function renderKnowledge(b) {
   head.innerHTML = `<tr><th>Strategy</th>${k.slots.map(s => `<th class="${s === k.now.slot ? "now" : ""}">${esc(s)}</th>`).join("")}<th class="num">overall</th><th class="num" title="Live observations only: days with a market-moving report vs days without">news / quiet days</th></tr>`;
   body.innerHTML = k.strategies.map(row => `<tr><td>${esc(row.title)}</td>${k.slots.map(s => `<td class="${s === k.now.slot ? "now" : ""}"><div class="kb-cell">${
     k.regimes.map(rg => { const cell = row.cells[s + "|" + rg]; const cls = cell.allowed ? "ok" : cell.level !== "unproven" ? "bad" : "unk";
-      const mark = cell.allowed ? "✔" : cell.level !== "unproven" ? "✘" : "?";
-      return `<span class="kb ${cls}" title="${esc(cell.why)}">${mark} ${esc(rg)} ${kbCell(cell, cell.cell_n)}</span>`; }).join("")
+      return `<span class="kb ${cls}" title="${esc(cell.why)}">${esc(rg)} ${kbCell(cell, cell.cell_n)}</span>`; }).join("")
     }</div></td>`).join("")}<td class="num">${row.overall.n ? `${signed(row.overall.mean_r)}R (${row.overall.n})` : "–"}</td>
     <td class="num">${[row.news_days, row.quiet_days].map(x => x && x.n ? `${signed(x.mean_r)}R (${x.n})` : "–").join(" / ")}</td></tr>`).join("");
 
@@ -1776,7 +2099,7 @@ async function saveSetting(key, el) {
   const p = await post("action/preview_setting", {key, value});
   if (p.ok === false) { toast(p.message, true); return; }
   if (!p.changed) { toast(`${p.label} is already ${p.new ?? "off"}`); return; }
-  if (!await ask(`Change ${p.label}: ${p.old ?? "off"} → ${p.new ?? "off"}?${p.riskier ? "\n\n⚠ This increases your risk." : ""}`)) {
+  if (!await ask(`Change ${p.label}: ${p.old ?? "off"} → ${p.new ?? "off"}?${p.riskier ? "\n\nThis increases your risk." : ""}`)) {
     el.dataset.dirty = ""; settingsBuilt = false; refresh(); return; }
   el.dataset.dirty = ""; run("action/set_setting", {key, value});
 }
@@ -1825,7 +2148,7 @@ function renderUpdates(u) {
     (info.exact ? "" : `<div class="meta" style="margin-top:4px">This copy was downloaded as a ZIP, so its exact version is unknown: installing makes it identical to the latest ${esc(u.branch)} (${plural(info.file_count, "file")} differ). The latest changes:</div>`) +
     (info.dependencies ? `<div class="warnline">It also installs new Python packages.</div>` : "") +
     (info.problem ? `<div class="warnline">Can't install it yet: ${esc(info.problem)}.</div>` : "") + `</div>`;
-  else if (info) html = `<div class="summary">✅ Up to date.</div>`;
+  else if (info) html = `<div class="summary">Up to date.</div>`;
   if (u.message && !UPDATING) html += `<p class="hint">${esc(u.message)}</p>`;
   $("upd-state").innerHTML = html;
   $("upd-token-box").hidden = PHONE || !(info && info.needs_token) || !!u.busy;  // a GitHub token is entered on the PC
@@ -1848,7 +2171,7 @@ function renderUpdates(u) {
     bn.hidden = false;
     const first = info.changes[0], others = (info.exact ? info.change_count : info.changes.length) - 1;
     const what = first ? `${first.title}${others > 0 ? ` and ${plural(others, "more change")}` : ""}` : u.headline;
-    bn.innerHTML = `<b>⬆ Update available</b><span class="meta">${esc(what)}. Nothing installs until you choose.</span><span class="spacer"></span>
+    bn.innerHTML = `<b>Update available</b><span class="meta">${esc(what)}. Nothing installs until you choose.</span><span class="spacer"></span>
       <button class="small primary" id="upd-see">See what's new</button><button class="small" id="upd-later">Later</button>`;
     $("upd-see").onclick = () => { openTab("settings"); $("updates").scrollIntoView({behavior: "smooth"}); };
     $("upd-later").onclick = () => { store.set("tsb-upd-later", info.latest); bn.hidden = true; };
@@ -1860,7 +2183,7 @@ function renderPhone(p, viewer) {
   if (!p) return;
   const on = p.state === "on", pill = $("phonepill");
   pill.hidden = !(p.enabled || PHONE);
-  pill.textContent = PHONE ? "📱 On your phone" : on ? "📱 Phone link on" : p.state === "error" ? "📱 Phone link: trouble" : "📱 Phone link starting…";
+  pill.textContent = PHONE ? "On your phone" : on ? "Phone link on" : p.state === "error" ? "Phone link: trouble" : "Phone link starting…";
   pill.style.color = p.state === "error" ? css("--warn") : "";
   const [color, text] = on ? ["--good", `On. Open it from the Dashboard button in your Telegram chat with the bot.${p.in_use && !PHONE ? " Open on your phone right now." : ""}`]
     : p.state === "starting" ? ["--warn", p.detail || "Starting…"]
@@ -1927,7 +2250,7 @@ async function checkAccounts(force) {
 function acStatus(r) {
   if (!r) return `<span class="st idle">not checked</span>`;
   if (r.issues && r.issues.length) return `<span class="st bad">${r.topstepx ? "needs attention" : "not connected"}</span>`;
-  return `<span class="st ok">✔ connected</span>`;
+  return `<span class="st ok">connected</span>`;
 }
 function acCard(name, r, prof) {
   const t = r && r.topstepx, line = (k, v) => `<dt>${esc(k)}</dt><dd>${v}</dd>`;
@@ -1975,7 +2298,7 @@ function renderKeys() {
   const rep = SU.report, status = name => rep && rep.keys.find(k => k.name === name);
   su("keys").innerHTML = SU.keys.map(name => {
     const k = status(name);
-    const st = !k ? `<span class="st idle">not checked</span>` : k.ok ? `<span class="st ok">✔ works · sees ${k.accounts}</span>` : `<span class="st bad">${esc(k.error)}</span>`;
+    const st = !k ? `<span class="st idle">not checked</span>` : k.ok ? `<span class="st ok">works · sees ${k.accounts}</span>` : `<span class="st bad">${esc(k.error)}</span>`;
     return `<div class="keyrow"><b>${name === "main" ? "main (above)" : esc(name)}</b><span class="meta">${k ? esc(k.username) + " · " + esc(k.key) : ""}</span>${st}
       <span class="spacer"></span>${name === "main" ? "" : `<button class="small" data-keyremove="${esc(name)}">Remove</button>`}</div>`; }).join("");
   su("keys").querySelectorAll("[data-keyremove]").forEach(b => b.onclick = async () => {
@@ -2264,6 +2587,231 @@ async function loadLogs() {
   } catch (e) { /* offline banner covers it */ }
 }
 
+// ---- Simulation Lab (simlab.py, run by the controller's lab_service.py)
+let LAB = null, labAt = 0, labBusy = false;
+const VERDICTS = {edge: "Edge", mixed: "Mixed", losing: "Losing", thin: "Too few"};
+const pct = v => v == null ? "–" : Math.round(100 * v) + "%";
+async function loadLab(force) {
+  if (labBusy || (!force && Date.now() - labAt < 1500)) return;
+  labBusy = true;
+  try {
+    const d = await post("lab/state");
+    if (d.ok !== false) { LAB = d; labAt = Date.now(); shown("simulations", renderLab); }
+  } finally { labBusy = false; }
+}
+function spark(values) {
+  const w = 96, h = 26, pad = 2;
+  if (!values || values.length < 2) return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"></svg>`;
+  const lo = Math.min(0, ...values), hi = Math.max(0, ...values), span = hi - lo || 1, n = values.length;
+  const x = i => pad + i * (w - 2 * pad) / (n - 1), y = v => h - pad - (v - lo) * (h - 2 * pad) / span;
+  const pts = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" L");
+  const color = values[n - 1] >= 0 ? "var(--pos)" : "var(--neg)", zero = y(0).toFixed(1);
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><line x1="${pad}" x2="${w - pad}" y1="${zero}" y2="${zero}"/>
+    <path class="area" style="fill:${color}" d="M${x(0).toFixed(1)},${zero} L${pts} L${x(n - 1).toFixed(1)},${zero} Z"/>
+    <path class="line" style="stroke:${color}" d="M${pts}"/><circle cx="${x(n - 1).toFixed(1)}" cy="${y(values[n - 1]).toFixed(1)}" r="2" style="fill:${color}"/></svg>`;
+}
+const signedCell = v => `<td class="num ${v > 0 ? "pos" : v < 0 ? "neg" : ""}">${v == null ? "–" : money0(v)}</td>`;
+function renderLab() {
+  const d = LAB; if (!d) return;
+  const rep = d.report, running = d.running;
+  $("lab-run").disabled = running;
+  $("lab-progress").hidden = !running;
+  if (running) {
+    $("lab-stage").textContent = cap(d.stage || "working");
+    $("lab-count").textContent = d.total ? `${d.done} / ${d.total}` : "";
+    $("lab-bar").style.width = (d.total ? Math.round(100 * d.done / d.total) : 2) + "%";
+    $("lab-elapsed").textContent = d.elapsed != null ? fmtLeft(d.elapsed * 1000) + " elapsed" : "";
+  }
+  $("lab-error").hidden = !d.error;
+  $("lab-error").textContent = d.error ? `The last run stopped: ${d.error}` : "";
+  $("lab-empty").hidden = !!rep || running;
+  $("lab-body").hidden = !rep;
+  $("lab-history").textContent = d.history.length ? `Price history on this PC: ${d.history.join(", ")}.`
+    : "No price history on this PC yet. Start the bot once (it downloads history) or run: topstep-bot download --days 60";
+  if (!rep) return;
+  const t = rep.totals, mk = Object.values(rep.markets);
+  $("lk-sims").textContent = t.simulations.toLocaleString();
+  $("lk-sims-sub").textContent = `${rep.playbooks.length} playbooks · ${mk.length} markets`;
+  $("lk-pass").textContent = t.passed; $("lk-fail").textContent = t.failed; $("lk-open").textContent = t.open;
+  $("lk-mc").textContent = t.resampled_paths.toLocaleString();
+  $("lk-days").textContent = Math.max(...mk.map(m => m.days)) + " days";
+  $("lk-days-sub").textContent = `${mk.map(m => m.from).sort()[0]} to ${mk.map(m => m.to).sort().slice(-1)[0]}`;
+  const r = rep.recommendation;
+  $("lab-rec").className = "callout gap-top" + (r.kind === "none" ? " none" : "");
+  $("lab-rec").innerHTML = `<div class="label">${r.kind === "none" ? "No edge found" : "Strongest playbook in this history"}</div><p>${esc(r.text)}</p>` +
+    (r.kind === "playbook" && r.playbook && !r.same && !PHONE ? `<div class="row" style="margin-top:10px"><button class="small primary" data-labuse="${esc(r.playbook.symbol)}|${esc(r.playbook.strategy)}">Trade ${esc(r.playbook.label)}</button>
+      <span class="meta">Saved to config.yaml. It takes effect when the bot restarts.</span></div>` : "");
+  const cur = d.current;
+  $("lab-table").querySelector("tbody").innerHTML = rep.playbooks.map(p => {
+    const mc = p.resampled || {}, runs = p.runs, isCur = cur.symbol === p.symbol && cur.strategy === p.strategy && !cur.auto_pick;
+    const pf = !p.trades ? "–" : p.profit_factor >= 99 ? "no losses" : p.profit_factor.toFixed(2);
+    const resampled = mc.paths ? `<div class="dist" title="${pct(mc.pass)} passed, ${pct(mc.fail)} failed, ${pct(mc.open)} still open after 60 days${mc.median_days_to_pass ? `; median ${mc.median_days_to_pass} days to pass` : ""}">
+      <span class="p" style="width:${100 * mc.pass}%"></span><span class="f" style="width:${100 * mc.fail}%"></span></div>
+      <div class="meta num" style="font-size:11px;margin-top:2px">${pct(mc.pass)} pass · ${pct(mc.fail)} fail</div>` : "–";
+    return `<tr class="${isCur ? "on" : ""}"><td><b>${esc(p.symbol)}</b></td><td>${esc(p.strategy)}${isCur ? ' <span class="tag auto">current</span>' : ""}</td>
+      <td><span class="vd ${esc(p.verdict)}" title="${esc(p.why)}">${esc(VERDICTS[p.verdict] || p.verdict)}</span></td>
+      ${signedCell(p.net)}${signedCell(p.per_day)}<td class="num">${p.trades}</td><td class="num">${pct(p.win_rate)}</td><td class="num">${pf}</td>
+      ${signedCell(p.halves[0])}${signedCell(p.halves[1])}<td class="num">${p.max_drawdown ? money0(-p.max_drawdown) : "–"}</td>
+      <td class="num">${runs.passed} / ${runs.failed} / ${runs.open}</td><td>${resampled}</td><td>${spark(p.equity)}</td>
+      <td>${isCur || PHONE ? "" : `<button class="small" data-labuse="${esc(p.symbol)}|${esc(p.strategy)}" title="Make this the bot's market and strategy">Use</button>`}</td></tr>`;
+  }).join("");
+  document.querySelectorAll("[data-labuse]").forEach(b => b.onclick = () => useLabPlaybook(...b.dataset.labuse.split("|")));
+  $("lab-meta").textContent = `${rep.plan} Combine: profit target ${money0(rep.profit_target)}, Maximum Loss Limit ${money0(rep.max_loss_limit)}, `
+    + `risk ${money0(rep.risk_per_trade)} per trade, ${rep.timeframe}-minute bars. Ran ${when(rep.generated)} in ${Math.round(rep.seconds)} s. `
+    + "Net and halves cover each playbook's whole history after fees and slippage; Combines are fresh accounts started on different days.";
+  const h = rep.holdout;
+  $("lab-holdout").innerHTML = h ? `<span class="st ${h.held_up ? "ok" : "warn"}">${h.held_up ? "held up" : "did not hold up"}</span><p style="margin:8px 0 0">${esc(h.text)}</p>`
+    : "Not enough trades for a held-out check yet.";
+  $("lab-caveats").innerHTML = rep.caveats.map(c => `<li>${esc(c)}</li>`).join("");
+  const rows = rep.runs || [];
+  $("lab-runcount").textContent = rows.length;
+  $("lab-runs").querySelector("tbody").innerHTML = rows.slice().sort((a, b) => (a.symbol + a.strategy + a.start).localeCompare(b.symbol + b.strategy + b.start)).map(x => `<tr>
+    <td>${esc(x.symbol)}</td><td>${esc(x.strategy)}</td><td class="num">${esc(x.start)}</td><td class="num">${esc(x.end)}</td>
+    <td class="status-${esc(x.status)}">${esc(x.status)}</td><td class="num">${x.days}</td>${signedCell(x.profit)}<td class="num">${x.trades}</td>
+    ${signedCell(x.worst_day)}<td class="num">${x.max_drawdown ? money0(-x.max_drawdown) : "–"}</td><td class="note">${esc(x.detail)}</td></tr>`).join("");
+  $("lab-taught").textContent = (d.taught || []).length ? "Long-run memory taught: " + d.taught.map(x => x.error ? `${x.symbol} (${x.error})`
+    : `${x.symbol} ${x.observations.toLocaleString()} signal outcomes over ${x.days} days`).join(" · ") + "." : "";
+}
+async function useLabPlaybook(symbol, strategy) {
+  if (!await ask(`Make ${symbol} with ${strategy} the bot's market and strategy?\n\nThis is saved to config.yaml (the old file is kept as config.yaml.bak). A running bot keeps its current settings until you restart it.`)) return;
+  const d = await post("lab/apply", {symbol, strategy});
+  toast(d.message || "Saved", d.ok === false); loadLab(true); refresh();
+}
+$("lab-run").onclick = async () => {
+  $("lab-run").disabled = true;
+  const d = await post("lab/run", {starts: +$("lab-starts").value, teach: $("lab-teach").checked});
+  toast(d.message || "Started", d.ok === false); loadLab(true);
+};
+function renderLabSummary(l) {
+  if (!l) return;
+  const flag = $("labflag"); flag.hidden = !l.running; flag.textContent = "run";
+  const box = $("lab-mini-body");
+  if (l.running) { box.innerHTML = `<div class="working" style="margin:0"><span class="pulse"></span><span>${esc(cap(l.stage || "working"))}</span>
+    <span class="spacer"></span><span class="num">${l.total ? `${l.done} / ${l.total}` : ""}</span></div>`; return; }
+  if (!l.generated) { box.innerHTML = `No simulations yet. <button class="link" onclick="openTab('lab')">Run the Simulation Lab</button> to replay the bot through history as fresh Combines.`; return; }
+  const t = l.totals, r = l.recommendation;
+  box.innerHTML = `<div class="row" style="gap:6px 16px;margin-bottom:8px"><span><b class="num">${t.simulations}</b> Combines</span><span class="pos"><b class="num">${t.passed}</b> passed</span>
+    <span class="neg"><b class="num">${t.failed}</b> failed</span><span><b class="num">${t.open}</b> open</span></div>
+    <div>${esc(r.text)}</div><div class="hint" style="margin-top:6px">Last run ${esc(when(l.generated))}</div>`;
+}
+
+function coMsg(id, text, ok) { const e = $(id); e.textContent = text || ""; e.className = "msg" + (text ? (ok === false ? " bad" : ok ? " ok" : "") : ""); }
+
+// ---- AI coach (coach.py through lab_service.py): Claude reviews the evidence, tests ideas and proposes changes
+let COACH = null, coachAt = 0, coachBusy = false, coachFormFilled = false;
+async function loadCoach(force) {
+  if (coachBusy || (!force && Date.now() - coachAt < 1500)) return;
+  coachBusy = true;
+  try {
+    const d = await post("coach/state");
+    if (d.ok !== false) { COACH = d; coachAt = Date.now(); shown("coach", renderCoach); }
+  } finally { coachBusy = false; }
+}
+// A small Markdown reader for the coach's reports: headings, lists, paragraphs, bold, italics and code. Text is escaped first.
+function mdToHtml(md) {
+  const inline = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*(?!\s)(.+?)\*/g, "$1<i>$2</i>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  const out = []; let list = null, para = [];
+  const flushPara = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
+  const flushList = () => { if (list) { out.push(`<${list.tag}>${list.items.map(i => `<li>${inline(i)}</li>`).join("")}</${list.tag}>`); list = null; } };
+  for (const raw of String(md || "").split(/\r?\n/)) {
+    const line = raw.trimEnd(), h = /^(#{1,4})\s+(.*)$/.exec(line), ul = /^\s*[-*]\s+(.*)$/.exec(line), ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    if (h) { flushPara(); flushList(); out.push(`<h3>${inline(h[2])}</h3>`); }
+    else if (ul || ol) { flushPara(); const tag = ul ? "ul" : "ol"; if (!list || list.tag !== tag) { flushList(); list = {tag, items: []}; } list.items.push((ul || ol)[1]); }
+    else if (!line.trim()) { flushPara(); flushList(); }
+    else if (list && /^\s{2,}/.test(raw)) list.items[list.items.length - 1] += " " + line.trim();
+    else { flushList(); para.push(line.trim()); }
+  }
+  flushPara(); flushList();
+  return out.join("");
+}
+function renderCoach() {
+  const c = COACH; if (!c) return;
+  $("co-model-line").textContent = `${(c.models[c.model] || c.model).split(" - ")[0]} · ${c.effort} effort`;
+  $("co-key-state").innerHTML = c.key_saved ? `<span class="st ok">key saved</span> <span class="meta">Stored in .env on this PC.</span>`
+    : `<span class="st warn">no key yet</span> <span class="meta">Create a key on the Claude Console, then paste it below.</span>`;
+  $("co-key-form").hidden = PHONE;
+  $("co-key-remove").hidden = !c.key_saved;
+  $("co-key").placeholder = c.key_saved ? "saved - paste a new key to replace it" : "sk-ant-…";
+  const busy = c.running;
+  $("co-run").disabled = busy || !c.key_saved || !c.enabled || c.spent_month >= c.monthly_budget_usd;
+  $("co-cancel").hidden = !busy;
+  $("co-working").hidden = !busy;
+  if (busy) {
+    $("co-stage").textContent = cap(c.stage || "working");
+    $("co-live").textContent = `${c.elapsed != null ? fmtLeft(c.elapsed * 1000) : ""} · $${(c.session_cost || 0).toFixed(2)}`;
+  }
+  $("co-error").hidden = !c.error || busy;
+  $("co-error").textContent = c.error || "";
+  $("co-cost-note").textContent = !c.enabled ? "The coach is turned off (coach.enabled in config.yaml)."
+    : !c.key_saved ? "Add a Claude API key first." : c.spent_month >= c.monthly_budget_usd ? "This month's limit is reached: raise it to continue."
+    : `Stops by itself at $${c.max_session_usd.toFixed(2)}.`;
+  const L = c.latest;
+  $("co-report").innerHTML = L && L.report ? mdToHtml(L.report) : `<div class="empty">${L ? "That session ended without a report." : "No coaching session yet. Add your key, then press Start session."}</div>`;
+  $("co-report-meta").textContent = L ? `${when(L.started)} · ${L.turns} steps · ${L.tools} tool calls · $${(L.cost_usd || 0).toFixed(2)}${L.stopped ? ` · ended: ${L.stopped}` : ""}` : "";
+  const props = c.proposals || [];
+  $("co-proposals").innerHTML = props.length ? props.map(p => `<div class="proposal ${esc(p.status)}">
+      <div class="row"><span class="t">${esc(p.title)}</span><span class="spacer"></span>${p.status === "pending"
+        ? (PHONE ? `<span class="st info">waiting</span>` : `<button class="small primary" data-prop="${esc(p.id)}" data-act="apply">Apply</button><button class="small" data-prop="${esc(p.id)}" data-act="dismiss">Dismiss</button>`)
+        : `<span class="st ${p.status === "applied" ? "ok" : "idle"}">${esc(p.status)}</span>`}</div>
+      <p>${esc(p.reason)}</p>${p.evidence ? `<p class="ev">Evidence: ${esc(p.evidence)}</p>` : ""}<p class="ev">${esc(when(p.at))}</p></div>`).join("")
+    : `<div class="empty">None yet.</div>`;
+  $("co-proposals").querySelectorAll("[data-prop]").forEach(b => b.onclick = () => decideProposal(b.dataset.prop, b.dataset.act));
+  const lessons = c.lessons || [];
+  $("co-lessons-meta").textContent = lessons.length ? `${lessons.length} kept` : "";
+  $("co-lessons").innerHTML = lessons.length ? lessons.map(x => `<div class="lesson"><span class="conf ${esc(x.confidence)}">${esc(x.confidence)}</span>
+      <div>${esc(x.text)}</div>${PHONE ? "<span></span>" : `<button class="small" data-forget="${esc(x.id)}" title="Remove this lesson from the bot's memory">Forget</button>`}
+      <div class="ev">${esc(x.evidence)} · ${esc(when(x.at))}</div></div>`).join("")
+    : `<div class="empty">None yet. The coach records lessons with their evidence; every later session builds on them.</div>`;
+  $("co-lessons").querySelectorAll("[data-forget]").forEach(b => b.onclick = async () => {
+    if (!await ask("Remove this lesson from the bot's memory?")) return;
+    const d = await post("coach/lesson/forget", {id: b.dataset.forget}); toast(d.message, d.ok === false); loadCoach(true);
+  });
+  const used = c.spent_month / c.monthly_budget_usd;
+  meter("co-spend", used, `$${c.spent_month.toFixed(2)} of $${c.monthly_budget_usd.toFixed(2)}`, used > .9 ? css("--crit") : used > .6 ? css("--warn") : css("--accent"));
+  if (!coachFormFilled) {
+    $("co-model").innerHTML = Object.entries(c.models).map(([k, v]) => option(k, v, k === c.model)).join("");
+    $("co-effort").value = c.effort; $("co-session").value = c.max_session_usd; $("co-month").value = c.monthly_budget_usd;
+    coachFormFilled = true;
+  }
+  ["co-model", "co-effort", "co-session", "co-month", "co-settings-save"].forEach(id => $(id).disabled = PHONE);
+  $("co-history").innerHTML = (c.history || []).map(h => `<tr><td class="num">${esc(h.id.slice(0, 8))}</td><td class="note">${esc(h.question || "Full review")}</td>
+    <td class="num">${h.turns || 0}</td><td class="num">$${(h.cost_usd || 0).toFixed(2)}</td></tr>`).join("") || `<tr><td colspan="4" class="empty">No sessions yet.</td></tr>`;
+}
+async function decideProposal(id, action) {
+  const p = (COACH.proposals || []).find(x => x.id === id); if (!p) return;
+  if (action === "apply" && !await ask(`Apply: ${p.title}?\n\n${p.reason}\n\nThis is saved to config.yaml (the old file is kept as config.yaml.bak). A running bot keeps its current settings until you restart it.`)) return;
+  const d = await post("coach/proposal", {id, action}); toast(d.message, d.ok === false); loadCoach(true); refresh();
+}
+$("co-run").onclick = async () => {
+  const q = $("co-question").value.trim();
+  if (!await ask(`Start a coaching session${q ? "" : " (full review)"}?\n\nIt uses your Claude API credits: at most $${COACH ? COACH.max_session_usd.toFixed(2) : "?"} for this session. It reads the bot's evidence and runs simulations; it never trades or changes a setting by itself.`)) return;
+  $("co-run").disabled = true;
+  const d = await post("coach/run", {question: q}); toast(d.message, d.ok === false); loadCoach(true);
+};
+$("co-cancel").onclick = async () => { const d = await post("coach/cancel"); toast(d.message, d.ok === false); loadCoach(true); };
+$("co-key-save").onclick = async () => {
+  const key = $("co-key").value.trim();
+  $("co-key-save").disabled = true; coMsg("co-key-msg", "Checking the key with Claude…");
+  const d = await post("coach/key", {key});
+  $("co-key-save").disabled = false; coMsg("co-key-msg", d.message, d.ok !== false);
+  if (d.ok !== false) { $("co-key").value = ""; loadCoach(true); }
+};
+$("co-key").addEventListener("keydown", e => { if (e.key === "Enter") $("co-key-save").click(); });
+$("co-key-remove").onclick = async () => {
+  if (!await ask("Remove the Claude API key from this PC? The coach can't run until you add one again.")) return;
+  const d = await post("coach/key/remove"); coMsg("co-key-msg", d.message, d.ok !== false); loadCoach(true);
+};
+$("co-settings-save").onclick = async () => {
+  const d = await post("coach/settings", {model: $("co-model").value, effort: $("co-effort").value,
+    max_session_usd: $("co-session").value, monthly_budget_usd: $("co-month").value});
+  coMsg("co-settings-msg", d.message, d.ok !== false); if (d.ok !== false) { coachFormFilled = false; loadCoach(true); }
+};
+function renderCoachSummary(c) {
+  if (!c) return;
+  const n = $("coachcount");
+  n.hidden = !(c.running || c.pending); n.textContent = c.running ? "on" : c.pending;
+}
+
 // Each part is drawn on its own: one that fails is reported (pageError) and can't leave the rest of the page empty
 function shown(part, draw) { try { draw(); } catch (e) { pageError(`${part}: ${(e && e.message) || e}`); } }
 function render(s) {
@@ -2282,6 +2830,9 @@ function render(s) {
   if (first && s.setup && !s.setup.configured && !ASKED_TAB && !PHONE) showTab("setup");  // first run: straight to setup
   if (tabOpen("knowledge")) { loadInsights(false); loadBrief(false); }
   if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
+  shown("simulation lab", () => renderLabSummary(s.lab)); shown("coach", () => renderCoachSummary(s.coach));
+  if (tabOpen("lab") && s.lab && (s.lab.running || (LAB && LAB.running))) loadLab(false);
+  if (tabOpen("coach") && s.coach && (s.coach.running || (COACH && COACH.running))) loadCoach(false);
 }
 let REFRESHING = false;
 async function refresh() {

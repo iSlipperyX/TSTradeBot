@@ -463,6 +463,65 @@ def cmd_learn(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_simulate(args: argparse.Namespace) -> int:
+    """Simulation Lab: run the real bot through history as fresh Combines started on many days (simlab.py)."""
+    from topstep_bot.simlab import DEFAULT_STARTS, report_text, run_lab, teach
+
+    cfg = _load_account(args, first_if_several=True)
+    if args.show:
+        from topstep_bot.simlab import load_report
+
+        console.print(report_text(load_report(cfg)))
+        return 0
+    starts = max(1, min(30, args.starts or DEFAULT_STARTS))
+    symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else None
+    strategies = [s.strip() for s in args.strategies.split(",")] if args.strategies else None
+    try:
+        with console.status("Running the bot through history as fresh Combines...") as status:
+            def show(done: int, total: int, stage: str) -> None:
+                status.update(f"Simulation Lab: {stage}")
+
+            report = asyncio.run(run_lab(cfg, starts=starts, symbols=symbols, strategies=strategies, progress=show))
+            if not args.no_teach:
+                status.update("Teaching the long-run memory every market's history...")
+                taught = asyncio.run(teach(cfg, symbols))
+            else:
+                taught = []
+    except ValueError as exc:
+        console.print(f"[red]Could not simulate:[/] {exc}")
+        return 1
+    console.print(report_text(report, top=args.top))
+    for t in taught:
+        if "error" in t:
+            console.print(f"[yellow]{t['symbol']}: {t['error']}[/]")
+        else:
+            console.print(f"[dim]Long-run memory {t['symbol']}: {t['observations']:,} signal outcomes from {t['days']} days "
+                          f"({t['from']} to {t['to']}).[/]")
+    console.print(f"[dim]Saved in {cfg.data_path / 'simlab'} (report.json, runs.csv). The dashboard's Simulations tab shows it.[/]")
+    return 0
+
+
+def cmd_coach(args: argparse.Namespace) -> int:
+    """The AI coach (coach.py): Claude reviews the bot's evidence and runs its own simulations."""
+    from topstep_bot.coach import Coach, CoachError
+
+    cfg = _load_account(args, first_if_several=True)
+    coach = Coach(cfg)
+    if args.status:
+        console.print(coach.status_text())
+        return 0
+    question = " ".join(args.question).strip() if args.question else ""
+    try:
+        with console.status("The coach is working (it can take a few minutes)...") as status:
+            session = asyncio.run(coach.run(question, progress=lambda text: status.update(f"Coach: {text}")))
+    except CoachError as exc:
+        console.print(f"[red]{exc}[/]")
+        return 1
+    console.print(session["report"] or "(no report)")
+    console.print(f"[dim]Cost about ${session['cost_usd']:.2f} ({session['model']}). Saved in {coach.folder}.[/]")
+    return 0
+
+
 def cmd_insights(args: argparse.Namespace) -> int:
     """What the bot has learned: results after costs, real fills against simulated ones, market conditions."""
     from topstep_bot.insights import build_report, execution_line, export_csv, hint_line
@@ -1516,6 +1575,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--offline", action="store_true", help="don't download: replay only what is already in the library")
     p.add_argument("-a", "--account", help=account_help)
     p.set_defaults(func=cmd_learn, import_csv=None)
+
+    p = sub.add_parser("simulate", help="Simulation Lab: run the bot through history as fresh Combines started on many days")
+    p.add_argument("--starts", type=int, default=None, help="Combine start days per market and strategy (default 4)")
+    p.add_argument("--symbols", help="markets to simulate, e.g. MNQ,MES (default: every micro with history on this PC)")
+    p.add_argument("--strategies", help="strategies to simulate (default: all)")
+    p.add_argument("--top", type=int, default=8, help="how many playbooks to list")
+    p.add_argument("--no-teach", action="store_true", help="don't replay the history into the long-run memory afterwards")
+    p.add_argument("--show", action="store_true", help="only show the last report")
+    p.add_argument("-a", "--account", help=account_help)
+    p.set_defaults(func=cmd_simulate)
+
+    p = sub.add_parser("coach", help="AI coach: Claude reviews what the bot knows, runs simulations and writes lessons")
+    p.add_argument("question", nargs="*", help="what to look into (default: a full review)")
+    p.add_argument("--status", action="store_true", help="show the coach's setup, spending and latest lessons")
+    p.add_argument("-a", "--account", help=account_help)
+    p.set_defaults(func=cmd_coach)
 
     p = sub.add_parser("update", help="check GitHub for a newer version of the bot and install it")
     p.add_argument("--check", action="store_true", help="only show whether an update is available")

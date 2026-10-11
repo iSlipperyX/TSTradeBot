@@ -89,6 +89,11 @@ REMOTE_ROUTES = {
     ("POST", "/api/updates/cancel"),
     ("POST", "/api/phone/off"),
     ("POST", "/api/page-error"),  # the page tells the PC's log when its own script fails
+    ("POST", "/api/lab/state"),
+    ("POST", "/api/lab/run"),
+    ("POST", "/api/coach/state"),
+    ("POST", "/api/coach/run"),  # the API key, budgets and applying proposals stay on the PC
+    ("POST", "/api/coach/cancel"),
 }
 # The sign-in page, the sign-in itself, and the dashboard page (it holds no token or data: its every request signs in)
 OPEN_ROUTES = {("GET", "/"), ("POST", "/auth"), ("GET", "/app")}

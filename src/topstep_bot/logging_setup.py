@@ -47,6 +47,7 @@ class RedactingFilter(logging.Filter):
         (re.compile(r"(access_token=)[^&\s'\"]+"), r"\1***"),
         (re.compile(r"(Bearer\s+)[A-Za-z0-9._-]+"), r"\1***"),
         (re.compile(r"(discord(?:app)?\.com/api/webhooks/)\S+"), r"\1***"),
+        (re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"), "sk-ant-***"),  # Claude API keys (the AI coach)
         (re.compile(r"(\"?(?:apiKey|api_key|token|newToken)\"?\s*[:=]\s*\"?)[^\s\",}]+"), r"\1***"),
     ]
 
@@ -213,6 +214,16 @@ def install_crash_handlers(log_dir: Path) -> None:
             faulthandler.enable(file=_fault_file)
         except OSError:
             _fault_file = None
+
+
+def add_secret(secret: str | None) -> None:
+    """Mask a secret saved while running (e.g. on the dashboard) in every log handler from now on."""
+    if not secret or len(secret) < 6:
+        return
+    for handler in logging.getLogger().handlers:
+        for f in handler.filters:
+            if isinstance(f, RedactingFilter) and secret not in f.secrets:
+                f.secrets = sorted({*f.secrets, secret}, key=len, reverse=True)
 
 
 def write_crash_report(log_dir: Path, exc_type, exc, tb) -> Path | None:  # noqa: ANN001

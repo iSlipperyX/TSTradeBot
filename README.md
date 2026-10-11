@@ -24,6 +24,21 @@ Other systems: `pip install -e .` then run `topstep-bot` (it starts the dashboar
 
 No bot can guarantee passing the Combine or making a profit, and this one doesn't either.
 
+## New in 2.0
+
+- **A redesigned dashboard** — a trading-desk console: navigation rail, status bar, KPI strip,
+  monospaced figures, and colour used only for state (P&L, risk, mode). Works on a phone too.
+- **Simulation Lab** — replays the bot's real trading code through history as fresh Topstep Combines
+  started on many different days (128 by default, every market × strategy), adds thousands of
+  resampled Combine paths, splits the history in halves and runs a held-out check, then tells you
+  plainly whether any playbook has an edge. One click makes a playbook the bot's.
+  ([guide](docs/HOW_TO_USE.md#34-simulation-lab-hundreds-of-combines-from-history))
+- **AI Coach** — Claude reads what the bot knows, runs its own simulations, records lessons the bot keeps,
+  and proposes changes you approve. Your own Claude API key and prepaid credits, with per-session and
+  monthly spending limits. It can never trade, raise risk or change a setting by itself.
+  ([guide](docs/HOW_TO_USE.md#35-the-ai-coach-claude-teaches-the-bot))
+- `topstep-bot simulate`, `topstep-bot coach`, and `/lab` and `/coach` in Telegram.
+
 ## Features
 
 - **Topstep rules enforced in code** ([TOPSTEP_RULES.md](docs/TOPSTEP_RULES.md), checked Oct 2026) —

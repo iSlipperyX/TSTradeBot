@@ -127,7 +127,7 @@ def test_telegram_commands_never_close_the_bot(workdir, caplog):
                 "api": {"base_url": f"http://127.0.0.1:{api.port}", "user_hub_url": f"{hub}/user",
                         "market_hub_url": f"{hub}/market"},
                 "news": {"enabled": False},
-                "knowledge": {"auto_train": False, "history_days": 30},
+                "knowledge": {"auto_train": False, "history_days": 45},  # 30 calendar days can hold only 20 trading days
                 "service": {"daily_restart_time": "off", "check_in_time": "off"},
                 "dashboard": {"open_browser": False},
             }))
