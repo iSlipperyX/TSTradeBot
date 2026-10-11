@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -243,6 +244,9 @@ class RemoteControl:
             saved = json.loads(self.store.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return []
+        if not isinstance(saved, dict):
+            log.warning("Ignoring %s: not a settings file", self.store)
+            return []
         applied = []
         for key, value in saved.items():
             try:
@@ -254,7 +258,9 @@ class RemoteControl:
     def _save(self) -> None:
         try:
             self.store.parent.mkdir(parents=True, exist_ok=True)
-            self.store.write_text(json.dumps(self.overrides, indent=2), encoding="utf-8")
+            tmp = self.store.with_suffix(".tmp")  # never leave a half-written file: these may lower the risk
+            tmp.write_text(json.dumps(self.overrides, indent=2), encoding="utf-8")
+            os.replace(tmp, self.store)
         except OSError as exc:
             log.warning("Could not save remote settings: %s", exc)
 

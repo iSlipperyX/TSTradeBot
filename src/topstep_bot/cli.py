@@ -1157,7 +1157,7 @@ def cmd_keys(args: argparse.Namespace) -> int:
     console.print(table)
     for name in missing:
         console.print(f"[red]Accounts {', '.join(users[name])} use key '{name}', which isn't stored.[/] "
-                      f"Add it with: topstep-bot keys add {name}")
+                      f"Add it with: topstep-bot keys add {name}", soft_wrap=True)  # keep the command on one line
     console.print("[dim]Add one with 'topstep-bot keys add <name>'. An account uses the key named in its 'login:' "
                   "setting, else a key with the account's own name, else the main key. Keys are only stored in .env.[/]")
     return 1 if missing else 0

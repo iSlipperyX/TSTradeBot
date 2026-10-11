@@ -103,7 +103,7 @@ class LiveRunner:
         self.secrets = secrets
         self.controls = controls or Controls()
         self.client = ProjectXClient(secrets.username, secrets.api_key, cfg.api.base_url, cfg.api.timeout_seconds)
-        self.journal = Journal(cfg.journal_path)
+        self.journal, self.journal_damaged = Journal.open_or_recover(cfg.journal_path)
         who = f"{cfg.active_account}, {cfg.mode}" if cfg.active_account else cfg.mode
         self.notifier = Notifier(cfg.notifications, secrets, prefix=f"Topstep Bot ({who})")
         self.positions: PositionBook | None = None  # cross-account hedge guard
@@ -215,6 +215,7 @@ class LiveRunner:
         core.setups.enabled = True  # the dashboard's Setups panel: note setups forming, firing, cancelled
         for change in core.remote.load_saved():
             log.info("Re-applied remote setting: %s", change)
+        self._report_damaged_journal()
         self._setup_memory()
         await self._setup_knowledge()
         self._catch_up()
@@ -223,6 +224,20 @@ class LiveRunner:
         self._apply_ramp_up()
         self._setup_hedge_guard()
         return core
+
+    def _report_damaged_journal(self) -> None:
+        """The journal holds the trailing MLL floor: if it was damaged, say so loudly and (live) pause new trades."""
+        if self.journal_damaged is None or self.core is None:
+            return
+        core = self.core
+        text = (f"The trade journal was damaged and has been set aside as {self.journal_damaged.name}; a new one was "
+                f"started. The bot's record of the trailing Maximum Loss Limit is gone (it now assumes "
+                f"${core.tracker.floor:,.2f}): compare it with the MLL on TopstepX and, if it differs, set "
+                "account.mll_floor_override in config.yaml.")
+        if self.cfg.mode == "live":
+            core.risk.paused = True
+            text += " New trades are paused until you resume them."
+        core.event("critical", text, "error")
 
     def _best_prior_day(self, label: str, today: date, start: float) -> float:
         """Best finished day since the account started (or was last reset), for the Consistency Target."""

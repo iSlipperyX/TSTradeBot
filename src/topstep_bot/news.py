@@ -104,6 +104,8 @@ class NewsCalendar:
             raw = json.loads(self.cache_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return False
+        if not isinstance(raw, dict):
+            return False
         self.events = self._relevant(parse_feed(raw.get("events", [])))
         self.fetched_at = parse_ts(raw.get("fetched_at"))
         return True
@@ -209,7 +211,7 @@ class HeadlineFeed:
             raw = json.loads(self.cache_path.read_text(encoding="utf-8"))
             self.items = [Headline(**h) for h in raw.get("items", [])][: self.limit]
             self.fetched_at = parse_ts(raw.get("fetched_at"))
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, AttributeError):
             return False
         return True
 
