@@ -51,7 +51,8 @@ COMMANDS = [
     ("market", "Market brief: key levels, today's reports, headlines"),
     ("funded", "Progress to your Combine pass or next payout"),
     ("research", "What the bot has gathered from the internet"),
-    ("lab", "Simulation Lab: how each market and strategy did as fresh Combines"),
+    ("lab", "Simulation Lab: every market and strategy as fresh Combines, plus opportunities"),
+    ("switch", "Trade another market for the rest of today, e.g. /switch MES (or /switch usual)"),
     ("coach", "AI coach: latest lessons, proposals and spending"),
     ("rules", "Topstep rules the bot knows and follows"),
     ("knowledge", "What the bot has learned: which strategy works when"),
@@ -68,7 +69,8 @@ COMMANDS = [
 DANGEROUS = {"flatten", "stop", "restart", "startbot"}
 CONTROL = {"pause", "resume", *DANGEROUS}  # may target one account or all
 # One account at a time. /rules, /update and /dashboard aren't about one account's bot.
-PER_ACCOUNT = {"ideas", "trades", "settings", "knowledge", "train", "log", "brief", "next", "learn", "market", "funded"}
+PER_ACCOUNT = {"ideas", "trades", "settings", "knowledge", "train", "log", "brief", "next", "learn", "market", "funded",
+               "switch"}
 CONFIRM_SECONDS = 60
 MAX_TEXT = 4000
 
@@ -350,6 +352,9 @@ class TelegramController:
         if action == "take":
             rec_id, size, *rest = payload
             return await self._do("take_idea", rec_id, source, size, account=rest[0] if rest else None)
+        if action == "switch":
+            symbol, account = payload
+            return await self._do("switch_market", symbol, source, account=account)
         return await self._execute(action, source, payload)
 
     async def _ask(self, question: str, action: str, payload=None, yes: str | None = None) -> None:
@@ -513,6 +518,18 @@ class TelegramController:
             warn = "\n⚠️ This increases your risk." if p["riskier"] else ""
             change = f"{p['label']} -> {p['new']}" if target == "all" else f"{p['label']}: {p['old']} -> {p['new']}"
             await self._ask(f"Change {change}{where}?{warn}", "set", (p["key"], value, target), yes="Yes, change it")
+        elif command == "switch":
+            if not hasattr(self.actions, "switch_market"):
+                raise RuntimeError("/switch is only available when the controller is running")
+            if not args:
+                await self.send("Usage: /switch <market>, e.g. /switch MES, or /switch usual to go back. The bot must be "
+                                "flat; it restarts on that market for the rest of today (until 15:10 CT).")
+                return
+            symbol = args[0].upper()
+            back = symbol in ("USUAL", "BACK")
+            question = ("Go back to the usual market" if back else f"Trade {symbol} for the rest of today") + f"{where}? " \
+                + "The bot restarts on it (about half a minute); it must have no open trade."
+            await self._ask(question, "switch", ("" if back else symbol, target), yes="Yes, switch")
         elif command == "reset":
             await self._ask(f"Undo every setting changed from the dashboard/Telegram{where} and go back to config.yaml?",
                             "reset", target, yes="Yes, reset")

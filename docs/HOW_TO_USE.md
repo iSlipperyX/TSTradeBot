@@ -36,6 +36,13 @@ as hundreds of fresh Combines ([section 34](#34-simulation-lab-hundreds-of-combi
 **AI Coach**, where Claude reviews the evidence, tests ideas and proposes changes you approve
 ([section 35](#35-the-ai-coach-claude-teaches-the-bot)).
 
+**New in 2.1:** every market Topstep permits (51: indexes, crypto, currencies, energy, metals, interest
+rates, grains and livestock). The bot downloads all of their history with no login needed, the
+Simulation Lab runs on all of them and lists **Opportunities** by time of day
+([section 36](#36-every-market-topstep-permits)), the bot can pick its market each morning from all of
+them, and you can switch an account to any market for the rest of the day from the trade ticket
+([section 37](#37-trading-another-market-today)).
+
 ---
 
 ## Contents
@@ -75,6 +82,8 @@ as hundreds of fresh Combines ([section 34](#34-simulation-lab-hundreds-of-combi
 33. [Research: knowledge that grows from the internet](#33-research-knowledge-that-grows-from-the-internet)
 34. [Simulation Lab: hundreds of Combines from history](#34-simulation-lab-hundreds-of-combines-from-history)
 35. [The AI coach: Claude teaches the bot](#35-the-ai-coach-claude-teaches-the-bot)
+36. [Every market Topstep permits](#36-every-market-topstep-permits)
+37. [Trading another market today](#37-trading-another-market-today)
 
 ---
 
@@ -386,6 +395,10 @@ the preflight, the journal and so on. To open it, open a Command Prompt in the b
 | 18 | update | **Updates:** checks GitHub for a newer version, lists what changed and installs it when you say so ([Updating](#updating)) |
 | 19 | learn | **Feeds the bot more history:** downloads up to a year it doesn't have yet and replays all of it through every strategy ([long-run memory](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 | 20 | first-trade-test | **Tests the first trade after starting:** replays history with it off, with the bot's educated pick, and with a coin flip, and shows what each did ([The first trade after starting](#the-first-trade-after-starting)) |
+| 21 | accounts | Your accounts: what each one trades, and which share the same calls ([section 29](#29-trading-several-accounts)) |
+| 22 | keys | Manage your TopstepX API keys ([section 30](#30-several-api-keys)) |
+| 23 | markets | **Every market Topstep permits:** downloads all their history (no login needed) and lists what the bot has ([section 36](#36-every-market-topstep-permits)) |
+| 24 | simulate | **Simulation Lab** on every market and strategy ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
 
 Above the list, the menu shows a one-line summary of your setup (account, symbol, strategy, mode).
 If `config.yaml` has a mistake, that line says what and where. When a newer version of the bot is
@@ -1096,7 +1109,8 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/funded` | Progress toward passing the Combine or the next payout ([section 32](#32-funded-account-goals-and-topsteps-rules)) |
 | `/rules` | Every Topstep rule the bot knows and what it does about each |
 | `/research` | What the bot has gathered from the internet ([section 33](#33-research-knowledge-that-grows-from-the-internet)) |
-| `/lab` | The Simulation Lab's latest results: Combines passed/failed, the best playbooks, the held-out check and its suggestion ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
+| `/lab` | The Simulation Lab's latest results: Combines passed/failed, the best playbooks, the opportunities, the held-out check and its suggestion ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
+| `/switch MES` | **Trade another market for the rest of today** (asks to confirm; the bot must have no open trade). `/switch usual` goes back ([section 37](#37-trading-another-market-today)) |
 | `/coach` | The AI coach: latest lessons, proposals waiting for you, and this month's spending ([section 35](#35-the-ai-coach-claude-teaches-the-bot)) |
 | `/accounts` | All your accounts at a glance ([section 29](#29-trading-several-accounts)) |
 | `/next` | **When the next trade is likely**, and what that estimate is based on (also a button under every message) |
@@ -1825,7 +1839,8 @@ instrument:
   contract_id: null            # pin an exact contract, e.g. CON.F.US.MNQ.Z26 (not with auto_pick)
   timeframe_minutes: 5         # 1-60
   auto_pick: false             # true = the bot picks the market each day (section 31)
-  candidates: []               # markets auto_pick chooses from (default: the micros your plan allows)
+  candidates: []               # markets auto_pick chooses from (default: the micros your plan allows);
+                               # also ALL, MICROS or an asset class: EQUITY, CRYPTO, FX, ENERGY, METALS, RATES, AGS
 
 strategy:
   name: adaptive               # adaptive | noise_breakout | orb_momentum | orb | ema_trend
@@ -1967,6 +1982,12 @@ coach:                         # the AI coach (section 35); the API key goes in 
   max_turns: 24                # most back-and-forth steps in one session
   allow_simulations: true      # let the coach run its own Simulation Lab experiments
 
+lab:                           # the Simulation Lab and every market's history (sections 34 and 36)
+  markets: all                 # all = every market with history; tradable = only this account's auto-pick markets
+  refresh_data: true           # keep every market's history up to date in the background (Yahoo, about twice a day)
+  nightly: true                # run the lab on every market each weekday after the close
+  nightly_time: "15:30"        # when (CT)
+
 multi_account:                 # only matters with an accounts list (section 29)
   hedge_guard: correlated      # correlated | same_product | off - no opposite positions across accounts
   stagger_seconds: 3           # pause between starting each account's bot
@@ -2021,7 +2042,8 @@ different config file.
 | `topstep-bot accounts [--check]` | Every account: what it trades, its mode and key, and which accounts share the same calls; `--check` also asks TopstepX about each one (balance, can trade, open positions and orders, today's trades) ([section 29](#29-trading-several-accounts)) |
 | `topstep-bot keys [add\|remove\|test] [NAME]` | List, add (tests the login first), remove or test stored API keys ([section 30](#30-several-api-keys)) |
 | `... --account NAME` | With several accounts: `preflight`, `go-live`, `flatten`, `journal`, `logs`, `rules` and `start --mode` act on one account (default: all); `backtest`, `train`, `download`, `tune`, `learn`, `insights` use that account's strategy and market |
-| `topstep-bot simulate [--starts N] [--symbols A,B] [--strategies A,B] [--no-teach] [--show]` | Simulation Lab: replay the bot through history as fresh Combines started on N days per market and strategy, score every playbook, then teach the long-run memory every market's history; `--show` prints the last report ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
+| `topstep-bot simulate [--starts N] [--symbols A,B] [--scope all\|tradable] [--classes fx,metals] [--strategies A,B] [--no-teach] [--show]` | Simulation Lab: replay the bot through history as fresh Combines started on N days per market and strategy, on every market with history (or the ones you name), score every playbook and every time-of-day opportunity, then teach the long-run memory; `--show` prints the last report ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
+| `topstep-bot markets [--download] [--yahoo] [--symbols A,B]` | Every market Topstep permits, with the history the bot has for each; `--download` brings all of them up to date (TopstepX when your login works, Yahoo otherwise or with `--yahoo`) ([section 36](#36-every-market-topstep-permits)) |
 | `topstep-bot coach ["question"] [--status]` | Run an AI coaching session (uses your Claude API credits), or `--status` for lessons, proposals and spending ([section 35](#35-the-ai-coach-claude-teaches-the-bot)) |
 | `topstep-bot insights [--csv FILE] [--longrun]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
@@ -2052,6 +2074,8 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `data/accounts/<name>/`, `logs/accounts/<name>/` | With several accounts: each account's journal, knowledge base, remote settings, heartbeat and logs ([section 29](#29-trading-several-accounts)) |
 | `data/positions/` | What each account holds, for the hedge guard (rewritten while the bots run) |
 | `market_pick.json` (in the account's folder) | With the market on Auto: today's pick, the reason, and every candidate's score |
+| `market_today.json` (in the account's folder) | A market you switched the account to for the day, and when the switch ends (section 37). Delete it to go back early |
+| `data/research/daily_<MARKET>.json` | Ten years of daily prices per market: the long-term context in the Markets list (how busy a market is now compared with its own past) |
 | `data/simlab/` | The Simulation Lab: `report.json` (the latest), `runs.csv` (every simulated Combine, opens in Excel), `history/` (the last 20 reports). Safe to delete |
 | `data/coach/` | The AI coach: `lessons.json`, `proposals.json`, `sessions/` (each session's report, tool calls and cost), `latest_report.md`, `usage.jsonl` (every API call's tokens and cost) |
 | `data/controller.json` | The mode you chose last (Paper/Live) and whether phone access is on |
@@ -2547,13 +2571,18 @@ on this yet: it needs weeks of observations before the difference means anything
 ### Letting the bot pick the market
 
 Set the market to **Auto** (Setup tab, or an account's **Market** in the Add/Edit form), or in
-`config.yaml`:
+`config.yaml`. There are two Auto choices: **Auto** picks from the micro index, gold and crude
+contracts; **Auto: every Topstep market** picks from all 51 markets Topstep permits (the ones your plan
+can't trade right now are left out).
 
 ```yaml
 instrument:
   symbol: MNQ          # used on days no market shows an edge
   auto_pick: true
   candidates: []       # default: the micros your plan allows (MNQ, MES, M2K, MYM, MGC, MCL)
+  # candidates: [ALL]          every market Topstep permits
+  # candidates: [MICROS, FX]   every micro, plus every currency future
+  # candidates: [MNQ, 6E, GC]  just these
 ```
 
 Each time the bot starts (so every trading day, after the daily restart) it replays the recent
@@ -2570,6 +2599,11 @@ fitted to.
   where most are is skipped ("too big for your risk").
 - The current market is kept unless another beats it clearly (0.05R per day), so the bot doesn't
   hop between markets on noise.
+- **With more than 8 candidates** the pick must also have made money on the earlier two thirds, not
+  only on the held-back days. Comparing 48 markets on a few weeks always produces a lucky winner; this
+  rule throws most of those out ("made money only on the held-back days ... likely luck").
+- Scoring every market takes a few seconds per market, so a start with **every market** takes a
+  minute or two longer. The bot keeps the dashboard informed meanwhile.
 - An open position on the account keeps its market. A pick is reused for 20 hours, so a restart
   during the day doesn't pick again; changing the strategy, plan, risk or candidates picks again.
 - The **Market** tab's **Why this market** panel shows every candidate's result and the reason;
@@ -2679,10 +2713,14 @@ live, with simulated fills that include your assumed slippage and fees. It ends 
 passed, failed, or the history runs out ("still open"). Each playbook is started on several different
 days, so one lucky or unlucky start can't decide the result.
 
-**Playbooks.** A playbook is a market plus a strategy, e.g. *MNQ · orb_momentum*. The lab tries every
-micro your plan allows that has history on this PC (MNQ, MES, M2K, MYM, …) with every strategy:
-4 markets × 8 strategies × 4 start days = **128 live-like Combines** by default, plus one full-history
-run per playbook. The adaptive strategy starts each simulation knowing only what it would have known
+**Playbooks.** A playbook is a market plus a strategy, e.g. *MNQ · orb_momentum*. The lab tries
+**every market with history on this PC** with every strategy: with all 51 of Topstep's markets that is
+408 playbooks × 4 start days = **about 1,600 live-like Combines**, plus one full-history run per
+playbook, in about three minutes on a typical PC. To look at fewer, choose **Only this account's picks**
+or one asset class next to the Run button (or `lab.markets: tradable`). Markets your plan can't trade
+right now (Topstep caps them at zero) are still simulated, marked **not on plan**, and never suggested.
+Each market uses its own contract size, tick value and Topstep fees, but your account's settings:
+a full-size contract whose stops are too wide for your risk per trade simply takes no trade. The adaptive strategy starts each simulation knowing only what it would have known
 that morning: it is trained on the days before the start, never on the days it is about to trade.
 
 **Run it.** Simulations tab → choose the start days per playbook (4 is about a minute; 12 gives 384
@@ -2698,18 +2736,28 @@ Combines) → **Run simulations**. Or `topstep-bot simulate --starts 6`. The bot
 | Resampled | Monte Carlo: 2,000 Combines built by drawing the playbook's own simulated days at random, up to 60 days each. A rough pass / fail probability for a Combine longer than your history. Green = passed, red = failed |
 | Held-out check | The playbook that looks best on the *first* half alone, scored on the second half it never saw. Comparing 32 playbooks always produces a winner by luck; this shows how much of the winner's result survives |
 | Equity | Each playbook's cumulative profit over the history |
+| Opportunities | Every market × strategy × **time of day** (open 08:30-10:00, midday 10:00-13:00, close 13:00-15:10 CT) that made money in *both* halves of the history, strongest first. A strategy that loses over the whole day can still win at the open; this is where you see it. **Strength** is how far the pocket stands out from chance: strong, promising or early. The note under the table says how many pockets were tested and how many would look this good by luck alone, so you know whether the list is evidence or noise |
+| By asset class | How many playbooks per class, how many have an edge, and the best one |
 
 **Use a playbook.** The **Use** button on a row (or the button under a confirmed edge) writes that
 market and strategy into `config.yaml` (the old file is kept as `config.yaml.bak`). A running bot keeps
-its settings until you restart it. Nothing is changed without that click.
+its settings until you restart it. Nothing is changed without that click. **Trade today** on an
+opportunity switches the account to that market for the rest of the day only
+([section 37](#37-trading-another-market-today)).
+
+**Every night.** Each weekday at 15:30 CT (after the 15:10 flatten) the bot refreshes every market's
+history and runs the lab on all of them, so the Opportunities list is fresh every morning. It never
+changes a setting or places a trade. Turn it off with `lab.nightly: false`.
 
 **Teaching.** With **Teach long-run memory** ticked, every market's history is also added to the
 long-run memory and replayed through every strategy, so the Knowledge tab's *Long run* view and the
 AI coach cover every market the bot could trade. The knowledge base the bot actually trades with is
 still retrained by the bot itself from fresh history each day.
 
-**Honest expectations.** On the history this PC had in October 2026 (about two months), no playbook
-showed a dependable edge: the strongest, MNQ with the adaptive strategy, made nearly all of its money
+**Honest expectations.** On all 51 markets in October 2026 (about 60 trading days each), 7 playbooks
+were marked *edge*, but the held-out check did **not** confirm the ranking, and only 17 of 276
+time-of-day pockets made money in both halves, none of them standing out from luck. Earlier, on the
+four index micros alone, no playbook showed a dependable edge: the strongest, MNQ with the adaptive strategy, made nearly all of its money
 in the second half, and the held-out check did not confirm the ranking. That is the lab doing its
 job. More history makes it far more useful: the bot saves everything it downloads, so run the lab
 again every week or two. Results are evidence, not a promise.
@@ -2789,6 +2837,73 @@ report as the limit approaches) and no session starts once `coach.monthly_budget
 - **Errors in plain words:** a refused key, too little credit ("Buy credits at …"), a rate limit or no
   internet are shown on the tab and in the Activity feed. Nothing about trading depends on the coach.
 - **Turn it off** with `coach.enabled: false`, or simply never add a key.
+
+## 36. Every market Topstep permits
+
+Topstep permits 51 futures, and the bot knows every one: contract size, tick value, Topstep's fees,
+busiest hours, what moves it and which reports matter for it.
+
+| Class | Markets |
+|---|---|
+| Equity index | ES, MES, NQ, MNQ, RTY, M2K, YM, MYM, NKD |
+| Crypto | MBT (micro bitcoin), MET (micro ether) |
+| Currencies | 6A, M6A, 6B, M6B, 6C, 6E, E7, M6E, 6J, 6S, 6M, 6N |
+| Energy | CL, QM, MCL, NG, QG, MNG, RB, HO |
+| Metals | GC, MGC, SI, SIL, HG, MHG, PL |
+| Interest rates | ZT, ZF, ZN, TN, ZB, UB |
+| Agriculture | ZC, ZW, ZS, ZM, ZL (grains), HE, LE (livestock) |
+
+**Their history.** The Simulations tab's **Markets and price history** panel lists every market with
+the history on this PC, where it came from, how busy the market is now compared with its own last ten
+years, its 20-day trend and whether your plan may trade it. **Download every market** brings them all up
+to date (also `topstep-bot markets --download`, or menu 23):
+
+- **TopstepX** first when your login works: the actual contract the bot trades, about 60 days of
+  5-minute bars.
+- **Yahoo Finance** for everything else, no login needed: the continuous front-month future, 60 trading
+  days. Yahoo only fills gaps; it never overwrites a bar TopstepX delivered.
+- Ten years of **daily** prices per market go to `data/research` for the long-term context.
+
+Everything lands in the bot's market library, which only grows: refresh it regularly and the history
+gets longer every week. The controller does this by itself about twice a day (`lab.refresh_data`).
+
+**Early closes.** Grains (13:20 CT) and livestock (13:05 CT) stop trading before Topstep's 15:10 CT
+deadline. On those markets the bot opens nothing in the last half hour and closes out 5 minutes before
+the market's own close, in live trading, backtests and the lab alike.
+
+**Caps your plan has.** Topstep currently caps silver, copper and platinum (SI, HG, PL) at zero, and
+the bot caps micro silver and micro copper (SIL, MHG) at 2 / 4 / 6 contracts on 50K / 100K / 150K, from
+a February 2026 Topstep notice that couldn't be confirmed since. Topstep changes these limits with
+market conditions: check the product limits in TopstepX, and tell the bot (`risk/topstep.py`,
+`PRODUCT_LIMITS`) if they differ.
+
+**Good to know.** Micros and their full-size contract share prices, so MNQ's history is NQ's. A
+full-size contract (ES, CL, 6E, ZB…) moves 10 times or more per tick than its micro; at a typical risk
+per trade its stops are often too wide for even one contract, and the bot then simply doesn't trade
+it. Yahoo's continuous future can differ from TopstepX's contract for a day or two around a roll.
+
+## 37. Trading another market today
+
+You can move an account to **any** market Topstep permits for the rest of the trading day, then it goes
+back by itself:
+
+- **Trade tab:** the **Market** list at the top of the ticket → pick a market → **Trade … today**.
+- **Simulations tab:** **Trade today** next to an opportunity or a market in the Markets list.
+- **Telegram:** `/switch MES` (with several accounts: `/switch c1 MES`), then confirm.
+
+What happens:
+
+1. The account must have **no open trade** (close it first). Otherwise the switch is refused.
+2. The bot restarts on the new market (about half a minute). Its own strategy trades that market too,
+   and your trade ticket places trades there, with every risk setting, Topstep guard and news pause
+   exactly as before. With the adaptive strategy, the bot first learns that market's recent history.
+3. At **15:10 CT** the switch ends; after the daily restart the account is back on its usual market (or
+   its Auto pick). A switch made after 15:10 CT is for the next trading day. **Back to usual market**
+   (or `/switch usual`) ends it earlier.
+
+Accounts that copy another account's calls follow it: switch the leader, not the follower. The hedge
+guard still keeps accounts from holding opposite positions in the same or related markets. The switch
+is saved in `market_today.json` in the account's folder.
 
 ---
 

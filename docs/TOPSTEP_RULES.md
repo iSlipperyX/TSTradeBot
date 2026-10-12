@@ -94,7 +94,10 @@ processes it.
 ### Position size
 
 **Topstep:** 5 / 10 / 15 minis, with micros counted at 10:1, and the Scaling Plan in an XFA (the
-limit only changes between sessions). Some metals and energy products have their own lower caps.
+limit only changes between sessions). Some metals and energy products have their own lower caps:
+the bot uses GC 3/6/9, MGC 30/60/90, CL 3/6/9, MCL 30/60/90, SI, HG and PL 0 (not tradable now), and
+SIL and MHG 2/4/6 (from a February 2026 notice; confirm in TopstepX). These change with market
+conditions.
 
 **The bot:**
 - Sizes each trade from its stop and your `risk_per_trade`, then caps it at Topstep's limit for
@@ -111,6 +114,12 @@ CT; nothing may be held overnight or over the weekend.
 **The bot:** only opens trades between `session.trade_start` and `session.last_entry` and closes
 everything at `session.flatten_at` (15:00 CT by default). The config refuses a flatten time later
 than 15:08. CME holidays and early-close days are in `session.no_trade_dates`.
+
+Markets that close before 15:10 CT: the CBOT grains (corn, wheat, soybeans, meal, oil) stop at
+13:20 CT and live cattle and lean hogs at 13:05 CT, and Topstep requires you to be out before the
+product's own close. On those markets the bot opens nothing in the last 30 minutes and closes
+everything 5 minutes before that close (13:15 / 13:00 CT), in live trading, backtests and the
+Simulation Lab.
 
 ### News
 

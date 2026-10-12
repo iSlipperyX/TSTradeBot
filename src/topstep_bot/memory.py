@@ -96,14 +96,18 @@ class MarketLibrary:
 
     # ------------------------------------------------------------- writing
 
-    def add(self, symbol: str, tf: int, bars: Iterable[Bar], contract: str = "") -> int:
-        """Store bars (a newer download of the same bar replaces the older one). Returns how many were new."""
+    def add(self, symbol: str, tf: int, bars: Iterable[Bar], contract: str = "", *, replace: bool = True) -> int:
+        """Store bars. Returns how many were new.
+
+        ``replace``: a newer download of the same bar replaces the older one. With False, bars only fill
+        gaps (a secondary source such as Yahoo never overwrites what TopstepX delivered)."""
         rows = [(symbol, tf, _epoch(b.ts), b.open, b.high, b.low, b.close, b.volume, contract) for b in bars]
         if not rows:
             return 0
+        verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
         with self._lock:
             before = self._count(symbol, tf)
-            self._db.executemany("INSERT OR REPLACE INTO bars VALUES (?,?,?,?,?,?,?,?,?)", rows)
+            self._db.executemany(f"{verb} INTO bars VALUES (?,?,?,?,?,?,?,?,?)", rows)
             self._db.commit()
             self._version += 1
             return self._count(symbol, tf) - before
@@ -152,6 +156,25 @@ class MarketLibrary:
                 "SELECT ts, open, high, low, close, volume FROM bars WHERE symbol=? AND tf=? AND ts>=? AND ts<? ORDER BY ts",
                 (symbol, tf, lo, hi)).fetchall()
         return [Bar(ts=_dt(ts), open=o, high=h, low=lo_, close=c, volume=v or 0.0) for ts, o, h, lo_, c, v in rows]
+
+    def symbols(self, tf: int) -> list[str]:
+        """Every market with bars at this timeframe."""
+        with self._lock:
+            return [r[0] for r in self._db.execute("SELECT DISTINCT symbol FROM bars WHERE tf=? ORDER BY symbol", (tf,))]
+
+    def summary(self, tf: int) -> dict[str, dict[str, Any]]:
+        """Per market at this timeframe: bars, trading days, first and last bar, and where the bars came from."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT symbol, COUNT(*), MIN(ts), MAX(ts), COUNT(DISTINCT (ts + ?) / 86400), "
+                "SUM(contract LIKE 'yahoo:%'), SUM(contract LIKE 'csv:%') FROM bars WHERE tf=? GROUP BY symbol",
+                (DAY_SHIFT, tf)).fetchall()
+        out = {}
+        for symbol, n, first, last, days, yahoo, csv_ in rows:
+            sources = [name for name, k in (("TopstepX", n - (yahoo or 0) - (csv_ or 0)), ("Yahoo", yahoo or 0), ("CSV", csv_ or 0)) if k]
+            out[symbol] = {"bars": n, "days": days, "first": _dt(first).date().isoformat() if first else None,
+                           "last": _dt(last).isoformat(timespec="minutes") if last else None, "sources": sources}
+        return out
 
     def stats(self, symbol: str, tf: int) -> dict[str, Any]:
         cached = self._stats.get((symbol, tf))

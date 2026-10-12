@@ -75,8 +75,11 @@ learn as lessons, and propose at most a few concrete changes. You cannot place t
 your proposals wait for the owner to approve them.
 
 How the bot works, in short:
-- It trades one micro index future (MNQ, MES, M2K, MYM, sometimes MGC/MCL) on 5-minute bars between 08:30 and \
-15:00 Chicago time, and is always flat by 15:10 CT (a Topstep rule).
+- It trades one futures market at a time on 5-minute bars, usually from 08:30 Chicago time, and is always flat \
+by 15:10 CT (a Topstep rule; grains and livestock close earlier and are left before their own close). Topstep \
+permits about 50 markets: equity indexes, crypto, currencies, energy, metals, interest rates and agriculture. \
+The owner can switch the market for a day, and the bot can pick its market each morning. get_markets lists \
+them all with the history the bot has.
 - Each strategy signals trades with a stop; the size comes from the account's risk per trade. The 'adaptive' \
 strategy runs all the others and only takes a signal where its knowledge base shows that strategy has been \
 working at this time of day (open / midday / close) in the current volatility regime (calm / volatile).
@@ -85,7 +88,9 @@ trailing Maximum Loss Limit, and with no single day over the consistency limit o
 ends the account.
 - The Simulation Lab plays the real trading code through history as fresh Combines started on different days \
 (live-like runs), resamples whole days into thousands of Combine paths (Monte Carlo), splits the history in \
-halves, and checks whether the first-half winner holds up on the second half.
+halves, and checks whether the first-half winner holds up on the second half. It covers every market with \
+history and lists "opportunities": market x strategy x time-of-day pockets that made money in both halves. \
+With hundreds of pockets tested some always look good by luck: weigh them against how many were tested.
 
 Standards you hold yourself to:
 - Be honest. A couple of months of 5-minute bars is a small sample. Say how many trades and days a claim rests \
@@ -123,12 +128,16 @@ TOOLS: list[dict[str, Any]] = [
           "The account (plan, stage, balance rules), Topstep's rules for it, and the bot's current settings: market, "
           "strategy, risk per trade, daily limits, trading hours. Read this first.", {}),
     _tool("get_simulation_report",
-          "The latest Simulation Lab report: every playbook (market + strategy) with its live-like Combine runs, "
-          "resampled Combine pass/fail rates, net result, profit factor, halves and the held-out check.", {}),
+          "The latest Simulation Lab report: the best playbooks (market + strategy) with their live-like Combine runs, "
+          "resampled Combine pass/fail rates, net result, profit factor and halves; a summary per asset class; the "
+          "opportunities (time-of-day pockets); and the held-out check.", {}),
+    _tool("get_markets",
+          "Every market Topstep permits: asset class, contract specs and fees, the price history on this PC, whether "
+          "this account's plan may trade it, and long-term context (20-day trend, volatility vs its own 10-year past).", {}),
     _tool("get_knowledge",
           "What the bot's knowledge base has learned for one market: each strategy's average result in R by time-of-day "
           "slot and volatility regime, after costs, plus the long-run memory's report if it has one.",
-          {"symbol": {"type": "string", "description": "Market root, e.g. MNQ, MES, M2K, MYM."}}),
+          {"symbol": {"type": "string", "description": "Market root, e.g. MNQ, MES, 6E, GC, ZN."}}),
     _tool("get_trade_journal",
           "The bot's most recent closed trades (paper and live), newest first, with how each ended.",
           {"limit": {"type": "integer", "description": "How many trades, 1-100."}}),
@@ -137,7 +146,7 @@ TOOLS: list[dict[str, Any]] = [
     _tool("run_simulation",
           "Run a Simulation Lab experiment through the bot's real trading code on history: fresh Combines started on "
           "several days per market and strategy, plus resampled Combine paths. Takes up to a few minutes. Keep it "
-          "targeted: at most about 4 markets x 4 strategies. Results are returned to you only.",
+          "targeted: at most about 6 markets x 4 strategies. Results are returned to you only.",
           {"symbols": {"type": "array", "items": {"type": "string"}, "description": "Markets, e.g. [\"MNQ\", \"MES\"]."},
            "strategies": {"type": "array", "items": {"type": "string"}, "description": "Strategy names from the catalog."},
            "starts": {"type": "integer", "description": "Combine start days per playbook, 1-8 (4 is typical)."},
@@ -425,9 +434,24 @@ class Coach:
         if not rep:
             return {"report": None, "note": "No Simulation Lab report yet. Use run_simulation to create evidence."}
         trimmed = {k: v for k, v in rep.items() if k not in ("runs",)}
-        for p in trimmed.get("playbooks", []):
+        playbooks = trimmed.get("playbooks", [])
+        for p in playbooks:
             p.pop("equity", None)
+        if len(playbooks) > 30:  # every market: the best ones, the current one, and the count
+            current = [p for p in playbooks[30:] if p["symbol"] == self.cfg.instrument.symbol]
+            trimmed["playbooks"] = playbooks[:30] + current[:8]
+            trimmed["playbooks_note"] = f"{len(playbooks)} playbooks in all; the 30 best and the current market's are shown."
+        opp = trimmed.get("opportunities")
+        if opp and len(opp.get("items", [])) > 25:
+            trimmed["opportunities"] = {**opp, "items": opp["items"][:25]}
         return trimmed
+
+    def _markets(self) -> list[dict[str, Any]]:
+        from topstep_bot.market_data import coverage
+
+        keep = ("symbol", "description", "class", "tick_size", "tick_value", "fees", "hours", "days", "last", "sources",
+                "allowed", "context")
+        return [{k: m[k] for k in keep} for m in coverage(self.cfg)]
 
     def _knowledge(self, symbol: str) -> dict[str, Any]:
         from topstep_bot.insights import build_report
@@ -491,11 +515,11 @@ class Coach:
         return out
 
     async def _simulate(self, body: dict[str, Any], progress: Callable[[str], None] | None) -> dict[str, Any]:
-        from topstep_bot.simlab import history_sources, lab_strategies, run_lab
+        from topstep_bot.simlab import available_markets, lab_strategies, run_lab
 
         if not self.cfg.coach.allow_simulations:
             return {"error": "Simulations are turned off for the coach (coach.allow_simulations)."}
-        available = sorted(history_sources(self.cfg))
+        available = available_markets(self.cfg)
         symbols = [s.strip().upper() for s in body.get("symbols") or [] if s.strip()] or [self.cfg.instrument.symbol]
         missing = [s for s in symbols if s not in available]
         symbols = [s for s in symbols if s in available]
@@ -529,7 +553,8 @@ class Coach:
         for p in rep["playbooks"]:
             p.pop("equity", None)
         return {"note": (f"Not in history here: {', '.join(missing)}. " if missing else "") + "Experiment only: the lab's main report is unchanged.",
-                **{k: rep[k] for k in ("markets", "totals", "playbooks", "holdout", "params", "risk_per_trade", "caveats")}}
+                **{k: rep[k] for k in ("markets", "totals", "playbooks", "holdout", "opportunities", "params",
+                                       "risk_per_trade", "caveats")}}
 
     async def _run_tool(self, name: str, args: dict[str, Any], session: dict[str, Any],
                         progress: Callable[[str], None] | None) -> str:
@@ -538,6 +563,8 @@ class Coach:
                 result: Any = self._overview()
             elif name == "get_simulation_report":
                 result = self._simulation_report()
+            elif name == "get_markets":
+                result = self._markets()
             elif name == "get_knowledge":
                 result = await asyncio.to_thread(self._knowledge, str(args.get("symbol") or ""))
             elif name == "get_trade_journal":

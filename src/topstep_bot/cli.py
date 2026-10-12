@@ -476,15 +476,17 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     starts = max(1, min(30, args.starts or DEFAULT_STARTS))
     symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else None
     strategies = [s.strip() for s in args.strategies.split(",")] if args.strategies else None
+    classes = [c.strip().lower() for c in args.classes.split(",")] if args.classes else None
     try:
         with console.status("Running the bot through history as fresh Combines...") as status:
             def show(done: int, total: int, stage: str) -> None:
                 status.update(f"Simulation Lab: {stage}")
 
-            report = asyncio.run(run_lab(cfg, starts=starts, symbols=symbols, strategies=strategies, progress=show))
+            report = asyncio.run(run_lab(cfg, starts=starts, symbols=symbols, strategies=strategies, scope=args.scope,
+                                         classes=classes, progress=show))
             if not args.no_teach:
                 status.update("Teaching the long-run memory every market's history...")
-                taught = asyncio.run(teach(cfg, symbols))
+                taught = asyncio.run(teach(cfg, list(report["markets"])))
             else:
                 taught = []
     except ValueError as exc:
@@ -498,6 +500,61 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             console.print(f"[dim]Long-run memory {t['symbol']}: {t['observations']:,} signal outcomes from {t['days']} days "
                           f"({t['from']} to {t['to']}).[/]")
     console.print(f"[dim]Saved in {cfg.data_path / 'simlab'} (report.json, runs.csv). The dashboard's Simulations tab shows it.[/]")
+    return 0
+
+
+def cmd_markets(args: argparse.Namespace) -> int:
+    """Every market Topstep permits, the history the bot has for each, and (with --download) bring it up to date."""
+    from topstep_bot.instruments import CLASSES
+    from topstep_bot.market_data import MarketData, coverage
+
+    cfg = _load_account(args, first_if_several=True)
+    if args.download:
+        data = MarketData(cfg)
+        secrets = load_secrets().for_account(cfg)
+        symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else None
+
+        async def go():
+            from topstep_bot.api.rest import ProjectXClient
+
+            client = None
+            if not args.yahoo and secrets.has_credentials:
+                client = ProjectXClient(secrets.username, secrets.api_key, cfg.api.base_url, cfg.api.timeout_seconds)
+                try:
+                    await client.login()
+                except Exception as exc:  # noqa: BLE001 - Yahoo works without a login
+                    console.print(f"[yellow]TopstepX login failed ({exc}): downloading from Yahoo instead.[/]")
+                    await client.close()
+                    client = None
+            try:
+                with console.status("Downloading market history...") as status:
+                    return await data.refresh(symbols, client=client,
+                                              progress=lambda d, t, stage: status.update(f"{stage} ({d}/{t})"))
+            finally:
+                if client is not None:
+                    await client.close()
+
+        results = asyncio.run(go())
+        for r in results:
+            if r.error:
+                console.print(f"[yellow]{r.line()}[/]")
+        console.print(f"[green]{sum(1 for r in results if r.source)} of {len(results)} markets updated, "
+                      f"{sum(r.new_bars for r in results):,} new bars.[/]")
+    rows = coverage(cfg)
+    table = Table(title=f"Every market Topstep permits ({len(rows)}) - history at {cfg.instrument.timeframe_minutes}-minute bars")
+    for col, just in (("Market", "left"), ("Class", "left"), ("Busiest CT", "left"), ("Tick", "right"), ("Fees", "right"),
+                      ("Days", "right"), ("Last bar", "left"), ("Source", "left"), ("Vol vs 10y", "right"), ("Plan", "left")):
+        table.add_column(col, justify=just, no_wrap=True)
+    for m in rows:
+        ctx = m["context"]
+        table.add_row(f"{m['symbol']} {m['description']}", CLASSES[m["class"]], m["hours"], f"${m['tick_value']:g}",
+                      f"${m['fees']:.2f}", str(m["days"] or "-"), (m["last"] or "-")[:16].replace("T", " "),
+                      ", ".join(m["sources"]) or "none", f"{round(100 * ctx['range_percentile'])}%" if ctx else "-",
+                      "allowed" if m["allowed"] else "[red]not now[/]")
+    console.print(table)
+    missing = [m["symbol"] for m in rows if not m["days"]]
+    if missing and not args.download:
+        console.print(f"[dim]No history yet for {', '.join(missing)}: topstep-bot markets --download (no login needed).[/]")
     return 0
 
 
@@ -1399,6 +1456,8 @@ MENU = [
     ("first-trade-test", "Backtest the FIRST TRADE after starting (Teach the bot) against a coin flip"),
     ("accounts", "Show your accounts: what each one trades, and which share the same calls"),
     ("keys", "Manage your TopstepX API keys (one per account, if you like)"),
+    ("markets", "MARKETS: every market Topstep permits, and download all their history"),
+    ("simulate", "SIMULATION LAB: run every market and strategy as fresh Combines"),
 ]
 
 
@@ -1436,7 +1495,7 @@ def interactive_menu(parser: argparse.ArgumentParser) -> int:
         return 0
     name = MENU[int(choice) - 1][0]
     argv = {"paper": ["start", "--mode", "paper"], "live": ["start", "--mode", "live"],
-            "autostart": ["autostart", "on"]}.get(name, [name])
+            "autostart": ["autostart", "on"], "markets": ["markets", "--download"]}.get(name, [name])
     args = parser.parse_args(argv)
     return dispatch(args)
 
@@ -1578,13 +1637,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("simulate", help="Simulation Lab: run the bot through history as fresh Combines started on many days")
     p.add_argument("--starts", type=int, default=None, help="Combine start days per market and strategy (default 4)")
-    p.add_argument("--symbols", help="markets to simulate, e.g. MNQ,MES (default: every micro with history on this PC)")
+    p.add_argument("--symbols", help="markets to simulate, e.g. MNQ,6E,GC (default: every market with history on this PC)")
+    p.add_argument("--scope", choices=["all", "tradable"], default=None,
+                   help="all = every market with history (default, lab.markets); tradable = only the account's auto-pick markets")
+    p.add_argument("--classes", help="only these asset classes: equity, crypto, fx, energy, metals, rates, ags (comma-separated)")
     p.add_argument("--strategies", help="strategies to simulate (default: all)")
     p.add_argument("--top", type=int, default=8, help="how many playbooks to list")
     p.add_argument("--no-teach", action="store_true", help="don't replay the history into the long-run memory afterwards")
     p.add_argument("--show", action="store_true", help="only show the last report")
     p.add_argument("-a", "--account", help=account_help)
     p.set_defaults(func=cmd_simulate)
+
+    p = sub.add_parser("markets", help="every market Topstep permits and the history the bot has for each (--download to update)")
+    p.add_argument("--download", action="store_true", help="download every market's history now (TopstepX if logged in, else Yahoo)")
+    p.add_argument("--yahoo", action="store_true", help="download from Yahoo only (no TopstepX login)")
+    p.add_argument("--symbols", help="only these markets, e.g. 6E,GC,ZN")
+    p.add_argument("-a", "--account", help=account_help)
+    p.set_defaults(func=cmd_markets)
 
     p = sub.add_parser("coach", help="AI coach: Claude reviews what the bot knows, runs simulations and writes lessons")
     p.add_argument("question", nargs="*", help="what to look into (default: a full review)")

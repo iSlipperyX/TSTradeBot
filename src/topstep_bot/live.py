@@ -142,6 +142,7 @@ class LiveRunner:
         self._warmup_bars: tuple[list, tuple[datetime, datetime]] | None = None  # kept until the long-run memory opens
         self._catchup_bars: list = []  # today's bars so far: replayed once the knowledge base is ready
         self.market_pick = None  # market_pick.Pick when instrument.auto_pick chose the market
+        self.market_today: dict | None = None  # the market you switched the account to for today
 
     @staticmethod
     def now() -> datetime:
@@ -160,7 +161,14 @@ class LiveRunner:
             blocked = api_trading_block(self.account)
             if blocked:
                 raise SetupError(blocked)
-        if cfg.instrument.auto_pick:
+        from topstep_bot.market_pick import load_today
+
+        today = load_today(cfg, self.now())
+        if today:  # you switched this account's market for the rest of the trading day
+            cfg.instrument.symbol, cfg.instrument.contract_id = today["symbol"], None
+            self.market_today = today
+            log.info("Trading %s today: switched by %s at %s", today["symbol"], today.get("source", "you"), today.get("at"))
+        elif cfg.instrument.auto_pick:
             await self._pick_market()
         self.contract = await resolve_contract(self.client, cfg)
         log.info("Account %s (id %s), contract %s (%s)", self.account.name, self.account.id, self.contract.name, self.contract.id)
@@ -215,6 +223,7 @@ class LiveRunner:
                                     cfg.account_dir / "market_journal.jsonl")
         core.intel.result_for_day = self._day_result
         core.market_pick = self.market_pick.to_dict() if self.market_pick else None
+        core.market_today = self.market_today
         if cfg.recommendations.enabled:
             from topstep_bot.recommendations import RecommendationBook
 

@@ -24,6 +24,24 @@ Other systems: `pip install -e .` then run `topstep-bot` (it starts the dashboar
 
 No bot can guarantee passing the Combine or making a profit, and this one doesn't either.
 
+## New in 2.1
+
+- **Every market Topstep permits** — all 51: equity indexes, crypto, currencies, energy, metals,
+  interest rates, grains and livestock, with their contract specs, Topstep fees, busiest hours and what
+  moves each one. Grains and livestock are closed out before their early market close.
+- **All their history, no login needed** — one click (or `topstep-bot markets --download`) fetches
+  every market: TopstepX when your login works, Yahoo Finance for the rest, plus ten years of daily
+  prices for long-term context. Refreshed in the background about twice a day.
+- **Simulation Lab on every market** — about 1,600 live-like Combines in a few minutes, a summary per
+  asset class, and **Opportunities**: every market × strategy × time of day that made money in both
+  halves of the history, with an honest note on how many would look that good by luck. It runs by
+  itself every weekday after the close. ([guide](docs/HOW_TO_USE.md#36-every-market-topstep-permits))
+- **Trade another market today** — from the trade ticket, the Simulations tab or Telegram `/switch`:
+  the bot restarts on that market for the rest of the day, then goes back by itself.
+  ([guide](docs/HOW_TO_USE.md#37-trading-another-market-today))
+- **Auto market from every market** — the morning pick can choose from all 51 markets, with a stricter
+  test when it compares that many.
+
 ## New in 2.0
 
 - **A redesigned dashboard** — a trading-desk console: navigation rail, status bar, KPI strip,
@@ -186,6 +204,8 @@ topstep-bot first-trade-test  backtest the first trade after starting against a 
 topstep-bot update          check GitHub for a newer version and install it (--check, --token, --undo)
 topstep-bot accounts        your accounts: what each trades, its key, which share the same calls (--check: ask TopstepX)
 topstep-bot keys            list, add, remove or test stored API keys (add NAME, remove NAME, test)
+topstep-bot markets         every market Topstep permits and its history (--download, --yahoo)
+topstep-bot simulate        Simulation Lab on every market (--scope, --classes, --symbols, --starts)
 
 With several accounts, add --account NAME to act on one (e.g. 'start --mode live --account c2').
 ```

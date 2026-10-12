@@ -16,7 +16,7 @@ from topstep_bot.notify import Notifier
 from topstep_bot.risk.guards import OrderGuard
 from topstep_bot.risk.manager import RiskManager
 from topstep_bot.risk.topstep import PLANS, LossLimitTracker, starting_balance_for
-from topstep_bot.sessions import SessionSchedule
+from topstep_bot.sessions import SessionSchedule, market_session
 from topstep_bot.strategies import create_strategy
 
 
@@ -45,7 +45,7 @@ def build_core(
     notifier: Notifier | None = None,
 ) -> TradingCore:
     plan = PLANS[cfg.account.plan]
-    schedule = SessionSchedule(cfg.session)
+    schedule = SessionSchedule(market_session(cfg.session, contract.root or contract.name))
     floor = cfg.account.mll_floor_override if cfg.account.mll_floor_override is not None else mll_floor
     tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
     fees = fees_for(cfg, contract)

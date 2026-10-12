@@ -5,6 +5,11 @@ the bot's own trading core (the same code that trades live): its risk manager, T
 trailing Maximum Loss Limit, the daily limits, the 15:10 CT flatten), simulated fills with slippage and
 fees. A simulation ends when the Combine is passed or failed, or when the history runs out.
 
+Markets: by default every market Topstep permits that has history on this PC (``lab.markets: all``):
+equity indexes, crypto, currencies, energy, metals, interest rates and agriculture. market_data.py
+downloads that history (TopstepX when logged in, else Yahoo). Markets your plan can't trade right now are
+still simulated, so you can see what they would have done, but they are never recommended.
+
 A *playbook* is a market plus a strategy (MNQ + orb_momentum, say). For each playbook the lab reports:
 
   live-like runs     the Combines started on different days, as described above
@@ -16,6 +21,11 @@ A *playbook* is a market plus a strategy (MNQ + orb_momentum, say). For each pla
   held-out check     the playbook that looks best on the first half alone, scored on the second half
                      it never saw. With many playbooks tested, the overall winner looks better than it
                      is; this check says how much of its result survives.
+
+Opportunities: every playbook's trades are also split by time of day (open, midday, close), so an edge
+that exists only in one part of the day is not hidden by the rest. A pocket is listed when it made money
+in both halves of the history; its strength says how far it stands out from chance, and the list says how
+many pockets were tested, because some always look good by luck.
 
 Adaptive playbooks start each simulation with what the bot would know on that morning: its knowledge
 base is trained on the history before the start day only (no peeking), then keeps learning as the
@@ -62,7 +72,11 @@ BALANCE = 0.25  # an edge: the weaker half of the history made at least this sha
 VERDICT_ORDER = {"edge": 0, "mixed": 1, "losing": 2, "thin": 3}
 MC_PATHS = 2000
 MC_MAX_DAYS = 60  # a resampled Combine that hasn't passed or failed after this many days counts as open
-DEFAULT_STARTS = 4  # live-like runs per playbook: 4 markets x 8 strategies x 4 = 128 simulations
+DEFAULT_STARTS = 4  # live-like runs per playbook (with every market: about 50 x 8 x 4 = 1,600 simulations)
+MC_PATHS_WEAK = 400  # fewer resampled paths for playbooks that lost money or traded too little
+MIN_POCKET_TRADES = 8  # an opportunity (market x strategy x time of day) needs at least this many trades
+POCKETS_KEPT = 60
+CHANCE_PROMISING = 0.067  # share of edgeless pockets whose t-score clears 1.5 by luck (one-sided normal)
 
 
 @dataclass(frozen=True)
@@ -94,6 +108,8 @@ class SimRun:
     daily: list[tuple[str, float, float, int]] = field(default_factory=list)
     r_values: list[float] = field(default_factory=list)
     trade_pnls: list[float] = field(default_factory=list)  # each closed trade's net P&L (full-history runs)
+    # (trading day, time-of-day slot, R, net P&L) per closed trade (full-history runs): the opportunity finder
+    trade_slots: list[tuple[str, str, float | None, float]] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------------------------------ history
@@ -106,6 +122,25 @@ def history_sources(cfg: BotConfig) -> dict[str, list[Path]]:
         symbol = path.name.split("_", 1)[0].upper()
         out.setdefault(symbol, []).append(path)
     return out
+
+
+def available_markets(cfg: BotConfig) -> list[str]:
+    """Every permitted market with history on this PC: the CSVs plus the market library at the bot's timeframe."""
+    import sqlite3
+
+    from topstep_bot.instruments import SPECS
+    from topstep_bot.memory import MarketLibrary
+
+    have = set(history_sources(cfg))
+    if cfg.library_path.exists():
+        lib = MarketLibrary(cfg.library_path)
+        try:
+            have.update(lib.symbols(cfg.instrument.timeframe_minutes))
+        except sqlite3.Error as exc:
+            log.warning("Could not read the market library: %s", exc)
+        finally:
+            lib.close()
+    return [s for s in SPECS if s in have]
 
 
 def load_history(cfg: BotConfig, symbol: str) -> list[Bar]:
@@ -134,10 +169,13 @@ def load_history(cfg: BotConfig, symbol: str) -> list[Bar]:
     return [merged[k] for k in sorted(merged)]
 
 
-def lab_symbols(cfg: BotConfig, available: list[str]) -> list[str]:
-    """Markets to simulate: the plan's tradable micros (and the configured market) that have history here."""
+def lab_symbols(cfg: BotConfig, available: list[str], scope: str | None = None) -> list[str]:
+    """Markets to simulate: every market with history here (``lab.markets: all``), or only the ones this
+    account may auto-pick plus its configured market (``tradable``)."""
     from topstep_bot.market_pick import candidates_for
 
+    if (scope or cfg.lab.markets) == "all":
+        return list(available)
     wanted = list(dict.fromkeys([*candidates_for(cfg), cfg.instrument.symbol]))
     return [s for s in wanted if s in available]
 
@@ -199,10 +237,18 @@ _BARS: dict[str, list[Bar]] = {}
 _CFG: dict = {}
 
 
-def _init_worker(cfg: dict, bars: dict[str, list[Bar]]) -> None:
+def _init_worker(cfg: dict, bars: dict[str, list[Bar]] | None) -> None:
+    """``bars``: the history, or None to have each worker process read it from disk when first needed
+    (with every market, sending it all to every process would cost more than the reading)."""
     global _BARS, _CFG
     logging.disable(logging.WARNING)  # thousands of simulated orders would flood the log
-    _BARS, _CFG = bars, cfg
+    _BARS, _CFG = (bars if bars is not None else {}), cfg
+
+
+def _bars_for(symbol: str) -> list[Bar]:
+    if symbol not in _BARS:
+        _BARS[symbol] = load_history(BotConfig.model_validate(_CFG), symbol)
+    return _BARS[symbol]
 
 
 def _run_spec(spec: SimSpec) -> SimRun:
@@ -219,7 +265,7 @@ async def _simulate(spec: SimSpec) -> SimRun:
     run = SimRun(spec.symbol, spec.strategy, spec.start, "error")
     try:
         cfg = sim_config(BotConfig.model_validate(_CFG), spec.symbol, spec.strategy, json.loads(spec.params or "{}"))
-        bars = _BARS[spec.symbol]
+        bars = _bars_for(spec.symbol)
         contract = offline_contract(spec.symbol)
         start = date.fromisoformat(spec.start) if spec.start else None
         prepare = None
@@ -250,6 +296,7 @@ async def _simulate(spec: SimSpec) -> SimRun:
     if spec.full:
         run.status = "full"
         run.profit = round(sum(pnls), 2)
+        run.trade_slots = _trade_slots(cfg, res.trades)
         run.daily = [(d.day.isoformat(), round(d.pnl, 2), round(d.min_equity - d.start_balance, 2), d.trades) for d in days]
     else:
         outcome = simulate_combine(days, PLANS[cfg.account.plan], 0) if days else None
@@ -262,6 +309,20 @@ async def _simulate(spec: SimSpec) -> SimRun:
             run.detail = outcome.detail
     run.seconds = round(time.perf_counter() - t0, 2)
     return run
+
+
+def _trade_slots(cfg: BotConfig, trades: list) -> list[tuple[str, str, float | None, float]]:
+    from zoneinfo import ZoneInfo
+
+    from topstep_bot.knowledge import slot_for
+
+    tz = ZoneInfo(cfg.session.timezone)
+    out = []
+    for t in trades:
+        when = (t.opened_at or t.created_at).astimezone(tz)
+        r = t.r_multiple()
+        out.append((when.date().isoformat(), slot_for(when.time()), round(r, 3) if r is not None else None, round(t.net_pnl, 2)))
+    return out
 
 
 async def _morning_knowledge(cfg: BotConfig, contract, bars: list[Bar], start: date):
@@ -331,6 +392,9 @@ def _verdict(pb: dict[str, Any]) -> tuple[str, str]:
 
 
 def summarize_playbooks(runs: list[SimRun], plan, seed: int = 7) -> list[dict[str, Any]]:
+    from topstep_bot.instruments import CLASSES, SPECS
+    from topstep_bot.risk.topstep import product_limit
+
     rng = random.Random(seed)
     by_key: dict[tuple[str, str], list[SimRun]] = {}
     for r in runs:
@@ -349,8 +413,13 @@ def summarize_playbooks(runs: list[SimRun], plan, seed: int = 7) -> list[dict[st
         lost = -sum(x for x in tp if x <= 0)
         pnl = [p for _, p, _, _ in daily]
         net = round(sum(pnl), 2)
+        spec = SPECS.get(symbol)
+        cls = spec.asset_class if spec else "equity"
+        strong = net > 0 and trades >= MIN_TRADES
         pb: dict[str, Any] = {
             "symbol": symbol, "strategy": strategy, "label": f"{symbol} · {strategy}",
+            "class": cls, "class_label": CLASSES.get(cls, cls), "description": spec.description if spec else symbol,
+            "allowed": product_limit(symbol, plan) != 0,
             "days": len(daily), "trades": trades, "win_rate": round(wins / trades, 3) if trades else None,
             "net": net, "per_day": round(net / len(daily), 2) if daily else 0.0,
             "avg_r": round(statistics.mean(rs), 3) if rs else None,
@@ -361,7 +430,7 @@ def summarize_playbooks(runs: list[SimRun], plan, seed: int = 7) -> list[dict[st
             "runs": {"total": len(combines), "passed": sum(r.status == "passed" for r in combines),
                      "failed": sum(r.status == "failed" for r in combines), "open": sum(r.status == "open" for r in combines),
                      "avg_profit": round(statistics.mean(r.profit for r in combines), 2) if combines else None},
-            "resampled": _resample(daily, plan, rng, MC_PATHS) if daily else {"paths": 0},
+            "resampled": _resample(daily, plan, rng, MC_PATHS if strong else MC_PATHS_WEAK) if daily else {"paths": 0},
             "errors": [e.detail for e in errors][:3],
             "history": [daily[0][0], daily[-1][0]] if daily else None,
             "equity": _equity(pnl),
@@ -386,9 +455,66 @@ def _equity(pnl: list[float], points: int = 60) -> list[float]:
     return [out[min(len(out) - 1, math.floor(i * step))] for i in range(points)] + [out[-1]]
 
 
+def find_opportunities(runs: list[SimRun], playbooks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Every market x strategy x time of day that made money in both halves of its history, strongest first.
+
+    Strength is a t-like score: the average trade divided by its spread, times the square root of the
+    number of trades. With hundreds of pockets tested some clear 2 by luck alone, which is why the
+    report says how many were tested; only "strong" ones that also held up in both halves stand out."""
+    by_pb = {(p["symbol"], p["strategy"]): p for p in playbooks}
+    tested = 0
+    found: list[dict[str, Any]] = []
+    for r in runs:
+        if r.status != "full" or not r.trade_slots:
+            continue
+        pb = by_pb.get((r.symbol, r.strategy))
+        days = [d for d, *_ in r.daily]
+        mid = days[len(days) // 2] if days else ""
+        groups: dict[str, list[tuple[str, str, float | None, float]]] = {}
+        for row in r.trade_slots:
+            groups.setdefault(row[1], []).append(row)
+        for slot, rows in groups.items():
+            if slot == "off" or len(rows) < MIN_POCKET_TRADES:
+                continue
+            tested += 1
+            pnls = [p for *_, p in rows]
+            net = sum(pnls)
+            first = sum(p for d, _, _, p in rows if d < mid)
+            second = net - first
+            if net <= 0 or first <= 0 or second <= 0:
+                continue
+            rs = [x for _, _, x, _ in rows if x is not None]
+            sd = statistics.pstdev(pnls) if len(pnls) > 1 else 0.0
+            t = (statistics.fmean(pnls) / sd * math.sqrt(len(pnls))) if sd > 0 else 0.0
+            found.append({
+                "symbol": r.symbol, "strategy": r.strategy, "slot": slot, "trades": len(rows),
+                "label": f"{r.symbol} · {r.strategy} · {slot}",
+                "class": pb["class"] if pb else "", "allowed": pb["allowed"] if pb else True,
+                "net": round(net, 2), "per_trade": round(net / len(rows), 2),
+                "avg_r": round(statistics.fmean(rs), 3) if rs else None,
+                "win_rate": round(sum(1 for p in pnls if p > 0) / len(pnls), 3),
+                "halves": [round(first, 2), round(second, 2)], "score": round(t, 2),
+                "strength": "strong" if t >= 2.5 else "promising" if t >= 1.5 else "early",
+                "playbook_verdict": pb["verdict"] if pb else None,
+            })
+    found.sort(key=lambda o: -o["score"])
+    standout = sum(1 for o in found if o["strength"] != "early")
+    by_chance = round(CHANCE_PROMISING * tested)
+    if standout > by_chance:
+        verdict = "more than luck alone would give: worth confirming in paper mode, strongest first."
+    else:
+        verdict = "no more than luck alone would give, so none of them is evidence of an edge yet: watch them, don't trade them."
+    return {"tested": tested, "found": len(found), "standout": standout, "by_chance": by_chance, "items": found[:POCKETS_KEPT],
+            "text": (f"{tested} pockets (market x strategy x time of day with at least {MIN_POCKET_TRADES} trades) were "
+                     f"tested; {len(found)} made money in both halves of the history and {standout} of them clear the "
+                     f"'promising' bar. If no pocket had a real edge, about {by_chance} would clear it by luck: {standout} is "
+                     + verdict)}
+
+
 def holdout_check(playbooks: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Pick on the first half of the history only, then look at the second half (which the pick never saw)."""
-    eligible = [p for p in playbooks if p["trades"] >= MIN_TRADES and p["days"] >= 2 * MIN_RUNWAY_DAYS]
+    eligible = [p for p in playbooks if p["trades"] >= MIN_TRADES and p["days"] >= 2 * MIN_RUNWAY_DAYS
+                and p.get("allowed", True)]
     if not eligible:
         return None
     pick = max(eligible, key=lambda p: p["halves"][0])
@@ -404,6 +530,7 @@ def holdout_check(playbooks: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 def recommendation(playbooks: list[dict[str, Any]], holdout: dict[str, Any] | None, cfg: BotConfig) -> dict[str, Any]:
     """What the lab suggests, in plain words. Never applied automatically."""
+    playbooks = [p for p in playbooks if p.get("allowed", True)]  # never suggest a market the plan can't trade
     edges = [p for p in playbooks if p["verdict"] == "edge"]
     current = next((p for p in playbooks if p["symbol"] == cfg.instrument.symbol and p["strategy"] == cfg.strategy.name), None)
     now = ""
@@ -434,11 +561,13 @@ def recommendation(playbooks: list[dict[str, Any]], holdout: dict[str, Any] | No
 async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list[str] | None = None,
                   strategies: list[str] | None = None, workers: int | None = None,
                   params: dict[str, dict[str, Any]] | None = None, risk_per_trade: float | None = None,
+                  scope: str | None = None, classes: list[str] | None = None,
                   save: bool = True, progress: Callable[[int, int, str], None] | None = None) -> dict[str, Any]:
     """Run the simulations and return the report (saved as the lab's latest unless ``save`` is False).
 
     ``params``: strategy settings to try instead of the defaults, per strategy. ``risk_per_trade``:
-    simulate a different risk per trade than the account's. Both are checked like config.yaml."""
+    simulate a different risk per trade than the account's. Both are checked like config.yaml. ``scope``:
+    "all" or "tradable" markets (default ``lab.markets``); ``classes``: only these asset classes (fx, metals...)."""
     from topstep_bot.instruments import offline_contract
     from topstep_bot.risk.topstep import PLANS
     from topstep_bot.sessions import SessionSchedule
@@ -447,13 +576,22 @@ async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list
     t0 = time.perf_counter()
     if progress:
         progress(0, 1, "loading price history")
-    available = sorted(history_sources(cfg))
-    syms = [s.upper() for s in symbols] if symbols else lab_symbols(cfg, available)
-    bars = {s: load_history(cfg, s) for s in syms}
-    bars = {s: b for s, b in bars.items() if b}
+    from topstep_bot.instruments import SPECS, class_of
+
+    available = available_markets(cfg)
+    syms = [s.upper() for s in symbols] if symbols else lab_symbols(cfg, available, scope)
+    if classes:
+        wanted = {c.lower() for c in classes}
+        syms = [s for s in syms if class_of(s) in wanted]
+    bars = {}
+    for i, s in enumerate(syms):
+        if progress:
+            progress(0, 1, f"loading price history ({s}, {i + 1} of {len(syms)})")
+        if b := load_history(cfg, s):
+            bars[s] = b
     if not bars:
-        raise ValueError("No price history on this PC yet. Download some first (topstep-bot download --days 60), "
-                         "or let the bot run: it saves what it downloads.")
+        raise ValueError("No price history on this PC yet. Download it first: the Simulations tab's 'Download every "
+                         "market' button, or topstep-bot markets --download.")
     strats = strategies or lab_strategies(cfg)
     unknown = [s for s in strats if s not in lab_strategies(cfg)]
     if unknown:
@@ -476,6 +614,7 @@ async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list
     runs: list[SimRun] = []
     total = len(specs)
     n_workers = workers if workers is not None else max(1, min(8, (os.cpu_count() or 2) - 1))
+    many = len(bars) > 6  # with many markets each worker reads its history itself (see _init_worker)
 
     def step() -> None:
         if progress:
@@ -484,7 +623,7 @@ async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list
     loop = asyncio.get_running_loop()
     if n_workers > 1:
         try:
-            with ProcessPoolExecutor(n_workers, initializer=_init_worker, initargs=(raw, bars)) as ex:
+            with ProcessPoolExecutor(n_workers, initializer=_init_worker, initargs=(raw, None if many else bars)) as ex:
                 futures = [loop.run_in_executor(ex, _run_spec, s) for s in specs]
                 for fut in asyncio.as_completed(futures):
                     runs.append(await fut)
@@ -502,8 +641,12 @@ async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list
         finally:
             logging.disable(logging.NOTSET)
     plan = PLANS[cfg.account.plan]
+    if progress:
+        progress(total, total, "scoring playbooks and opportunities")
     playbooks = summarize_playbooks(runs, plan)
     holdout = holdout_check(playbooks)
+    opportunities = find_opportunities(runs, playbooks)
+    missing = [s for s in SPECS if s not in bars]
     combines = [r for r in runs if r.status in ("passed", "failed", "open")]
     report = {
         "generated": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -511,7 +654,10 @@ async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list
         "plan": plan.name, "profit_target": plan.profit_target, "max_loss_limit": plan.max_loss_limit,
         "risk_per_trade": cfg.risk.risk_per_trade, "timeframe": tf, "params": params or {},
         "markets": {s: {"bars": len(b), "days": len(trading_days[s]), "from": trading_days[s][0].isoformat(),
-                        "to": trading_days[s][-1].isoformat()} for s, b in bars.items()},
+                        "to": trading_days[s][-1].isoformat(), "class": class_of(s)} for s, b in bars.items()},
+        "coverage": {"simulated": len(bars), "permitted": len(SPECS), "missing": missing},
+        "classes": _class_summary(playbooks),
+        "opportunities": opportunities,
         "strategies": strats,
         "totals": {"simulations": len(combines), "full_histories": sum(r.status == "full" for r in runs),
                    "passed": sum(r.status == "passed" for r in combines), "failed": sum(r.status == "failed" for r in combines),
@@ -526,6 +672,10 @@ async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list
             f"{len(playbooks)} playbooks were compared, so the best one looks better than it really is (the held-out check tests that).",
             "News days are not skipped in history; the live bot steps aside for scheduled news.",
             "Fills assume the configured slippage; real fills can be worse in fast markets.",
+            "History from Yahoo is the continuous front-month future: around a contract roll it can differ from the "
+            "contract TopstepX trades for a day or two.",
+            "Each market uses its own contract specs and fees but your account's settings (risk per trade, trading window): "
+            "a full-size contract whose stops are too wide for your risk simply takes no trade.",
         ],
         "runs": [_run_row(r) for r in runs if r.status != "full"],
     }
@@ -536,9 +686,26 @@ async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list
     return report
 
 
+def _class_summary(playbooks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per asset class: how many playbooks, how many with an edge, and the best one."""
+    from topstep_bot.instruments import CLASSES
+
+    out = []
+    for key, label in CLASSES.items():
+        group = [p for p in playbooks if p.get("class") == key]
+        if not group:
+            continue
+        best = group[0]  # playbooks are already ranked
+        out.append({"class": key, "label": label, "markets": len({p["symbol"] for p in group}), "playbooks": len(group),
+                    "edges": sum(p["verdict"] == "edge" for p in group), "net": round(sum(p["net"] for p in group), 2),
+                    "best": {"label": best["label"], "verdict": best["verdict"], "net": best["net"]}})
+    return out
+
+
 def _run_row(r: SimRun) -> dict[str, Any]:
     d = asdict(r)
     d.pop("daily", None)
+    d.pop("trade_slots", None)
     d.pop("r_values", None)
     d.pop("trade_pnls", None)
     return d
@@ -616,6 +783,17 @@ def report_text(report: dict[str, Any] | None, top: int = 6) -> str:
                      f"halves ${p['halves'][0]:,.0f} / ${p['halves'][1]:,.0f}, PF {p['profit_factor']}, "
                      f"runs {p['runs']['passed']}P/{p['runs']['failed']}F/{p['runs']['open']}O"
                      + (f", resampled pass {round(100 * mc['pass'])}% fail {round(100 * mc['fail'])}%" if mc.get("paths") else ""))
+    opp = report.get("opportunities") or {}
+    if opp.get("items"):
+        lines.append("Opportunities (time-of-day pockets that made money in both halves):")
+        for o in opp["items"][:top]:
+            lines.append(f"  {o['label']}: {o['strength']} - ${o['net']:,.0f} over {o['trades']} trades, "
+                         f"halves ${o['halves'][0]:,.0f} / ${o['halves'][1]:,.0f}"
+                         + ("" if o.get("allowed", True) else " (your plan can't trade this market now)"))
+        lines.append(f"  {opp['text']}")
+    cov = report.get("coverage")
+    if cov and cov.get("missing"):
+        lines.append(f"No history yet for {len(cov['missing'])} of {cov['permitted']} markets: download it to include them.")
     if report.get("holdout"):
         lines.append("Held-out check: " + report["holdout"]["text"])
     lines.append("Suggestion: " + report["recommendation"]["text"])
@@ -635,7 +813,7 @@ async def teach(cfg: BotConfig, symbols: list[str] | None = None,
     from topstep_bot.memory import LongRunMemory, import_csv
 
     sources = history_sources(cfg)
-    syms = [s for s in (symbols or lab_symbols(cfg, sorted(sources))) if s in sources]
+    syms = symbols or lab_symbols(cfg, available_markets(cfg))
     out = []
     for i, symbol in enumerate(syms):
         if progress:
@@ -643,7 +821,7 @@ async def teach(cfg: BotConfig, symbols: list[str] | None = None,
         scfg = cfg.model_copy(deep=True)
         scfg.instrument.symbol = symbol
         added = 0
-        for path in sources[symbol]:
+        for path in sources.get(symbol, []):
             try:
                 added += import_csv(scfg, path)[1]
             except (OSError, ValueError) as exc:

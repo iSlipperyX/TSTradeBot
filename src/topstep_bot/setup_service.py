@@ -43,7 +43,8 @@ from topstep_bot.config import (
     login_key,
 )
 from topstep_bot.config_edit import REMOVE, set_section, set_values
-from topstep_bot.instruments import SPECS
+from topstep_bot.instruments import CLASSES, SPECS
+from topstep_bot.models import MICRO_ROOTS
 from topstep_bot.risk.topstep import PLANS, product_limit
 from topstep_bot.strategies import STRATEGIES
 from topstep_bot.wizard import SYMBOL_CHOICES
@@ -56,7 +57,15 @@ log = logging.getLogger("topstep_bot.setup")
 STAGES = [("combine", "Trading Combine (evaluation)"), ("express", "Express Funded Account (XFA)"),
           ("practice", "Practice account")]
 LEARN_MIN_TRADES = 8
-AUTO = "AUTO"  # the Market choice that lets the bot pick (instrument.auto_pick)
+AUTO = "AUTO"  # the Market choice that lets the bot pick (instrument.auto_pick) among the default micros
+AUTO_ALL = "AUTO_ALL"  # ...among every market Topstep permits (instrument.candidates: [ALL])
+
+
+def market_key(instrument) -> str:
+    """The Setup tab's Market choice for an instrument section: AUTO_ALL, AUTO or the symbol."""
+    if instrument.auto_pick:
+        return AUTO_ALL if [c.upper() for c in instrument.candidates] == ["ALL"] else AUTO
+    return instrument.symbol
 REPORT_MAX_AGE = 300  # seconds before the Setup tab checks the accounts again by itself
 # Each account's own files, copied into data/accounts/<name> when the single account joins an accounts list.
 ACCOUNT_FILES = ("journal_*.db", "knowledge_*m.json", "knowledge_*m.ledger.jsonl", "remote_settings.json",
@@ -95,6 +104,15 @@ def suggested_risk(plan: str, goal: str, topstep_dll: bool) -> dict:
 def goal_of(cfg: BotConfig) -> str:
     """'learn' when config.yaml is set up to teach the bot (as the wizard writes it), else 'pass'."""
     return "learn" if cfg.strategy.name == "adaptive" and cfg.strategy.params.get("trade_unproven") is True else "pass"
+
+
+def _candidates_change(v: dict, current: list[str]) -> dict:
+    """instrument.candidates for the Market choice: [ALL] for 'every market'; a list you wrote yourself is kept."""
+    if v.get("every_market"):
+        return {("instrument", "candidates"): ["ALL"]}
+    if [c.upper() for c in current] == ["ALL"]:
+        return {("instrument", "candidates"): REMOVE}
+    return {}
 
 
 class SetupService:
@@ -149,7 +167,7 @@ class SetupService:
             "values": {
                 "account_id": a.account_id, "account_name": a.account_name, "plan": a.plan, "stage": a.stage,
                 "goal": goal, "topstep_dll": dll, "payout_path": a.payout_path,
-                "symbol": AUTO if cfg.instrument.auto_pick else cfg.instrument.symbol, "strategy": cfg.strategy.name,
+                "symbol": market_key(cfg.instrument), "strategy": cfg.strategy.name,
                 "fallback": cfg.instrument.symbol,
                 "risk_per_trade": cfg.risk.risk_per_trade, "daily_loss_limit": cfg.risk.personal_daily_loss_limit,
                 "max_trades": cfg.risk.max_trades_per_day,
@@ -173,10 +191,14 @@ class SetupService:
                 "plans": [{"name": p.name, "profit_target": p.profit_target, "max_loss_limit": p.max_loss_limit,
                            "max_minis": p.max_minis, "daily_loss_limit": p.daily_loss_limit} for p in PLANS.values()],
                 "stages": [{"key": k, "label": label} for k, label in STAGES],
-                "symbols": [{"key": AUTO, "label": "Auto: the bot picks each day", "tick_value": None, "blocked": []}] + [
+                "symbols": [{"key": AUTO, "label": "Auto: the bot picks each day (micro index, gold and crude)",
+                             "tick_value": None, "blocked": []},
+                            {"key": AUTO_ALL, "label": "Auto: the bot picks each day from every Topstep market",
+                             "tick_value": None, "blocked": []}] + [
                     {"key": sym, "label": SPECS[sym].description, "tick_value": SPECS[sym].tick_value,
+                     "class": CLASSES[SPECS[sym].asset_class], "micro": sym in MICRO_ROOTS,
                      "blocked": [p for p in PLANS if product_limit(sym, PLANS[p]) == 0]}
-                    for sym in SYMBOL_CHOICES if sym in SPECS],
+                    for sym in [*SYMBOL_CHOICES, *(x for x in SPECS if x not in SYMBOL_CHOICES)]],
                 "strategies": [{"key": c.name, "title": c.title, "description": c.description} for c in STRATEGIES.values()],
                 "suggested": {f"{p}|{g}|{int(d)}": suggested_risk(p, g, d)
                               for p in PLANS for g in ("pass", "learn") for d in (False, True)},
@@ -256,6 +278,7 @@ class SetupService:
             ("account", "topstep_daily_loss_limit"): True if v["topstep_dll"] and stage != "practice" else REMOVE,
             ("account", "payout_path"): v["payout_path"],
             ("instrument", "symbol"): v["symbol"], ("instrument", "auto_pick"): True if v["auto_pick"] else REMOVE,
+            **_candidates_change(v, cfg.instrument.candidates),
             ("strategy", "name"): v["strategy"],
             ("risk", "risk_per_trade"): v["risk_per_trade"], ("risk", "personal_daily_loss_limit"): v["daily_loss_limit"],
             ("risk", "max_trades_per_day"): v["max_trades"],
@@ -305,7 +328,8 @@ class SetupService:
         if stage not in dict(STAGES):
             raise ValueError("Choose the account type.")
         symbol = str(body.get("symbol", "")).upper()
-        auto_pick = symbol == AUTO
+        every_market = symbol == AUTO_ALL
+        auto_pick = symbol in (AUTO, AUTO_ALL)
         if auto_pick:  # the bot picks; the set market is kept for days no market shows an edge
             symbol = str(body.get("fallback") or "").upper() or "MNQ"
         if symbol not in SPECS:
@@ -325,7 +349,8 @@ class SetupService:
         if goal == "learn":
             strategy = "adaptive"  # learning runs every strategy and learns from all of them
         return {
-            "plan": plan, "stage": stage, "goal": goal, "symbol": symbol, "auto_pick": auto_pick, "strategy": strategy,
+            "plan": plan, "stage": stage, "goal": goal, "symbol": symbol, "auto_pick": auto_pick, "every_market": every_market,
+            "strategy": strategy,
             "account_id": account_id, "account_name": str(body.get("account_name") or "").strip() or None,
             "topstep_dll": bool(body.get("topstep_dll")),
             "payout_path": "consistency" if body.get("payout_path") == "consistency" and stage == "express" else "standard",
@@ -356,6 +381,7 @@ class SetupService:
         if fresh:
             text = set_values(self._fresh_text(v), {("risk", "max_trades_per_day"): v["max_trades"],
                                                     ("instrument", "auto_pick"): True if v["auto_pick"] else REMOVE,
+                                                    **_candidates_change(v, []),
                                                     ("account", "account_name"): v["account_name"] or REMOVE,
                                                     ("first_trade", "enabled"): v["first_trade"] or REMOVE})
         else:
@@ -371,7 +397,8 @@ class SetupService:
             path.with_name(path.name + ".bak").write_text(original, encoding="utf-8")
         path.write_text(text, encoding="utf-8")
         self._reload()
-        market = f"auto (else {v['symbol']})" if v["auto_pick"] else v["symbol"]
+        market = (f"auto from {'every market' if v['every_market'] else 'the micros'} (else {v['symbol']})"
+                  if v["auto_pick"] else v["symbol"])
         log.info("Setup saved from the dashboard (%s %s, %s, %s, goal %s, first trade %s)", v["plan"], v["stage"],
                  market, v["strategy"], v["goal"], "on" if v["first_trade"] else "off")
         self.ctl.bot._event("info", f"Setup saved from the dashboard: {v['plan']} {v['stage']}, {market}, "
@@ -403,9 +430,9 @@ class SetupService:
         cfg = self.ctl.cfg
         p = cfg.profile(name)
         acfg = cfg.for_account(name)
-        shared_market = AUTO if cfg.instrument.auto_pick else cfg.instrument.symbol
+        shared_market = market_key(cfg.instrument)
         own = p.instrument.get("symbol") is not None or "auto_pick" in p.instrument
-        market = (AUTO if acfg.instrument.auto_pick else acfg.instrument.symbol) if own else ""
+        market = market_key(acfg.instrument) if own else ""
         r = acfg.risk
         return {"name": p.name, "enabled": p.enabled, "account_id": acfg.account.account_id,
                 "account_name": acfg.account.account_name, "plan": acfg.account.plan, "stage": acfg.account.stage,
@@ -513,8 +540,12 @@ class SetupService:
             market = str(body.get("market") or "").upper()
             instrument.pop("symbol", None)
             instrument.pop("auto_pick", None)
-            if market == AUTO:
+            if [str(c).upper() for c in instrument.get("candidates") or []] == ["ALL"]:
+                instrument.pop("candidates", None)
+            if market in (AUTO, AUTO_ALL):
                 instrument["auto_pick"] = True
+                if market == AUTO_ALL:
+                    instrument["candidates"] = ["ALL"]
             elif market:
                 if market not in SPECS:
                     raise ValueError("Choose a market.")

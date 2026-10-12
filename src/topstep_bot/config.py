@@ -126,7 +126,9 @@ class InstrumentConfig(_Section):
     )
     candidates: list[str] = Field(
         default_factory=list,
-        description="Markets auto_pick chooses from (default: the micro contracts your plan allows).",
+        description="Markets auto_pick chooses from (default: the micro index, gold and crude contracts). Symbols, or "
+                    "ALL (every market Topstep permits), MICROS, or an asset class: EQUITY, CRYPTO, FX, ENERGY, METALS, "
+                    "RATES, AGS.",
     )
 
     @field_validator("symbol")
@@ -137,10 +139,10 @@ class InstrumentConfig(_Section):
     @field_validator("candidates")
     @classmethod
     def _upper_all(cls, v: list[str]) -> list[str]:
-        from topstep_bot.instruments import SPECS
+        from topstep_bot.instruments import CANDIDATE_GROUPS, SPECS
 
         out = list(dict.fromkeys(s.strip().upper() for s in v if s.strip()))
-        unknown = [s for s in out if s not in SPECS]
+        unknown = [s for s in out if s not in SPECS and s not in CANDIDATE_GROUPS]
         if unknown:
             raise ValueError(f"unknown market(s) in candidates: {', '.join(unknown)} (known: {', '.join(SPECS)})")
         return out
@@ -380,6 +382,30 @@ class CoachConfig(_Section):
     allow_simulations: bool = Field(default=True, description="Let the coach run its own Simulation Lab experiments.")
 
 
+class LabConfig(_Section):
+    """The Simulation Lab (simlab.py) and the price history it uses (market_data.py)."""
+
+    markets: Literal["all", "tradable"] = Field(
+        default="all", description="all = every market Topstep permits that has history on this PC; tradable = only "
+                                   "the markets this account may auto-pick (instrument.candidates).")
+    refresh_data: bool = Field(
+        default=True, description="Keep every market's history up to date in the background (Yahoo, about twice a "
+                                  "day; no login needed). It only fills gaps: TopstepX bars are never overwritten.")
+    nightly: bool = Field(
+        default=True, description="Run the Simulation Lab on every market once each weekday after the close, so the "
+                                  "Opportunities list is always fresh. It never changes a setting or places a trade.")
+    nightly_time: time = Field(default=time(15, 30), description="When the nightly run starts (CT, after the 15:10 flatten).")
+
+    @field_validator("nightly_time", mode="before")
+    @classmethod
+    def _parse_time(cls, v: Any) -> time:
+        return _parse_hhmm(v)
+
+    @field_serializer("nightly_time")
+    def _dump_time(self, v: time) -> str:
+        return v.strftime("%H:%M")
+
+
 class ServiceConfig(_Section):
     """Unattended 24/7 operation (the controller started by 'topstep-bot start')."""
 
@@ -553,6 +579,7 @@ class BotConfig(_Section):
     funded: FundedConfig = Field(default_factory=FundedConfig)
     research: ResearchConfig = Field(default_factory=ResearchConfig)
     coach: CoachConfig = Field(default_factory=CoachConfig)
+    lab: LabConfig = Field(default_factory=LabConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     multi_account: MultiAccountConfig = Field(default_factory=MultiAccountConfig)

@@ -505,6 +505,9 @@ class ProxyActions:
         bot = self._one(account)
         return self._tag(bot, rules_text(self.ctl.account_cfg(bot.account)))
 
+    async def switch_market(self, symbol: str, source: str, account: str | None = None) -> str:
+        return await self.ctl.switch_market(symbol, source, account)
+
     async def research_text(self, account: str | None = None) -> str:
         if self.ctl.research is None:
             return "Research is turned off (research.enabled: false)."
@@ -649,6 +652,10 @@ class Controller:
                 ("POST", "/api/lab/state", lambda r: self.lab.state()),
                 ("POST", "/api/lab/run", lambda r: self.lab.run(r.json(), source(r))),
                 ("POST", "/api/lab/apply", lambda r: self.lab.apply(r.json(), source(r))),
+                ("POST", "/api/lab/download", lambda r: self.lab.download(r.json(), source(r))),
+                ("POST", "/api/markets", lambda r: self.lab.markets(r.json())),
+                ("POST", "/api/market/switch", lambda r: self.switch_market(str(r.json().get("symbol", "")), source(r),
+                                                                           r.json().get("account"))),
                 ("POST", "/api/coach/state", lambda r: self.coach.state()),
                 ("POST", "/api/coach/key", lambda r: self.coach.save_key(r.json())),
                 ("POST", "/api/coach/key/remove", lambda r: self.coach.remove_key()),
@@ -675,6 +682,7 @@ class Controller:
         self.coach = CoachService(self)
         self.research = self._make_research()
         self._research_task: asyncio.Task | None = None
+        self._lab_tasks: list[asyncio.Task] = []  # every market's history refresh and the nightly Simulation Lab
         self.phone = PhoneAccess(self)  # after the dashboard's routes: the phone link serves some of them
 
     # ---------------------------------------------------------------- accounts
@@ -820,7 +828,9 @@ class Controller:
         if self.multi and account:
             with contextlib.suppress(ValueError):
                 cfg = self.account_cfg(account)
-        symbol = cfg.instrument.symbol
+        from topstep_bot.market_pick import current_symbol
+
+        symbol = current_symbol(cfg)
         try:
             spec = get_spec(symbol)
             rth = (parse_hhmm(spec.rth_open), parse_hhmm(spec.rth_close))
@@ -911,6 +921,68 @@ class Controller:
             else:
                 lines.append(f"{prefix} set to {mode.upper()}. Press Start to run the bot.")
         remember_modes(self.cfg, {b.account: b.mode for b in self.bots.values()})
+        return "\n".join(lines)
+
+    # ---------------------------------------------------------------- today's market
+
+    async def switch_market(self, symbol: str, source: str, account: str | None = None) -> str:
+        """Trade another market for the rest of today (trade ticket, Simulations tab, Telegram /switch), or go
+        back to the usual one (``symbol`` empty or USUAL).
+
+        The bot must be flat: it restarts on the new market (its own strategy trades it too, with every risk
+        rule and Topstep guard as before). Accounts that copy this account's calls follow it. The switch ends
+        at 15:10 CT; after the daily restart the account is back on its usual market or pick."""
+        from topstep_bot import market_pick as mp
+        from topstep_bot.instruments import SPECS
+        from topstep_bot.risk.topstep import PLANS, product_limit
+
+        bots = self.pick(account)
+        if len(bots) != 1:
+            raise ValueError("Pick one account to switch: " + ", ".join(self.bots))
+        bot = bots[0]
+        acfg = self.account_cfg(bot.account)
+        leader = next((p.follow for p in self.cfg.accounts if p.name == bot.account and p.follow), None) if self.multi else None
+        if leader:
+            raise ValueError(f"{bot.account} copies {leader}'s calls: switch {leader} and it follows.")
+        symbol = (symbol or "").strip().upper()
+        back = symbol in ("", "USUAL", "BACK")
+        current = mp.current_symbol(acfg)
+        if back:
+            if mp.load_today(acfg) is None:
+                return f"{bot.who} is on its usual market ({current})."
+        else:
+            if symbol not in SPECS:
+                raise ValueError(f"Unknown market '{symbol}'. Markets: {', '.join(SPECS)}")
+            if product_limit(symbol, PLANS[acfg.account.plan]) == 0:
+                raise ValueError(f"Topstep doesn't allow {symbol} on a {acfg.account.plan} account right now.")
+            if symbol == current:
+                return f"{bot.who} already trades {symbol}."
+        followers = [b for b in self.bots.values() if self.multi and any(
+            p.name == b.account and p.follow == bot.account for p in self.cfg.accounts)]
+        group = [bot, *followers]
+        for b in group:
+            if b.running:
+                status = await b.status()
+                snap = status.get("bot") if status else None
+                if snap and (snap.get("position") or snap.get("trade")):
+                    raise ValueError(f"A trade is open{f' on {b.account}' if self.multi else ''}. Close it first, then switch markets.")
+        lines = []
+        for b in group:
+            bcfg = self.account_cfg(b.account)
+            if back:
+                mp.clear_today(bcfg)
+                what = f"back on its usual market ({mp.current_symbol(bcfg)})"
+            else:
+                mp.set_today(bcfg, symbol, source)
+                what = f"trading {symbol} ({SPECS[symbol].description}) for the rest of today"
+            b._event("warning", f"{b.who}: {what} - requested by {source}", alert=True)
+            if b.running:
+                await b.restart(source)
+                lines.append(f"{b.who} is restarting, {what}. It is ready in about half a minute.")
+            else:
+                lines.append(f"{b.who} will start {what}.")
+        if not back:
+            lines.append("At 15:10 CT the switch ends; after the daily restart the bot is back on its usual market.")
         return "\n".join(lines)
 
     # ---------------------------------------------------------------- text helpers
@@ -1017,6 +1089,7 @@ class Controller:
         await self.updates.start()
         if self.research is not None:
             self._research_task = spawn(self.research.run(), name="research")
+        self._lab_tasks = self.lab.start_background()
         if open_browser and self.cfg.dashboard.open_browser:
             webbrowser.open(self.server.url)
         try:
@@ -1036,6 +1109,8 @@ class Controller:
         if self._research_task:
             self._research_task.cancel()
             await asyncio.wait([self._research_task], timeout=5)
+        for task in self._lab_tasks:
+            task.cancel()
         await asyncio.gather(*(b.stop("controller shutdown") for b in self.bots.values() if b.running))
         if self._telegram_task:  # stop polling before its HTTP client is closed below
             self._telegram_task.cancel()

@@ -430,6 +430,8 @@ h2 + .sfield, p + .sfield, ol + .sfield, h3 + .sfield { border-top:0; }
 .vd { display:inline-block; font:600 10.5px/1.7 var(--font-label); padding:0 7px; border-radius:3px; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
 .vd.edge { background:var(--goodbg); color:var(--pos); } .vd.mixed { background:var(--warnbg); color:var(--warn); }
 .vd.losing { background:var(--badbg); color:var(--neg); } .vd.thin { background:var(--track); color:var(--muted); }
+td.num.warn { color:var(--warn); }
+#lab-mk td .meta { font-size:11.5px; }
 .spark { width:96px; height:26px; display:block; }
 .spark path.line { fill:none; stroke-width:1.5; }
 .spark path.area { stroke:none; opacity:.14; }
@@ -509,7 +511,7 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
 <aside class="rail">
   <div class="brandbox">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="#1d2636"/><path d="M7 21l6-6 4 4 8-9" stroke="#7ea4f2" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand">Topstep Bot<small>Futures console · v2.0</small></div>
+    <div class="brand">Topstep Bot<small>Futures console · v2.1</small></div>
   </div>
   <nav class="tabs" aria-label="Sections">
     <div class="grp">Trading</div>
@@ -651,6 +653,11 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
       <div class="stack">
         <div class="panel">
           <h2>Order</h2>
+            <div class="field" id="tk-mkt-row" style="margin:0 0 12px"><label for="tk-market">Market</label>
+              <div class="ctl"><select id="tk-market" class="picker" aria-describedby="tk-markethelp"></select>
+                <button class="small primary" id="tk-switch" hidden>Switch</button>
+                <button class="small" id="tk-usual" hidden>Back to usual market</button></div>
+              <div class="help" id="tk-markethelp">Any market Topstep permits. Switching restarts the bot on it for the rest of today.</div></div>
           <div id="tk-off" class="empty" hidden></div>
           <div id="tk-body">
             <div class="sidepick">
@@ -796,6 +803,9 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
       <p>The bot's real trading code, replayed through history as fresh Topstep Combines started on many different days.</p></div>
       <span class="spacer"></span>
       <div class="row">
+        <label class="meta" for="lab-scope">Markets</label>
+        <select id="lab-scope" class="picker"><option value="all">Every market with history</option><option value="tradable">Only this account's picks</option></select>
+        <select id="lab-class" class="picker" aria-label="Asset class"><option value="">All asset classes</option></select>
         <label class="meta" for="lab-starts">Start days per playbook</label>
         <select id="lab-starts" class="picker"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option><option value="8">8</option><option value="12">12</option></select>
         <label class="checkline meta" style="align-items:center"><input type="checkbox" id="lab-teach" checked><span>Teach long-run memory</span></label>
@@ -809,8 +819,9 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
     <div class="blockmsg" id="lab-error" hidden></div>
     <div id="lab-empty" class="panel" hidden>
       <h2>No simulations yet</h2>
-      <p style="margin:0 0 6px">Press <b>Run simulations</b>. Each market with history on this PC is played through every strategy, as fresh Combines started on
-        different days, with your plan's rules and your risk per trade. About a minute for 128 Combines.</p>
+      <p style="margin:0 0 6px">Press <b>Run simulations</b>. Every market with history on this PC is played through every strategy, as fresh Combines started on
+        different days, with your plan's rules and your risk per trade. No history yet? Press <b>Download every market</b> below first
+        (no login needed). With all of Topstep's markets a run takes a few minutes.</p>
       <p class="hint" id="lab-history"></p>
     </div>
     <div id="lab-body" hidden>
@@ -823,8 +834,25 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
         <div><div class="label">History</div><div class="value" id="lk-days">–</div><div class="sub" id="lk-days-sub"></div></div>
       </div>
       <div class="callout gap-top" id="lab-rec"></div>
+      <div class="panel gap-top" id="lab-opp-panel">
+        <div class="head"><h2>Opportunities</h2><span class="spacer"></span>
+          <select id="lab-opp-filter" class="picker" aria-label="Which opportunities"><option value="">Every market</option>
+            <option value="allowed">Only markets this plan can trade</option></select></div>
+        <p class="meta" style="margin:0 0 10px">A market, strategy and time of day that made money in <b>both</b> halves of the history, strongest first.
+          The bot's playbooks can hide these: a strategy that loses over the whole day may win at the open.</p>
+        <div class="tablewrap"><table id="lab-opp"><thead><tr><th>Market</th><th>Strategy</th><th>Time of day</th><th>Strength</th>
+          <th class="num">Net</th><th class="num">Trades</th><th class="num">Win</th><th class="num">Avg R</th><th class="num">1st half</th>
+          <th class="num">2nd half</th><th></th></tr></thead><tbody></tbody></table></div>
+        <p class="hint" id="lab-opp-text"></p>
+      </div>
       <div class="panel gap-top">
-        <div class="head"><h2>Playbooks</h2><span class="spacer"></span>
+        <h2>By asset class</h2>
+        <div class="tablewrap"><table id="lab-classes"><thead><tr><th>Class</th><th class="num">Markets</th><th class="num">Playbooks</th>
+          <th class="num">With an edge</th><th>Best playbook</th><th class="num">Its net</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="panel gap-top">
+        <div class="head"><h2>Playbooks</h2>
+          <select id="lab-filter" class="picker" aria-label="Which playbooks" style="margin-left:12px"></select><span class="spacer"></span>
           <span class="legend"><span><i style="background:var(--pos)"></i>Resampled pass</span><span><i style="background:var(--neg)"></i>Resampled fail</span>
             <span><i style="background:var(--track)"></i>Still open after 60 days</span></span></div>
         <div class="tablewrap"><table id="lab-table"><thead><tr><th>Market</th><th>Strategy</th><th>Verdict</th><th class="num">Net</th>
@@ -843,6 +871,19 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
         </details>
         <div id="lab-taught" class="hint"></div>
       </div>
+    </div>
+    <div class="panel gap-top" id="lab-markets">
+      <div class="head"><h2>Markets and price history</h2><span class="spacer"></span>
+        <button class="small" id="lab-download" title="TopstepX when your login works, Yahoo Finance for the rest">Download every market</button></div>
+      <div class="working" id="lab-dl" hidden><span class="pulse"></span><span id="lab-dl-stage">Starting…</span><span class="spacer"></span><span class="num" id="lab-dl-count"></span></div>
+      <p class="meta" id="lab-mk-sum" style="margin:0 0 6px"></p>
+      <p class="hint" id="lab-dl-note" style="margin-top:0"></p>
+      <details class="more"><summary>Every market Topstep permits (<span id="lab-mk-count">0</span>)</summary>
+        <div class="tablewrap" style="margin-top:10px"><table id="lab-mk"><thead><tr><th>Market</th><th>Class</th><th>Busiest (CT)</th>
+          <th class="num">Tick</th><th class="num">Fees</th><th class="num">Days</th><th>Last bar</th><th>Source</th>
+          <th class="num" title="The 20-day average daily range as a percentile of the market's last ten years">Volatility vs 10y</th>
+          <th class="num">20-day trend</th><th>This plan</th><th></th></tr></thead><tbody></tbody></table></div>
+      </details>
     </div>
   </section>
 
@@ -1313,10 +1354,10 @@ function showTab(name) {
   document.querySelectorAll("section.tab").forEach(x => x.classList.toggle("on", x.id === "tab-" + name));
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (name === "logs") loadLogs();
-  if (name === "trade") loadTicket();
+  if (name === "trade") { loadTicket(); loadMarkets(false); }
   if (name === "knowledge") { loadInsights(true); loadBrief(true); }
   if (name === "setup") loadSetup(false);
-  if (name === "lab") loadLab(true);
+  if (name === "lab") { loadLab(true); loadMarkets(false); }
   if (name === "coach") loadCoach(true);
 }
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
@@ -1709,7 +1750,50 @@ tk("sizehalf").onclick = () => { const p = T.data && T.data.plan; if (p) { tk("s
 tk("size1").onclick = () => { tk("size").value = 1; scheduleTicket(0); };
 tk("place").onclick = placeTrade;
 
+// ---- the market for today (trade ticket, Simulations tab): any market Topstep permits. Switching restarts
+// the bot on it until 15:10 CT; its own strategy trades it too, with every risk rule (controller.switch_market).
+let MK = null, mkAt = 0, mkBusy = false;
+async function loadMarkets(force) {
+  if (mkBusy || (!force && MK && MK.account === accName() && Date.now() - mkAt < 60000)) return;
+  mkBusy = true;
+  try {
+    const d = await post("markets");
+    if (d.ok !== false) { MK = d; MK.account = accName(); mkAt = Date.now(); renderMarketPick(); if (LAB) shown("simulations", renderLab); }
+  } finally { mkBusy = false; }
+}
+function renderMarketPick() {
+  if (!MK) return;
+  const sel = tk("market"), keep = sel.dataset.touched ? sel.value : MK.current, groups = {};
+  MK.markets.forEach(m => (groups[m.class_label] = groups[m.class_label] || []).push(m));
+  sel.innerHTML = Object.entries(groups).map(([g, ms]) => `<optgroup label="${esc(g)}">${ms.map(m =>
+    `<option value="${esc(m.symbol)}"${m.symbol === keep ? " selected" : ""}${m.allowed ? "" : " disabled"}>${esc(m.symbol)} - ${esc(m.description)}`
+    + `${m.symbol === MK.current ? " (now)" : ""}${m.allowed ? "" : " (not on this plan)"}</option>`).join("")}</optgroup>`).join("");
+  const chosen = sel.value, m = MK.markets.find(x => x.symbol === chosen), other = chosen && chosen !== MK.current;
+  tk("switch").hidden = !other; tk("switch").textContent = `Trade ${chosen} today`;
+  tk("usual").hidden = !MK.today;
+  tk("markethelp").textContent = other && m ? `${m.description}: ${money(m.tick_value)} per tick, busiest ${m.hours}${m.early_close ? ` (the market closes at ${m.early_close} CT; the bot is out 5 minutes before)` : ""}. `
+      + `Switching restarts the bot on ${chosen} for the rest of today, and its own strategy trades it too. It needs no open trade.`
+    : MK.today ? `Trading ${MK.current} today (switched by ${MK.today.source}). At 15:10 CT the bot goes back to ${MK.usual}.`
+    : `Trading ${MK.current}. Pick another market to trade it for the rest of today.`;
+}
+async function switchMarket(symbol) {
+  const back = symbol === "usual";
+  const text = back ? `Go back to the usual market${on()}?\n\nThe bot restarts on it (about half a minute). It must have no open trade.`
+    : `Trade ${symbol} for the rest of today${on()}?\n\nThe bot restarts on ${symbol} (about half a minute) and its own strategy trades it too, `
+      + "with every risk rule and Topstep check. It must have no open trade. At 15:10 CT it goes back to its usual market.";
+  if (!await ask(text)) return;
+  const d = await post("market/switch", {symbol});
+  toast(d.message || "Switching", d.ok === false);
+  delete tk("market").dataset.touched;
+  if (d.ok !== false) clearTicket();
+  setTimeout(() => loadMarkets(true), 1500); refresh();
+}
+tk("market").onchange = () => { tk("market").dataset.touched = "1"; renderMarketPick(); };
+tk("switch").onclick = () => switchMarket(tk("market").value);
+tk("usual").onclick = () => switchMarket("usual");
+
 function renderTicketShell() {
+  if (!MK && tabOpen("trade")) loadMarkets(false);
   const b = S && S.bot;
   const off = !b ? "Start the bot to trade from the dashboard." : null;
   tk("off").hidden = !off; tk("off").textContent = off || ""; tk("body").hidden = !!off;
@@ -2223,7 +2307,7 @@ function fillSetup() {
   su("key").placeholder = SU.login.api_key_saved ? "saved - leave empty to keep it" : "paste your API key";
   su("plan").innerHTML = c.plans.map(p => option(p.name, `${p.name} account`, p.name === v.plan)).join("");
   su("stage").innerHTML = c.stages.map(x => option(x.key, x.label, x.key === v.stage)).join("");
-  su("symbol").innerHTML = c.symbols.map(x => option(x.key, `${x.key} - ${x.label}`, x.key === v.symbol)).join("");
+  su("symbol").innerHTML = symbolOptions(c.symbols, v.symbol);
   su("strategy").innerHTML = c.strategies.map(x => option(x.key, x.title, x.key === v.strategy)).join("");
   su("payout").value = v.payout_path; su("dll").checked = v.topstep_dll;
   F.account_id = v.account_id; F.account_name = v.account_name; F.goal = v.goal;
@@ -2341,9 +2425,9 @@ function openAccountForm(name) {
   su("af-follow").innerHTML = others.map(x => option(x, x, prof && prof.follow === x)).join("");
   su("af-strategy").innerHTML = c.strategies.map(x => option(x.key, x.title, x.key === (prof ? prof.strategy : SU.values.strategy))).join("");
   su("af-calls").value = prof ? prof.calls : "shared";
-  const shared = SU.values.symbol === "AUTO" ? "Auto" : SU.values.symbol;
+  const shared = SU.values.symbol === "AUTO" ? "Auto" : SU.values.symbol === "AUTO_ALL" ? "Auto, every market" : SU.values.symbol;
   su("af-market").innerHTML = option("", `Same as the shared settings (${shared})`, !prof || !prof.market) +
-    c.symbols.map(x => option(x.key, x.key === "AUTO" ? x.label : `${x.key} - ${x.label}`, prof && prof.market === x.key)).join("");
+    symbolOptions(c.symbols, prof && prof.market);
   su("af-risk").value = prof ? prof.risk_per_trade : SU.values.risk_per_trade;
   su("af-daily").value = prof ? prof.daily_loss_limit : SU.values.daily_loss_limit;
   su("af-trades").value = prof ? prof.max_trades : SU.values.max_trades;
@@ -2358,6 +2442,13 @@ function pickFormAccount(a) {
   su("af-dll").checked = !!a.dll;
   if (a.key && SU.keys.includes(a.key)) su("af-key").value = a.key;
   renderAccountForm();
+}
+// Market choices: the two automatic picks first, then every market grouped by asset class
+function symbolOptions(symbols, selected) {
+  const auto = symbols.filter(x => !x.class), groups = {};
+  symbols.filter(x => x.class).forEach(x => (groups[x.class] = groups[x.class] || []).push(x));
+  return auto.map(x => option(x.key, x.label, x.key === selected)).join("") + Object.entries(groups).map(([g, xs]) =>
+    `<optgroup label="${esc(g)}">${xs.map(x => option(x.key, `${x.key} - ${x.label}`, x.key === selected)).join("")}</optgroup>`).join("");
 }
 function renderAccountForm() {
   const box = su("af-accounts");
@@ -2376,6 +2467,7 @@ function renderAccountForm() {
     : "The same signal at the same moment as the other accounts on the shared settings, each sized with its own risk.";
   const m = su("af-market").value;
   su("af-market-help").textContent = m === "AUTO" ? "Each day it replays recent history for every micro your plan allows and trades the one where its strategy did best on days held back from training. If none shows an edge it trades the shared market."
+    : m === "AUTO_ALL" ? "Each morning it scores every market Topstep permits on recent days held back from training and trades the best one for the day. If none shows an edge it trades the shared market."
     : m ? "" : "Whatever the shared settings trade.";
   const plan = SU.choices.plans.find(p => p.name === su("af-plan").value), risk = parseFloat(su("af-risk").value);
   su("af-risk-help").textContent = plan && risk > 0.15 * plan.max_loss_limit ? `That is ${Math.round(100 * risk / plan.max_loss_limit)}% of this account's Maximum Loss Limit per trade - a few losses in a row would end it.`
@@ -2437,8 +2529,9 @@ function suRender() {
   const sym = c.symbols.find(x => x.key === su("symbol").value);
   const blocked = sym && sym.blocked.includes(plan.name);
   su("symbol-help").textContent = !sym ? "" : sym.key === "AUTO" ? `Each day the bot replays recent history for every micro your plan allows and trades the one where its strategy did best on days held back from training, after costs. If none shows an edge it trades ${SU.values.fallback}.`
-    : `${money(sym.tick_value)} per tick.` + (blocked ? ` Topstep doesn't currently allow ${sym.key} on a ${plan.name} account.`
-    : sym.key.startsWith("M") ? " A micro: the best way to start." : " A full-size contract: ten times a micro's risk per point.");
+    : sym.key === "AUTO_ALL" ? `Each morning the bot scores every market Topstep permits (indexes, currencies, energy, metals, rates, grains, crypto) on recent days held back from training, after costs and sized with your risk, and trades the best one that day. If none shows an edge it trades ${SU.values.fallback}. Scoring every market makes the start take a few minutes.`
+    : `${sym.class ? sym.class + " · " : ""}${money(sym.tick_value)} per tick.` + (blocked ? ` Topstep doesn't currently allow ${sym.key} on a ${plan.name} account.`
+    : sym.micro ? " A micro: the best way to start." : " A full-size contract: much more risk per point than a micro.");
   su("symbol-help").className = "help" + (blocked ? " bad" : "");
   const learn = F.goal === "learn";
   su("first-row").hidden = !learn;
@@ -2626,8 +2719,13 @@ function renderLab() {
   $("lab-error").textContent = d.error ? `The last run stopped: ${d.error}` : "";
   $("lab-empty").hidden = !!rep || running;
   $("lab-body").hidden = !rep;
-  $("lab-history").textContent = d.history.length ? `Price history on this PC: ${d.history.join(", ")}.`
-    : "No price history on this PC yet. Start the bot once (it downloads history) or run: topstep-bot download --days 60";
+  $("lab-history").textContent = d.history.length ? `Price history on this PC for ${d.history.length} of ${d.permitted} markets: ${d.history.join(", ")}.`
+    : "No price history on this PC yet: press Download every market below.";
+  if ($("lab-class").options.length < 2) {
+    $("lab-class").innerHTML += d.classes.map(c => option(c.key, c.label, false)).join("");
+    $("lab-scope").value = d.scope;
+  }
+  renderLabData(d);
   if (!rep) return;
   const t = rep.totals, mk = Object.values(rep.markets);
   $("lk-sims").textContent = t.simulations.toLocaleString();
@@ -2642,18 +2740,31 @@ function renderLab() {
     (r.kind === "playbook" && r.playbook && !r.same && !PHONE ? `<div class="row" style="margin-top:10px"><button class="small primary" data-labuse="${esc(r.playbook.symbol)}|${esc(r.playbook.strategy)}">Trade ${esc(r.playbook.label)}</button>
       <span class="meta">Saved to config.yaml. It takes effect when the bot restarts.</span></div>` : "");
   const cur = d.current;
-  $("lab-table").querySelector("tbody").innerHTML = rep.playbooks.map(p => {
+  renderOpportunities(rep, d);
+  $("lab-classes").querySelector("tbody").innerHTML = (rep.classes || []).map(c => `<tr><td><b>${esc(c.label)}</b></td>
+    <td class="num">${c.markets}</td><td class="num">${c.playbooks}</td><td class="num ${c.edges ? "pos" : ""}">${c.edges}</td>
+    <td>${esc(c.best.label)} <span class="vd ${esc(c.best.verdict)}">${esc(VERDICTS[c.best.verdict] || c.best.verdict)}</span></td>${signedCell(c.best.net)}</tr>`).join("")
+    || `<tr><td colspan="6" class="empty">Run the lab again to see this.</td></tr>`;
+  const filt = $("lab-filter"), want = filt.value || "best";
+  const classes = [...new Set(rep.playbooks.map(p => p.class).filter(Boolean))];
+  filt.innerHTML = option("best", "Best 40", want === "best") + option("edge", "Edge or mixed", want === "edge") + option("all", `All ${rep.playbooks.length}`, want === "all")
+    + classes.map(c => option("c:" + c, (rep.playbooks.find(p => p.class === c) || {}).class_label || c, want === "c:" + c)).join("");
+  let shownPbs = rep.playbooks;
+  if (want === "edge") shownPbs = shownPbs.filter(p => p.verdict === "edge" || p.verdict === "mixed");
+  else if (want.startsWith("c:")) shownPbs = shownPbs.filter(p => p.class === want.slice(2));
+  else if (want === "best") shownPbs = shownPbs.slice(0, 40);
+  $("lab-table").querySelector("tbody").innerHTML = shownPbs.map(p => {
     const mc = p.resampled || {}, runs = p.runs, isCur = cur.symbol === p.symbol && cur.strategy === p.strategy && !cur.auto_pick;
     const pf = !p.trades ? "–" : p.profit_factor >= 99 ? "no losses" : p.profit_factor.toFixed(2);
     const resampled = mc.paths ? `<div class="dist" title="${pct(mc.pass)} passed, ${pct(mc.fail)} failed, ${pct(mc.open)} still open after 60 days${mc.median_days_to_pass ? `; median ${mc.median_days_to_pass} days to pass` : ""}">
       <span class="p" style="width:${100 * mc.pass}%"></span><span class="f" style="width:${100 * mc.fail}%"></span></div>
       <div class="meta num" style="font-size:11px;margin-top:2px">${pct(mc.pass)} pass · ${pct(mc.fail)} fail</div>` : "–";
-    return `<tr class="${isCur ? "on" : ""}"><td><b>${esc(p.symbol)}</b></td><td>${esc(p.strategy)}${isCur ? ' <span class="tag auto">current</span>' : ""}</td>
+    return `<tr class="${isCur ? "on" : ""}"><td><b>${esc(p.symbol)}</b>${p.allowed === false ? ' <span class="tag" title="Topstep does not allow this market on your plan right now">not on plan</span>' : ""}</td><td>${esc(p.strategy)}${isCur ? ' <span class="tag auto">current</span>' : ""}</td>
       <td><span class="vd ${esc(p.verdict)}" title="${esc(p.why)}">${esc(VERDICTS[p.verdict] || p.verdict)}</span></td>
       ${signedCell(p.net)}${signedCell(p.per_day)}<td class="num">${p.trades}</td><td class="num">${pct(p.win_rate)}</td><td class="num">${pf}</td>
       ${signedCell(p.halves[0])}${signedCell(p.halves[1])}<td class="num">${p.max_drawdown ? money0(-p.max_drawdown) : "–"}</td>
       <td class="num">${runs.passed} / ${runs.failed} / ${runs.open}</td><td>${resampled}</td><td>${spark(p.equity)}</td>
-      <td>${isCur || PHONE ? "" : `<button class="small" data-labuse="${esc(p.symbol)}|${esc(p.strategy)}" title="Make this the bot's market and strategy">Use</button>`}</td></tr>`;
+      <td>${isCur || PHONE || p.allowed === false ? "" : `<button class="small" data-labuse="${esc(p.symbol)}|${esc(p.strategy)}" title="Make this the bot's market and strategy">Use</button>`}</td></tr>`;
   }).join("");
   document.querySelectorAll("[data-labuse]").forEach(b => b.onclick = () => useLabPlaybook(...b.dataset.labuse.split("|")));
   $("lab-meta").textContent = `${rep.plan} Combine: profit target ${money0(rep.profit_target)}, Maximum Loss Limit ${money0(rep.max_loss_limit)}, `
@@ -2672,6 +2783,56 @@ function renderLab() {
   $("lab-taught").textContent = (d.taught || []).length ? "Long-run memory taught: " + d.taught.map(x => x.error ? `${x.symbol} (${x.error})`
     : `${x.symbol} ${x.observations.toLocaleString()} signal outcomes over ${x.days} days`).join(" · ") + "." : "";
 }
+const STRENGTH = {strong: "edge", promising: "mixed", early: "thin"};
+function renderOpportunities(rep, d) {
+  const o = rep.opportunities;
+  $("lab-opp-panel").hidden = !o;
+  if (!o) return;
+  const onlyAllowed = $("lab-opp-filter").value === "allowed", today = d.current.today;
+  const items = o.items.filter(x => !onlyAllowed || x.allowed);
+  $("lab-opp").querySelector("tbody").innerHTML = items.map(x => `<tr><td><b>${esc(x.symbol)}</b>${x.allowed ? "" : ' <span class="tag" title="Topstep does not allow this market on your plan right now">not on plan</span>'}</td>
+    <td>${esc(x.strategy)}</td><td>${esc(x.slot)}</td><td><span class="vd ${STRENGTH[x.strength] || "thin"}" title="t-score ${x.score}">${esc(x.strength)}</span></td>
+    ${signedCell(x.net)}<td class="num">${x.trades}</td><td class="num">${pct(x.win_rate)}</td><td class="num">${x.avg_r == null ? "–" : signed(x.avg_r)}</td>
+    ${signedCell(x.halves[0])}${signedCell(x.halves[1])}
+    <td>${x.allowed && x.symbol !== today ? `<button class="small" data-labtoday="${esc(x.symbol)}" title="Restart the bot on ${esc(x.symbol)} for the rest of today">Trade today</button>` : x.symbol === today ? '<span class="tag auto">today</span>' : ""}</td></tr>`).join("")
+    || `<tr><td colspan="11" class="empty">No time-of-day pocket made money in both halves of the history${onlyAllowed ? " on a market this plan can trade" : ""}.</td></tr>`;
+  $("lab-opp-text").textContent = o.text + " Trade today keeps your strategy: with adaptive, the bot learns that market's history first.";
+  document.querySelectorAll("[data-labtoday]").forEach(b => b.onclick = () => switchMarket(b.dataset.labtoday));
+}
+$("lab-opp-filter").onchange = () => shown("simulations", renderLab);
+$("lab-filter").onchange = () => shown("simulations", renderLab);
+function renderLabData(d) {
+  const dl = d.data || {};
+  $("lab-dl").hidden = !dl.running; $("lab-download").disabled = !!dl.running;
+  if (dl.running) { $("lab-dl-stage").textContent = cap(dl.stage || "downloading"); $("lab-dl-count").textContent = dl.total ? `${dl.done} / ${dl.total}` : ""; }
+  if (labDlWas && !dl.running) loadMarkets(true);
+  labDlWas = !!dl.running;
+  const notes = [dl.note, dl.last_run ? `Last download ${when(dl.last_run)}.` : "", d.nightly && d.nightly.on ? `Every weekday at ${d.nightly.time} CT the bot refreshes every market and runs the lab on all of them.` : ""];
+  $("lab-dl-note").textContent = notes.filter(Boolean).join(" ");
+  if (!MK) { $("lab-mk-sum").textContent = "Loading the market list…"; loadMarkets(false); return; }
+  const ms = MK.markets, have = ms.filter(m => m.days > 0);
+  $("lab-mk-count").textContent = ms.length;
+  $("lab-mk-sum").textContent = `History on this PC for ${have.length} of ${ms.length} markets Topstep permits`
+    + (have.length ? `, up to ${Math.max(...have.map(m => m.days))} trading days.` : ". Press Download every market (no login needed).")
+    + ` ${ms.filter(m => !m.allowed).length ? ms.filter(m => !m.allowed).map(m => m.symbol).join(", ") + " can't be traded on this plan right now." : ""}`;
+  $("lab-mk").querySelector("tbody").innerHTML = ms.map(m => {
+    const c = m.context, vol = c ? Math.round(100 * c.range_percentile) : null;
+    return `<tr${m.symbol === MK.current ? ' class="on"' : ""}><td><b>${esc(m.symbol)}</b> <span class="meta">${esc(m.description)}</span></td><td>${esc(m.class_label)}</td>
+      <td class="num">${esc(m.hours)}</td><td class="num">${money(m.tick_value)}</td><td class="num">${money(m.fees)}</td>
+      <td class="num">${m.days || "–"}</td><td class="num">${m.last ? esc(when(m.last)) : "–"}</td><td>${esc((m.sources || []).join(", ") || "none")}</td>
+      <td class="num ${vol != null && vol >= 80 ? "warn" : ""}">${vol == null ? "–" : vol + "%"}</td>
+      <td class="num ${c && c.trend_20d > 0 ? "pos" : c && c.trend_20d < 0 ? "neg" : ""}">${c && c.trend_20d != null ? signed(100 * c.trend_20d, 1) + "%" : "–"}</td>
+      <td>${m.allowed ? '<span class="st ok">allowed</span>' : '<span class="st bad">not now</span>'}</td>
+      <td>${m.allowed && m.symbol !== MK.current ? `<button class="small" data-mktoday="${esc(m.symbol)}">Trade today</button>` : m.symbol === MK.current ? '<span class="tag auto">now</span>' : ""}</td></tr>`;
+  }).join("");
+  document.querySelectorAll("[data-mktoday]").forEach(b => b.onclick = () => switchMarket(b.dataset.mktoday));
+}
+let labDlWas = false;
+$("lab-download").onclick = async () => {
+  $("lab-download").disabled = true;
+  const d = await post("lab/download", {});
+  toast(d.message || "Downloading", d.ok === false); loadLab(true);
+};
 async function useLabPlaybook(symbol, strategy) {
   if (!await ask(`Make ${symbol} with ${strategy} the bot's market and strategy?\n\nThis is saved to config.yaml (the old file is kept as config.yaml.bak). A running bot keeps its current settings until you restart it.`)) return;
   const d = await post("lab/apply", {symbol, strategy});
@@ -2679,7 +2840,8 @@ async function useLabPlaybook(symbol, strategy) {
 }
 $("lab-run").onclick = async () => {
   $("lab-run").disabled = true;
-  const d = await post("lab/run", {starts: +$("lab-starts").value, teach: $("lab-teach").checked});
+  const d = await post("lab/run", {starts: +$("lab-starts").value, teach: $("lab-teach").checked, scope: $("lab-scope").value,
+                                   classes: $("lab-class").value ? [$("lab-class").value] : []});
   toast(d.message || "Started", d.ok === false); loadLab(true);
 };
 function renderLabSummary(l) {
@@ -2689,9 +2851,11 @@ function renderLabSummary(l) {
   if (l.running) { box.innerHTML = `<div class="working" style="margin:0"><span class="pulse"></span><span>${esc(cap(l.stage || "working"))}</span>
     <span class="spacer"></span><span class="num">${l.total ? `${l.done} / ${l.total}` : ""}</span></div>`; return; }
   if (!l.generated) { box.innerHTML = `No simulations yet. <button class="link" onclick="openTab('lab')">Run the Simulation Lab</button> to replay the bot through history as fresh Combines.`; return; }
-  const t = l.totals, r = l.recommendation;
+  const t = l.totals, r = l.recommendation, top = l.top;
   box.innerHTML = `<div class="row" style="gap:6px 16px;margin-bottom:8px"><span><b class="num">${t.simulations}</b> Combines</span><span class="pos"><b class="num">${t.passed}</b> passed</span>
-    <span class="neg"><b class="num">${t.failed}</b> failed</span><span><b class="num">${t.open}</b> open</span></div>
+    <span class="neg"><b class="num">${t.failed}</b> failed</span><span><b class="num">${t.open}</b> open</span>
+    ${l.markets ? `<span><b class="num">${l.markets}</b> markets</span>` : ""}${l.opportunities ? `<span><b class="num">${l.opportunities}</b> opportunities</span>` : ""}</div>
+    ${top ? `<div style="margin-bottom:6px">Strongest opportunity: <b>${esc(top.label)}</b> (${esc(top.strength)}, ${money0(top.net)} over ${top.trades} trades).</div>` : ""}
     <div>${esc(r.text)}</div><div class="hint" style="margin-top:6px">Last run ${esc(when(l.generated))}</div>`;
 }
 

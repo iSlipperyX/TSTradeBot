@@ -38,6 +38,30 @@ def session_open_for(day: date, tz: ZoneInfo) -> datetime:
     return datetime.combine(day - timedelta(days=1), SESSION_OPEN, tzinfo=tz)
 
 
+EARLY_CLOSE_MARGIN = timedelta(minutes=5)  # out this long before a market's own early close
+EARLY_CLOSE_LAST_ENTRY = timedelta(minutes=30)  # and no new trade in its last half hour
+
+
+def market_session(session: SessionConfig, root: str) -> SessionConfig:
+    """The session times for one market.
+
+    Grains and livestock stop trading before Topstep's 15:10 CT deadline (13:20 and 13:05 CT): for those
+    the bot closes out 5 minutes before the market's own close and opens nothing in its last half hour.
+    Every other market keeps the configured times."""
+    from topstep_bot.instruments import SPECS
+
+    spec = SPECS.get((root or "").upper())
+    if spec is None or not spec.market_close:
+        return session
+    h, m = map(int, spec.market_close.split(":"))
+    close = datetime.combine(date(2000, 1, 3), time(h, m))
+    flatten = min(session.flatten_at, (close - EARLY_CLOSE_MARGIN).time())
+    last_entry = min(session.last_entry, (close - EARLY_CLOSE_MARGIN - EARLY_CLOSE_LAST_ENTRY).time())
+    if (flatten, last_entry) == (session.flatten_at, session.last_entry) or session.trade_start >= last_entry:
+        return session  # already earlier, or a window that can't fit: the configured times stay
+    return session.model_copy(update={"flatten_at": flatten, "last_entry": last_entry})
+
+
 class SessionSchedule:
     """Answers 'may I enter now?', 'must I be flat now?' for a given SessionConfig."""
 

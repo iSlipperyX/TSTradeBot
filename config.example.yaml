@@ -13,9 +13,10 @@ account:
   # mll_floor_override: 48500    # copy your current Max Loss Limit from the Topstep dashboard to sync the bot
 
 instrument:
-  symbol: MNQ                # MNQ, MES, NQ, ES, M2K, RTY, MYM, YM, MGC, GC, MCL, CL
+  symbol: MNQ                # any of the 51 markets Topstep permits: 'topstep-bot markets' lists them
   timeframe_minutes: 5
   # auto_pick: true          # let the bot pick the market each day (symbol is used when none shows an edge)
+  # candidates: [ALL]        # ...from every market (default: the micros); or MICROS, FX, METALS, RATES, AGS...
 
 # adaptive = every strategy, all day, trading only what the bot has learned is working. Or one
 # strategy alone, most robust in the 10-year test first: noise_breakout, orb_momentum, orb,
@@ -84,6 +85,11 @@ funded:                         # Express Funded payout goals (docs/HOW_TO_USE.m
 research:                       # what the bot gathers from the internet while it runs (information only, never trades on it)
   enabled: true                 # calendar archive, headlines, ten years of daily prices, Topstep rule-page alerts
   sources: []                   # your own feeds/pages, e.g. [{name: myfeed, url: "https://...", kind: rss}]
+
+lab:                            # Simulation Lab and every market's history (docs/HOW_TO_USE.md sections 34 and 36)
+  markets: all                  # all = every market with history; tradable = only this account's auto-pick markets
+  refresh_data: true            # keep every market's history up to date in the background (no login needed)
+  nightly: true                 # run the lab on every market each weekday at 15:30 CT
 
 # ---- Several accounts (docs/HOW_TO_USE.md section 29). Leave this out to trade the one account above.
 # Everything above is shared; each account lists only what is different.

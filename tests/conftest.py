@@ -35,6 +35,15 @@ def offline_research(monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(Research, "run", idle)
+    # ...and so does the every-market history refresh; the nightly lab run would simulate in the background
+    from topstep_bot.lab_service import LabService
+    from topstep_bot.market_data import MarketData
+
+    async def idle_loop(self, check_every: float = 0.0) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(MarketData, "run", idle_loop)
+    monkeypatch.setattr(LabService, "_nightly_loop", idle_loop)
 
 
 @pytest.fixture

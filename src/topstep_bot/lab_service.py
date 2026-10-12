@@ -1,6 +1,9 @@
 """The dashboard's Simulations and Coach tabs, served by the controller.
 
-LabService runs the Simulation Lab (simlab.py) in the background and applies a playbook you choose.
+LabService runs the Simulation Lab (simlab.py) in the background and applies a playbook you choose. It
+also keeps every market's price history up to date (market_data.py: TopstepX on request, Yahoo in the
+background about twice a day) and runs the lab on every market once each weekday after the close
+(``lab.nightly``), so the Opportunities list is always fresh.
 CoachService runs AI coaching sessions (coach.py), keeps the Claude API key in .env, and applies the
 proposals you approve. Both change config.yaml only when you press a button, through the same checked,
 in-place editor the Setup tab uses (the previous file is kept as config.yaml.bak), and a running bot
@@ -13,7 +16,9 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from topstep_bot.config_edit import set_values
 
@@ -41,7 +46,13 @@ def _apply_config(ctl: Controller, changes: dict[tuple[str | None, str], Any]) -
 
 class LabService:
     def __init__(self, ctl: Controller):
+        from topstep_bot.market_data import MarketData
+
         self.ctl = ctl
+        self.data = MarketData(_shared_cfg(ctl))
+        self.data_task: asyncio.Task | None = None
+        self.data_note = ""  # how the last download went, for the page
+        self.nightly_day: str | None = None  # the CT date the nightly run last started
         self.task: asyncio.Task | None = None
         self.progress: tuple[int, int] = (0, 0)
         self.stage = ""
@@ -58,35 +69,157 @@ class LabService:
 
         rep = load_report(_shared_cfg(self.ctl)) if not self.running else None
         done, total = self.progress
+        opp = (rep or {}).get("opportunities") or {}
         return {"running": self.running, "stage": self.stage, "done": done, "total": total, "error": self.error,
                 "generated": rep["generated"] if rep else None, "totals": rep["totals"] if rep else None,
-                "recommendation": rep["recommendation"] if rep else None}
+                "recommendation": rep["recommendation"] if rep else None,
+                "markets": len((rep or {}).get("markets") or {}), "opportunities": opp.get("found", 0),
+                "top": (opp.get("items") or [None])[0]}
 
     def state(self) -> dict[str, Any]:
-        from topstep_bot.simlab import DEFAULT_STARTS, history_sources, load_report, report_view
+        from topstep_bot.instruments import CLASSES, SPECS
+        from topstep_bot.market_pick import current_symbol
+        from topstep_bot.simlab import DEFAULT_STARTS, available_markets, load_report, report_view
 
         cfg = _shared_cfg(self.ctl)
         done, total = self.progress
         return {"running": self.running, "stage": self.stage, "done": done, "total": total, "error": self.error,
                 "elapsed": round(time.time() - self.started) if self.running and self.started else None,
                 "report": report_view(load_report(cfg), runs=1000), "taught": self.taught,
-                "history": sorted(history_sources(cfg)), "default_starts": DEFAULT_STARTS,
-                "current": {"symbol": cfg.instrument.symbol, "strategy": cfg.strategy.name, "auto_pick": cfg.instrument.auto_pick}}
+                "history": available_markets(cfg), "permitted": len(SPECS), "default_starts": DEFAULT_STARTS,
+                "scope": cfg.lab.markets, "classes": [{"key": k, "label": v} for k, v in CLASSES.items()],
+                "data": {**self.data.status(), "note": self.data_note},
+                "nightly": {"on": cfg.lab.nightly, "time": cfg.lab.nightly_time.strftime("%H:%M")},
+                "current": {"symbol": cfg.instrument.symbol, "strategy": cfg.strategy.name, "auto_pick": cfg.instrument.auto_pick,
+                            "today": current_symbol(cfg)}}
+
+    def markets(self, body: dict | None = None) -> dict[str, Any]:
+        """Every market Topstep permits: specs, the history on this PC, and whether the account may trade it."""
+        from topstep_bot.market_data import coverage
+        from topstep_bot.market_pick import current_symbol, load_today
+
+        account = (body or {}).get("account")
+        bot = self.ctl.bot
+        if account and account != "all":
+            bot = self.ctl.pick(account)[0]
+        cfg = self.ctl.account_cfg(bot.account)
+        return {"markets": coverage(cfg), "current": current_symbol(cfg), "usual": cfg.instrument.symbol,
+                "today": load_today(cfg), "data": {**self.data.status(), "note": self.data_note}}
+
+    # ---------------------------------------------------------------- price history
+
+    def download(self, body: dict, source: str) -> str:
+        """Download every market's history now: TopstepX when the login works (unless Yahoo is asked for), else Yahoo."""
+        if self.data.running:
+            return "Already downloading market history. This page shows its progress."
+        cfg = _shared_cfg(self.ctl)
+        self.data.cfg = cfg
+        secrets = self.ctl.secrets.for_account(cfg)
+        use_topstepx = body.get("source") != "yahoo" and secrets.has_credentials
+        self.data_note = ""
+
+        async def go() -> None:
+            from topstep_bot.api.rest import ProjectXClient
+
+            client = None
+            if use_topstepx:
+                client = ProjectXClient(secrets.username, secrets.api_key, cfg.api.base_url, cfg.api.timeout_seconds)
+                try:
+                    await client.login()
+                except Exception as exc:  # noqa: BLE001 - Yahoo still works without a login
+                    self.data_note = f"TopstepX login failed ({exc}), so the history came from Yahoo. "
+                    await client.close()
+                    client = None
+            try:
+                results = await self.data.refresh(client=client)
+                got = sum(1 for r in results if r.source)
+                new = sum(r.new_bars for r in results)
+                self.data_note += f"{got} of {len(results)} markets updated, {new:,} new bars."
+                self.ctl.bot._event("info", f"Market history ({source}): {self.data_note}")
+            except Exception as exc:  # noqa: BLE001 - shown on the page
+                log.exception("Market history download failed")
+                self.data_note += f"The download stopped: {exc}"
+            finally:
+                if client is not None:
+                    await client.close()
+
+        self.data_task = asyncio.get_running_loop().create_task(go())
+        where = "TopstepX (Yahoo for anything it can't supply)" if use_topstepx else "Yahoo Finance"
+        return f"Downloading every market's history from {where}. It takes a minute or two; this page shows its progress."
+
+    # ---------------------------------------------------------------- background
+
+    def start_background(self) -> list[asyncio.Task]:
+        """The controller's background jobs: refresh every market's history and the nightly lab run."""
+        from topstep_bot.logging_setup import spawn
+
+        cfg = _shared_cfg(self.ctl)
+        tasks = []
+        if cfg.lab.refresh_data:
+            tasks.append(spawn(self.data.run(), name="market-data"))
+        if cfg.lab.nightly:
+            tasks.append(spawn(self._nightly_loop(), name="lab-nightly"))
+        return tasks
+
+    def nightly_due(self, now: datetime | None = None) -> bool:
+        """A weekday, after lab.nightly_time CT, and no lab report since then."""
+        from topstep_bot.simlab import load_report
+
+        cfg = _shared_cfg(self.ctl)
+        tz = ZoneInfo(cfg.session.timezone)
+        local = (now or datetime.now(timezone.utc)).astimezone(tz)
+        if local.weekday() >= 5 or local.time() < cfg.lab.nightly_time or self.nightly_day == local.date().isoformat():
+            return False
+        rep = load_report(cfg)
+        if rep:
+            try:
+                made = datetime.fromisoformat(rep["generated"]).astimezone(tz)
+                if made.date() == local.date() and made.time() >= cfg.lab.nightly_time:
+                    return False  # already run since the close today
+            except (KeyError, ValueError):
+                pass
+        return not self.running and not self.data.running
+
+    async def _nightly_loop(self, check_every: float = 120.0) -> None:
+        while True:
+            await asyncio.sleep(check_every)
+            if not self.nightly_due():
+                continue
+            cfg = _shared_cfg(self.ctl)
+            self.nightly_day = datetime.now(timezone.utc).astimezone(ZoneInfo(cfg.session.timezone)).date().isoformat()
+            try:
+                self.data.cfg = cfg
+                await self.data.refresh()
+            except Exception as exc:  # noqa: BLE001 - simulate on what is already saved
+                log.info("Nightly history refresh failed: %s", exc)
+            if not self.running:
+                self.run({"starts": 4, "teach": True}, "nightly run")
 
     def run(self, body: dict, source: str) -> str:
         if self.running:
             return "The Simulation Lab is already running."
+        from topstep_bot.instruments import CLASSES
+
         try:
             starts = max(1, min(30, int(body.get("starts") or 4)))
         except (TypeError, ValueError):
             starts = 4
         teach = body.get("teach", True) is not False
+        scope = body.get("scope") if body.get("scope") in ("all", "tradable") else None
+        classes = [c for c in (body.get("classes") or []) if c in CLASSES] or None
         self.error, self.taught, self.progress, self.started = None, [], (0, 0), time.time()
         self.stage = "starting"
-        self.task = asyncio.get_running_loop().create_task(self._run(starts, teach, source))
-        return f"Simulation Lab started ({starts} Combine start days per playbook). This page shows its progress."
+        self.task = asyncio.get_running_loop().create_task(self._run(starts, teach, source, scope, classes))
+        if classes:
+            which = "the markets you chose"
+        elif (scope or _shared_cfg(self.ctl).lab.markets) == "all":
+            which = "every market with history"
+        else:
+            which = "the markets this account can pick"
+        return f"Simulation Lab started on {which} ({starts} Combine start days per playbook). This page shows its progress."
 
-    async def _run(self, starts: int, teach: bool, source: str) -> None:
+    async def _run(self, starts: int, teach: bool, source: str, scope: str | None = None,
+                   classes: list[str] | None = None) -> None:
         from topstep_bot.simlab import run_lab
         from topstep_bot.simlab import teach as teach_memory
 
@@ -96,13 +229,19 @@ class LabService:
             self.progress, self.stage = (done, total), stage
 
         try:
-            report = await run_lab(cfg, starts=starts, progress=step)
+            report = await run_lab(cfg, starts=starts, scope=scope, classes=classes, progress=step)
             if teach:
                 self.stage = "teaching the long-run memory"
-                self.taught = await teach_memory(cfg, progress=lambda d, t, s: setattr(self, "stage", s))
+                self.taught = await teach_memory(cfg, list(report["markets"]), progress=lambda d, t, s: setattr(self, "stage", s))
             t = report["totals"]
+            opp = report.get("opportunities") or {}
+            top = (opp.get("items") or [None])[0]
+            found = ""
+            if opp:
+                found = f" {opp.get('found', 0)} opportunities across {len(report['markets'])} markets" + (
+                    f", strongest {top['label']} (${top['net']:,.0f}, {top['strength']})." if top else ".")
             self.ctl.bot._event("info", f"Simulation Lab ({source}): {t['simulations']} live-like Combines - {t['passed']} passed, "
-                                        f"{t['failed']} failed, {t['open']} open. {report['recommendation']['text']}")
+                                        f"{t['failed']} failed, {t['open']} open.{found} {report['recommendation']['text']}")
         except Exception as exc:  # noqa: BLE001 - shown on the page and in the log
             log.exception("Simulation Lab failed")
             self.error = str(exc)

@@ -139,6 +139,7 @@ class TradingCore:
         self.entry_guard: Callable[[int], str | None] | None = None
         self.intel: MarketTracker | None = None  # live levels, news and headlines for what we trade (market_intel.py)
         self.market_pick: dict | None = None  # why this market, when the bot picked it (market_pick.py)
+        self.market_today: dict | None = None  # a market you switched to for the rest of the day
         self.news_archive = None  # training only: past calendars from the research library (labels news days)
 
         orders.on_trade_closed = self._on_trade_closed
@@ -541,13 +542,21 @@ class TradingCore:
 
     # ------------------------------------------------------------------- clock
 
+    def _flatten_reason(self) -> str:
+        from topstep_bot.instruments import SPECS
+
+        spec = SPECS.get((self.contract.root or "").upper())
+        if spec is not None and spec.market_close:
+            return f"session flatten time ({spec.root} stops trading at {spec.market_close} CT)"
+        return "session flatten time (Topstep requires flat by 15:10 CT)"
+
     async def on_clock(self, now: datetime) -> None:
         await self.roll_day_if_needed(now)
         guard = self.orders.guard
         if guard is not None and guard.tripped and not self.halted:
             await self.halt(guard.tripped)
         if self.schedule.must_be_flat(now) and not self.orders.is_flat:
-            await self._flatten("session flatten time (Topstep requires flat by 15:10 CT)", now)
+            await self._flatten(self._flatten_reason(), now)
         elif (news_reason := self.risk.news_flatten_reason(now, self.orders.position)) is not None:
             await self._flatten(news_reason, now, kind="risk")
         elif self.cfg.news.flatten_before and self.schedule.news and not self.orders.is_flat:
@@ -719,4 +728,5 @@ class TradingCore:
             "intel": self.intel.brief(self.clock()) if self.intel else None,
             "funded": self.funded_status(),
             "market_pick": self.market_pick,
+            "market_today": self.market_today,
         }

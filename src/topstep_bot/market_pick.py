@@ -43,12 +43,14 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CANDIDATES = ("MNQ", "MES", "M2K", "MYM", "MGC", "MCL")
 PICK_FILE = "market_pick.json"
+TODAY_FILE = "market_today.json"  # a market you switched the account to for the rest of the trading day
 MIN_TEST_TRADES = 6
 SWITCH_MARGIN_R = 0.05
 VALID_HOURS = 20
 TEST_SHARE = 1 / 3
 PICK_DAYS = 120  # history scored per market, as far as the market library reaches (TopstepX keeps about 60 days)
 MIN_SIZED = 0.5  # at least half the signals must fit the account's risk at 1 contract or more
+MANY_CANDIDATES = 8  # with more markets than this, the pick must also have made money on the earlier days
 
 
 @dataclass
@@ -61,6 +63,7 @@ class Candidate:
     usd_per_day: float | None = None
     win_rate: float | None = None
     sized: float | None = None  # share of signals that fit the account's risk
+    train_r_per_day: float | None = None  # the same strategy on the earlier days (not for adaptive)
     note: str = ""  # why it can't be picked (no data, too little evidence, too big for the risk...)
 
     @property
@@ -107,13 +110,71 @@ class Pick:
 
 
 def candidates_for(cfg: BotConfig) -> list[str]:
-    """The markets auto_pick may choose from: the configured list, or the micros, minus any the plan doesn't allow."""
-    from topstep_bot.instruments import SPECS
+    """The markets auto_pick may choose from: the configured list (symbols, ALL, MICROS or asset classes), or
+    the default micros, minus any the plan doesn't allow."""
+    from topstep_bot.instruments import expand_markets
     from topstep_bot.risk.topstep import PLANS, product_limit
 
     plan = PLANS[cfg.account.plan]
-    wanted = cfg.instrument.candidates or list(DEFAULT_CANDIDATES)
-    return [s for s in wanted if s in SPECS and product_limit(s, plan) != 0]
+    wanted = expand_markets(cfg.instrument.candidates or list(DEFAULT_CANDIDATES))
+    return [s for s in wanted if product_limit(s, plan) != 0]
+
+
+# ------------------------------------------------------------------------------ today's market
+
+def today_path(cfg: BotConfig) -> Path:
+    return cfg.account_dir / TODAY_FILE
+
+
+def _switch_day(cfg: BotConfig, now: datetime) -> tuple[str, datetime]:
+    """(trading day, end) a switch made at ``now`` applies to. After 15:10 CT it is the next trading day's."""
+    from zoneinfo import ZoneInfo
+
+    from topstep_bot.risk.topstep import FLAT_BY
+    from topstep_bot.sessions import trading_day_of
+
+    tz = ZoneInfo(cfg.session.timezone)
+    day = trading_day_of(now, tz)
+    end = datetime.combine(day, FLAT_BY, tzinfo=tz)
+    if now >= end:  # between the flat-by deadline and the 17:00 open: the coming day
+        day = trading_day_of(now + timedelta(hours=2, minutes=1), tz)
+        end = datetime.combine(day, FLAT_BY, tzinfo=tz)
+    return day.isoformat(), end
+
+
+def load_today(cfg: BotConfig, now: datetime | None = None) -> dict | None:
+    """The market you switched this account to for today (dashboard or Telegram), or None.
+
+    It lasts until Topstep's 15:10 CT deadline of that trading day: after the daily restart the account is
+    back on its usual market (or its pick)."""
+    try:
+        data = json.loads(today_path(cfg).read_text(encoding="utf-8"))
+        until = datetime.fromisoformat(data["until"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    from topstep_bot.instruments import SPECS
+
+    if (now or datetime.now(UTC)) >= until or data.get("symbol") not in SPECS:
+        return None
+    return data
+
+
+def set_today(cfg: BotConfig, symbol: str, source: str, now: datetime | None = None) -> dict:
+    now = now or datetime.now(UTC)
+    day, until = _switch_day(cfg, now)
+    data = {"symbol": symbol.upper(), "day": day, "until": until.isoformat(), "at": now.isoformat(timespec="minutes"),
+            "source": source}
+    path = today_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    return data
+
+
+def clear_today(cfg: BotConfig) -> bool:
+    path = today_path(cfg)
+    existed = path.exists()
+    path.unlink(missing_ok=True)
+    return existed
 
 
 def fingerprint(cfg: BotConfig) -> str:
@@ -140,7 +201,11 @@ def save_pick(cfg: BotConfig, pick: Pick) -> None:
 
 
 def current_symbol(cfg: BotConfig) -> str:
-    """The market an account trades: its last pick with auto_pick on, else instrument.symbol."""
+    """The market an account trades: today's switch if you made one, its last pick with auto_pick on, else
+    instrument.symbol."""
+    today = load_today(cfg)
+    if today:
+        return today["symbol"]
     if cfg.instrument.auto_pick:
         pick = load_pick(cfg)
         if pick and pick.symbol in candidates_for(cfg) + [cfg.instrument.symbol]:
@@ -196,6 +261,16 @@ def score_observations(cfg: BotConfig, symbol: str, observations: list[Observati
         taken.append(o)
     cand.trades = len(taken)
     cand.r_per_day = round(sum(o.net_r for o in taken) / len(test_days), 3)
+    if not adaptive:  # the same rules on the earlier days: a market that only shines on the held-back days is suspect
+        train_days = [d for d in trading_days if d < split]
+        earlier: dict[str, int] = {}
+        total = 0.0
+        for o in sorted((o for o in observations if o.day < split and o.strategy == cfg.strategy.name), key=lambda o: (o.day, o.time)):
+            if o.usd is None or earlier.get(o.day, 0) >= cfg.risk.max_trades_per_day:
+                continue
+            earlier[o.day] = earlier.get(o.day, 0) + 1
+            total += o.net_r
+        cand.train_r_per_day = round(total / len(train_days), 3) if train_days else None
     cand.usd_per_day = round(sum(o.usd or 0.0 for o in taken) / len(test_days), 2)
     cand.win_rate = round(sum(1 for o in taken if o.net_r > 0) / len(taken), 2) if taken else None
     if signals and (cand.sized or 0) < MIN_SIZED:
@@ -277,6 +352,12 @@ async def pick_market(
         except Exception as exc:  # noqa: BLE001 - one market without data mustn't stop the others
             log.info("Market pick: %s could not be scored: %s", symbol, exc)
             cands.append(Candidate(symbol, note=f"no data: {exc}"[:120]))
+    if len(cands) > MANY_CANDIDATES:
+        # Comparing many markets on a few weeks: the best held-back result is partly luck. Ask for more.
+        for c in cands:
+            if c.eligible and c.train_r_per_day is not None and c.train_r_per_day <= 0:
+                c.note = (f"made money only on the held-back days ({c.train_r_per_day:+.2f}R/day before): with "
+                          f"{len(cands)} markets compared, likely luck")
     symbol, reason, kept = choose(cands, current, fallback)
     pick = Pick(symbol, reason, now.isoformat(timespec="minutes"), fallback, fingerprint(cfg), cands, kept)
     save_pick(cfg, pick)

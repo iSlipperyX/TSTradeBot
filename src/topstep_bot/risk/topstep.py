@@ -83,6 +83,10 @@ PRODUCT_LIMITS: dict[str, tuple[int, int, int]] = {
     "SI": (0, 0, 0),
     "HG": (0, 0, 0),
     "PL": (0, 0, 0),
+    # Micro silver and copper: Topstep's temporary metals notice (February 2026) capped them at 2 / 4 / 6.
+    # Not confirmed on the help center since; kept as the cautious reading until TopstepX shows otherwise.
+    "SIL": (2, 4, 6),
+    "MHG": (2, 4, 6),
 }
 
 

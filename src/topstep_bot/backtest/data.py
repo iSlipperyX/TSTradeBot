@@ -71,7 +71,11 @@ def save_csv(bars: list[Bar], path: Path | str) -> None:
 
 
 BASE_PRICES = {"ES": 5800, "MES": 5800, "NQ": 20500, "MNQ": 20500, "YM": 42000, "MYM": 42000,
-               "RTY": 2200, "M2K": 2200, "CL": 70, "MCL": 70, "GC": 2400, "MGC": 2400}
+               "RTY": 2200, "M2K": 2200, "CL": 70, "MCL": 70, "GC": 2400, "MGC": 2400,
+               "NKD": 40000, "MBT": 80000, "MET": 2500, "6A": 0.66, "6B": 1.30, "6C": 0.72, "6E": 1.10, "6J": 0.0068,
+               "6S": 1.15, "6M": 0.052, "6N": 0.60, "QM": 70, "NG": 3.2, "QG": 3.2, "MNG": 3.2, "RB": 2.2, "HO": 2.4,
+               "PL": 1000, "SI": 30, "SIL": 30, "HG": 4.5, "MHG": 4.5, "ZT": 102, "ZF": 106, "ZN": 110, "TN": 112,
+               "ZB": 118, "UB": 122, "ZC": 450, "ZW": 560, "ZS": 1050, "ZM": 320, "ZL": 45, "HE": 80, "LE": 190}
 
 
 def _intraday_vol(local: datetime) -> float:
@@ -103,7 +107,8 @@ def synthetic_bars(
     has something to find. This is for demos and tests - never for judging a strategy.
     """
     rng = random.Random(seed)
-    price = float(BASE_PRICES.get(symbol.upper(), 5000))
+    root = symbol.upper()
+    price = float(BASE_PRICES.get(root, BASE_PRICES.get({"M6E": "6E", "E7": "6E", "M6A": "6A", "M6B": "6B"}.get(root, ""), 5000)))
     daily_vol = 0.011
     minute_vol = daily_vol / math.sqrt(1380)
     end = end or datetime.now(CT).date()
