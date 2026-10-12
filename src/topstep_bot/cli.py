@@ -20,7 +20,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from topstep_bot import __version__
+from topstep_bot import __version__, fmt
 from topstep_bot.config import BotConfig, ConfigError, load_config, load_secrets
 
 console = Console()
@@ -92,10 +92,6 @@ def _client(cfg: BotConfig):
     return ProjectXClient(secrets.username, secrets.api_key, cfg.api.base_url, cfg.api.timeout_seconds)
 
 
-def _money(v: float) -> str:
-    return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
-
-
 # -------------------------------------------------------------------- commands
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -154,7 +150,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                 for col in ("ID", "Name", "Balance", "Can trade", "Used by the bot as"):
                     table.add_column(col)
                 for a in accounts:
-                    table.add_row(str(a.id), a.name, _money(a.balance), "yes" if a.can_trade else "NO", used.get(a.id, ""))
+                    table.add_row(str(a.id), a.name, fmt.money(a.balance), "yes" if a.can_trade else "NO", used.get(a.id, ""))
                 console.print(table)
                 for t in group:
                     key = t.instrument.contract_id or t.instrument.symbol
@@ -289,14 +285,14 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     table.add_column("Value", justify="right")
     pf = m["profit_factor"]
     rows = [
-        ("Net P&L", _money(m["net_pnl"])),
+        ("Net P&L", fmt.money(m["net_pnl"])),
         ("Trades", f"{m['trades']} ({m['longs']} long / {m['shorts']} short)"),
         ("Win rate", f"{m['win_rate'] * 100:.1f}%"),
         ("Profit factor", "∞" if pf == float("inf") else f"{pf:.2f}"),
         ("Avg R / trade", f"{m['avg_r']:.2f}"),
-        ("Max drawdown", _money(m["max_drawdown"])),
-        ("Best / worst day", f"{_money(m['best_day'])} / {_money(m['worst_day'])}"),
-        ("Fees paid", _money(m["fees"])),
+        ("Max drawdown", fmt.money(m["max_drawdown"])),
+        ("Best / worst day", f"{fmt.money(m['best_day'])} / {fmt.money(m['worst_day'])}"),
+        ("Fees paid", fmt.money(m["fees"])),
     ]
     if cfg.account.stage == "combine":
         cs = combine_statistics(res.days, PLANS[cfg.account.plan])
@@ -458,8 +454,18 @@ def cmd_learn(args: argparse.Namespace) -> int:
         console.print("[bold]Over the long run[/] (average signal after costs, in R):")
         for r in rows:
             console.print(f"  {r['title']}: {r['net_r']:+.2f}R over {r['n']:,} signals ({(r['win_rate'] or 0):.0%} won)")
-    console.print("[dim]The full long-run report: topstep-bot insights --longrun. This memory feeds the reports only; "
-                  "the bot still trades from its recent knowledge base, with every risk rule unchanged.[/]")
+    console.print("[dim]The full long-run report: topstep-bot insights --longrun.[/]")
+    return _run_lab(cfg, memory.knowledge.obs)
+
+
+def _run_lab(cfg: BotConfig, observations) -> int:
+    from topstep_bot.decision_lab import resolve_policy, result_text, run_lab
+
+    with console.status("Decision lab: replaying the classic and evidence rules day by day..."):
+        result = run_lab(cfg, list(observations))
+    console.print(result_text(result))
+    policy, why = resolve_policy(cfg, result)
+    console.print(f"[bold]The bot trades with the {policy} rule[/] ({why}). Every risk rule applies either way.")
     return 0
 
 
@@ -577,6 +583,18 @@ def cmd_coach(args: argparse.Namespace) -> int:
     console.print(session["report"] or "(no report)")
     console.print(f"[dim]Cost about ${session['cost_usd']:.2f} ({session['model']}). Saved in {coach.folder}.[/]")
     return 0
+
+
+def cmd_decision_lab(args: argparse.Namespace) -> int:
+    """Compare the decision rules on the long-run memory without peeking (decision_lab.py)."""
+    from topstep_bot.knowledge import KnowledgeBase
+
+    cfg = _load_account(args, first_if_several=True)
+    path = cfg.longrun_knowledge_path
+    if not path.exists():
+        console.print("[yellow]No long-run memory yet.[/] Run [bold]topstep-bot learn[/] first (or let the bot learn overnight).")
+        return 1
+    return _run_lab(cfg, KnowledgeBase.from_config(cfg, path).obs)
 
 
 def cmd_insights(args: argparse.Namespace) -> int:
@@ -998,15 +1016,15 @@ def _show_journal(cfg: BotConfig, args: argparse.Namespace, Journal) -> None:  #
     for col in ("Day", "Account", "Trades", "P&L", "End balance", "MLL floor"):
         table.add_column(col)
     for d in days:
-        table.add_row(d["trading_day"], d["account"], str(d["trades"]), _money(d["net_pnl"]),
-                      _money(d["end_balance"]), _money(d["mll_floor"]))
+        table.add_row(d["trading_day"], d["account"], str(d["trades"]), fmt.money(d["net_pnl"]),
+                      fmt.money(d["end_balance"]), fmt.money(d["mll_floor"]))
     console.print(table)
     trades = Table(title=f"Recent trades ({who}{cfg.mode})")
     for col in ("Exit time", "Strategy", "Side", "Qty", "Entry", "Exit", "Net", "Exit reason"):
         trades.add_column(col)
     for t in journal.trades(limit=args.limit):
         trades.add_row((t["exit_time"] or "")[:16], t["strategy"] or "", t["side"], str(t["size"]), str(t["entry_price"]),
-                       str(t["exit_price"]), _money(t["net_pnl"] or 0), t["exit_reason"] or "")
+                       str(t["exit_price"]), fmt.money(t["net_pnl"] or 0), t["exit_reason"] or "")
     console.print(trades)
     journal.close()
 
@@ -1065,7 +1083,7 @@ def cmd_accounts(args: argparse.Namespace) -> int:
         market = f"{current_symbol(t)} {t.instrument.timeframe_minutes}m" + (" (bot picks)" if t.instrument.auto_pick else "")
         table.add_row(a.name, who, key, f"{t.account.plan} {t.account.stage}", modes.get(a.name, t.mode),
                       market, t.strategy.name + follow,
-                      _money(t.risk.risk_per_trade), _money(t.risk.personal_daily_loss_limit), str(t.risk.max_trades_per_day))
+                      fmt.money(t.risk.risk_per_trade), fmt.money(t.risk.personal_daily_loss_limit), str(t.risk.max_trades_per_day))
     console.print(table)
     console.print("[bold]Who trades the same calls:[/]")
     for key, names in call_groups(cfg).items():
@@ -1077,14 +1095,6 @@ def cmd_accounts(args: argparse.Namespace) -> int:
         "(Topstep prohibits hedging across accounts)." if guard != "off" else "OFF: you must make sure accounts never hold "
         "opposite positions (Topstep prohibits it).") + "[/]")
     return 0
-
-
-def _pct(v: float | None) -> str:
-    return "-" if v is None else f"{v * 100:.0f}%"
-
-
-def _pf(v: float) -> str:
-    return "∞" if v == float("inf") else f"{v:.2f}"
 
 
 def _print_tuning(report, cfg: BotConfig) -> None:
@@ -1104,15 +1114,15 @@ def _print_tuning(report, cfg: BotConfig) -> None:
     for r in rows:
         o = r.oos
         name = r.strategy + ("*" if r.strategy == cfg.strategy.name else "") + (" ◀" if report.recommended is r else "")
-        table.add_row(name, f"{o.net:+,.0f}", str(o.trades), _pf(o.profit_factor), f"{o.max_drawdown:,.0f}",
-                      _pct(o.combine_pass_rate), f"[green]✔ {r.reason}[/]" if r.eligible else f"[yellow]✘ {r.reason}[/]")
+        table.add_row(name, f"{o.net:+,.0f}", str(o.trades), fmt.pf(o.profit_factor), f"{o.max_drawdown:,.0f}",
+                      fmt.pct(o.combine_pass_rate), f"[green]✔ {r.reason}[/]" if r.eligible else f"[yellow]✘ {r.reason}[/]")
     console.print(table)
     console.print("[dim]PF = profit factor (above 1 = profitable). Pass = Combine pass rate. * = your current strategy. "
                   "◀ = recommended.[/]")
     if report.current is not None:
         c = report.current
         console.print(f"Your current setting ({report.current_label}) on the same test windows: {c.net:+,.0f} over "
-                      f"{c.trades} trades, PF {_pf(c.profit_factor)}, max drawdown {c.max_drawdown:,.0f}.")
+                      f"{c.trades} trades, PF {fmt.pf(c.profit_factor)}, max drawdown {c.max_drawdown:,.0f}.")
     rec = report.recommended
     if rec is None or rec.final is None:
         console.print(Panel(
@@ -1124,9 +1134,9 @@ def _print_tuning(report, cfg: BotConfig) -> None:
     settings = ", ".join(f"{k}={v}" for k, v in rec.final.params) or "its default settings"
     console.print(Panel(
         f"[bold green]Best out-of-sample: {rec.strategy}[/] - {settings}\n"
-        f"Out-of-sample: {rec.oos.net:+,.0f} over {rec.oos.trades} trades, profit factor {_pf(rec.oos.profit_factor)}, "
+        f"Out-of-sample: {rec.oos.net:+,.0f} over {rec.oos.trades} trades, profit factor {fmt.pf(rec.oos.profit_factor)}, "
         f"Sharpe {rec.oos.sharpe:.2f}, max drawdown {rec.oos.max_drawdown:,.0f}"
-        + (f", Combine pass rate {_pct(rec.oos.combine_pass_rate)}" if rec.oos.combine_pass_rate is not None else "")
+        + (f", Combine pass rate {fmt.pct(rec.oos.combine_pass_rate)}" if rec.oos.combine_pass_rate is not None else "")
         + f".\nChosen per window: {choices}.\n"
         + ("Only these settings were tested (nothing was tuned)." if rec.n_candidates == 1 else
            f"The same settings were picked in {rec.stability:.0%} of windows"
@@ -1660,6 +1670,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", action="store_true", help="show the coach's setup, spending and latest lessons")
     p.add_argument("-a", "--account", help=account_help)
     p.set_defaults(func=cmd_coach)
+
+    p = sub.add_parser("decision-lab", help="decision lab: replay the classic and evidence rules on the long-run memory and pick one")
+    p.add_argument("-a", "--account", help=account_help)
+    p.set_defaults(func=cmd_decision_lab)
 
     p = sub.add_parser("update", help="check GitHub for a newer version of the bot and install it")
     p.add_argument("--check", action="store_true", help="only show whether an update is available")

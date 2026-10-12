@@ -46,6 +46,7 @@ COMMANDS = [
     ("startbot", "Start the bot if it is stopped"),
     ("stop", "Stop the bot (Telegram and the dashboard stay online)"),
     ("ideas", "Recommended trades - tap Take to trade one"),
+    ("ask", "Ask the bot anything, e.g. /ask why the last trade? (or just type)"),
     ("brief", "What the bot knows right now, in plain words"),
     ("next", "When the bot expects its next trade, and why"),
     ("market", "Market brief: key levels, today's reports, headlines"),
@@ -202,6 +203,23 @@ class TelegramController:
         while self._background:
             await asyncio.wait(list(self._background))
 
+    async def _answer(self, question: str, account: str | None = None) -> None:
+        """The central intelligence's answer to a typed question (it may take a few seconds with AI answers)."""
+        if account is None:
+            accounts = self._accounts()
+            first, _, rest = question.partition(" ")
+            if accounts and first.lower() in accounts and rest:
+                account, question = first.lower(), rest
+        with contextlib.suppress(TelegramError, httpx.HTTPError):
+            await self._call("sendChatAction", chat_id=self.chat_id, action="typing")
+        try:
+            await self.send(await self._do("ask", question, account=account))
+        except (ValueError, RuntimeError) as exc:
+            await self.send(f"❌ {exc}")
+        except Exception:  # noqa: BLE001 - a question must never stop Telegram control
+            log.exception("Telegram: answering a question failed")
+            await self.send("❌ I couldn't answer that - see logs/errors.log.")
+
     def _in_background(self, coro) -> None:
         """Run a slow command without blocking the polling loop, so /flatten or /stop still work meanwhile."""
         task = asyncio.create_task(coro)
@@ -271,7 +289,10 @@ class TelegramController:
             return
         text = msg["text"].strip()
         if not text.startswith("/"):
-            await self.send("Send /help to see the commands.", KEYBOARD)
+            if hasattr(self.actions, "ask"):  # a question for the central intelligence
+                self._in_background(self._answer(text))
+            else:
+                await self.send("Send /help to see the commands.", KEYBOARD)
             return
         parts = text[1:].split()
         command = parts[0].split("@")[0].lower() if parts else "help"
@@ -533,6 +554,12 @@ class TelegramController:
         elif command == "reset":
             await self._ask(f"Undo every setting changed from the dashboard/Telegram{where} and go back to config.yaml?",
                             "reset", target, yes="Yes, reset")
+        elif command == "ask":
+            if not args:
+                await self.send("Ask me anything about the bot, e.g. /ask why did you take the last trade? "
+                                "You can also just type the question.")
+                return
+            self._in_background(self._answer(" ".join(args), target))
         elif command == "log":
             await self.send(await self._do("log_text", account=target))
         elif command == "update":

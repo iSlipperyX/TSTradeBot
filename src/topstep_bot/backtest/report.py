@@ -8,20 +8,11 @@ import math
 from datetime import datetime
 from pathlib import Path
 
+from topstep_bot import fmt
 from topstep_bot.backtest.metrics import combine_statistics, compute_metrics
 from topstep_bot.backtest.runner import BacktestResult
 from topstep_bot.risk.topstep import PLANS, LossLimitTracker
 from topstep_bot.strategies import STRATEGIES
-
-
-def _money(v: float | None) -> str:
-    if v is None:
-        return "-"
-    return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
-
-
-def _pct(v: float | None) -> str:
-    return "-" if v is None else f"{v * 100:.1f}%"
 
 
 def _num(v: float | None, digits: int = 2) -> str:
@@ -56,19 +47,19 @@ def build_report(res: BacktestResult) -> str:
     elif first.status == "failed":
         verdict = ("bad", "Combine FAILED", f"Starting on day one: {first.detail} after {first.days_used} trading days.")
     else:
-        verdict = ("neutral", "Combine not finished", f"Profit {_money(first.profit)} after {first.days_used} days - target not reached yet.")
+        verdict = ("neutral", "Combine not finished", f"Profit {fmt.money(first.profit)} after {first.days_used} days - target not reached yet.")
 
     cards = [
-        ("Net P&L", _money(m["net_pnl"]), "after fees and slippage"),
+        ("Net P&L", fmt.money(m["net_pnl"]), "after fees and slippage"),
         ("Trades", str(m["trades"]), f"{m['longs']} long / {m['shorts']} short"),
-        ("Win rate", _pct(m["win_rate"]), f"avg win {_money(m['avg_win'])} / loss {_money(m['avg_loss'])}"),
+        ("Win rate", fmt.pct(m["win_rate"], 1), f"avg win {fmt.money(m['avg_win'])} / loss {fmt.money(m['avg_loss'])}"),
         ("Profit factor", _num(m["profit_factor"]), f"avg {_num(m['avg_r'])}R per trade"),
-        ("Max drawdown", _money(m["max_drawdown"]), f"longest losing streak {m['max_losing_streak']}"),
+        ("Max drawdown", fmt.money(m["max_drawdown"]), f"longest losing streak {m['max_losing_streak']}"),
         ("Sharpe (daily)", _num(m["sharpe"]), f"{m['green_days']}/{m['traded_days']} green trading days"),
     ]
     if combine and combine["attempts"]:
         cards.append(
-            ("Combine pass rate", _pct(combine["pass_rate"]),
+            ("Combine pass rate", fmt.pct(combine["pass_rate"], 1),
              f"{combine['attempts']} simulated starts; median {_num(combine['median_days_to_pass'], 0)} days to pass")
         )
     elif combine:
@@ -79,7 +70,7 @@ def build_report(res: BacktestResult) -> str:
         f"<td>{html.escape((t.opened_at or t.created_at).strftime('%Y-%m-%d %H:%M'))}</td>"
         f"<td>{t.side.label}</td><td class='num'>{t.filled_size}</td>"
         f"<td class='num'>{t.entry_price}</td><td class='num'>{_num(t.exit_price, res.contract.price_decimals)}</td>"
-        f"<td class='num {'pos' if t.net_pnl > 0 else 'neg'}'>{_money(t.net_pnl)}</td>"
+        f"<td class='num {'pos' if t.net_pnl > 0 else 'neg'}'>{fmt.money(t.net_pnl)}</td>"
         f"<td class='num'>{_num(t.r_multiple())}</td>"
         f"<td>{html.escape(t.exit_reason)}</td><td class='muted'>{html.escape(t.reason)}</td>"
         "</tr>"
@@ -93,7 +84,7 @@ def build_report(res: BacktestResult) -> str:
         ts, eq, fl = res.breaches[0]
         breach_note = (
             f"<p class='alert'>⚠ The Maximum Loss Limit would have been touched {len(res.breaches)} time(s); first on "
-            f"{ts:%Y-%m-%d %H:%M} UTC (equity {_money(eq)} vs floor {_money(fl)}). Topstep liquidates at that point.</p>"
+            f"{ts:%Y-%m-%d %H:%M} UTC (equity {fmt.money(eq)} vs floor {fmt.money(fl)}). Topstep liquidates at that point.</p>"
         )
 
     card_html = "".join(
@@ -105,7 +96,7 @@ def build_report(res: BacktestResult) -> str:
         title=html.escape(f"{strat.title} · {res.contract.name}"),
         subtitle=html.escape(
             f"{cfg.instrument.timeframe_minutes}-minute bars · {res.first_day} → {res.last_day} · "
-            f"{plan.name} {cfg.account.stage} · risk {_money(cfg.risk.risk_per_trade)}/trade"
+            f"{plan.name} {cfg.account.stage} · risk {fmt.money(cfg.risk.risk_per_trade)}/trade"
         ),
         generated=datetime.now().strftime("%Y-%m-%d %H:%M"),
         verdict_class=verdict[0],
@@ -117,7 +108,7 @@ def build_report(res: BacktestResult) -> str:
         exit_rows=exit_rows or "<li>None</li>",
         param_rows=param_rows,
         data=json.dumps(series),
-        fees=_money(m["fees"]),
+        fees=fmt.money(m["fees"]),
         description=html.escape(strat.description),
     )
 

@@ -35,9 +35,71 @@ FEATURES: dict[str, tuple[str, str]] = {
     "dow": ("Day of week", "0 = Monday ... 4 = Friday"),
 }
 # Features with a direction: the report turns them to "with the trade" (a long above VWAP and a
-# short below it are the same situation), see insights.oriented().
+# short below it are the same situation), see orient().
 SIGNED = frozenset({"gap", "move", "vwap", "trend"})
 MIN_DAYS = 3  # completed days needed before day-range units mean anything
+
+
+def orient(ctx: dict | None, side: str) -> dict[str, float]:
+    """A snapshot seen from the trade's side (LONG / SHORT): "with the trade" is positive for longs and shorts alike."""
+    if not ctx:
+        return {}
+    if side != "SHORT":
+        return dict(ctx)
+    out = {}
+    for key, v in ctx.items():
+        if key in SIGNED:
+            v = -v
+        elif key == "range_pos":
+            v = round(1.0 - v, 3)
+        out[key] = v
+    return out
+
+
+def describe(ctx: dict | None, side: str | None = None) -> list[str]:
+    """The snapshot in plain words, e.g. ["volatile (1.4x a normal range)", "gapped up ...", ...].
+
+    With ``side`` the direction words say whether the market was moving with or against the trade."""
+    if not ctx:
+        return []
+    out: list[str] = []
+    vol = ctx.get("vol")
+    if vol is not None:
+        out.append(f"{'volatile' if vol >= 1.2 else 'quiet' if vol < 0.8 else 'normal volatility'} ({vol:.1f}x a normal range)")
+    minutes = ctx.get("min_open")
+    if minutes is not None:
+        out.append(f"{_minutes(minutes)} after the open" if minutes >= 0 else f"{_minutes(-minutes)} before the open")
+    gap = ctx.get("gap")
+    if gap is not None and abs(gap) >= 0.1:
+        out.append(f"opened with a gap {'up' if gap > 0 else 'down'} of {abs(gap):.1f} of an average day's range")
+    move = ctx.get("move")
+    if move is not None:
+        out.append(f"price {'up' if move > 0 else 'down'} {abs(move):.2f} day-ranges since the open" if abs(move) >= 0.05
+                   else "price about where it opened")
+    vwap = ctx.get("vwap")
+    if vwap is not None:
+        out.append("price at VWAP" if abs(vwap) < 0.03 else f"price {'above' if vwap > 0 else 'below'} VWAP")
+    trend = ctx.get("trend")
+    if trend is not None and abs(trend) >= 0.05:
+        out.append(f"{'above' if trend > 0 else 'below'} its 50-bar average ({'uptrend' if trend > 0 else 'downtrend'})")
+    pos = ctx.get("range_pos")
+    if pos is not None:
+        out.append("near the day's high" if pos >= 0.8 else "near the day's low" if pos <= 0.2 else "mid-range for the day")
+    used = ctx.get("range_used")
+    if used is not None:
+        out.append(f"{round(100 * used)}% of an average day's range already used")
+    volume = ctx.get("volume")
+    if volume is not None:
+        out.append(f"{'heavy' if volume >= 1.5 else 'light' if volume < 0.6 else 'normal'} volume ({volume:.1f}x)")
+    if side in ("LONG", "SHORT") and trend is not None and abs(trend) >= 0.05:
+        with_trend = (trend > 0) == (side == "LONG")
+        out.append(f"a {side.lower()} {'with' if with_trend else 'against'} the trend")
+    return out
+
+
+def _minutes(m: float) -> str:
+    m = int(round(m))
+    return f"{m} min" if m < 60 else f"{m // 60}h {m % 60:02d}m"
 
 
 class MarketContext:

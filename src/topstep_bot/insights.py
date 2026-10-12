@@ -21,8 +21,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from topstep_bot import fmt
 from topstep_bot.knowledge import FIRST_TRADE, MANUAL, KnowledgeBase, Observation
-from topstep_bot.market_context import FEATURES, SIGNED
+from topstep_bot.market_context import FEATURES, SIGNED, orient
 
 MIN_BUCKET = 15  # observations a condition bucket needs before it can be called a hint
 MIN_ROW = 5  # observations before a strategy's averages are shown at all
@@ -35,12 +36,7 @@ def oriented(o: Observation, key: str) -> float | None:
     """A context value seen from the trade's side: "with the trade" is positive for longs and shorts alike."""
     if not o.ctx or key not in o.ctx:
         return None
-    v = o.ctx[key]
-    if key in SIGNED and o.side == "SHORT":
-        return -v
-    if key == "range_pos" and o.side == "SHORT":
-        return round(1.0 - v, 3)
-    return v
+    return orient({key: o.ctx[key]}, o.side)[key]
 
 
 def _mean(values: Iterable[float | None]) -> float | None:
@@ -188,9 +184,6 @@ def build_report(kb: KnowledgeBase, strategies: list[tuple[str, str]], *, slippa
 
 # --------------------------------------------------------------------------- text
 
-def _r(v: float | None) -> str:
-    return "-" if v is None else f"{v:+.2f}R"
-
 
 def execution_line(e: dict[str, Any]) -> str | None:
     if not e["entry_n"] and not e["exit_n"]:
@@ -206,8 +199,8 @@ def execution_line(e: dict[str, Any]) -> str | None:
 
 def hint_line(h: dict[str, Any]) -> str:
     b, w = h["best"], h["worst"]
-    return (f"{h['title']}, {h['feature_name'][:1].lower() + h['feature_name'][1:]}: best {b['label']} {_r(b['net_r'])} over {b['n']}, "
-            f"worst {w['label']} {_r(w['net_r'])} over {w['n']}.")
+    return (f"{h['title']}, {h['feature_name'][:1].lower() + h['feature_name'][1:]}: best {b['label']} {fmt.r(b['net_r'])} over {b['n']}, "
+            f"worst {w['label']} {fmt.r(w['net_r'])} over {w['n']}.")
 
 
 def report_text(rep: dict[str, Any], *, compact: bool = False) -> str:
@@ -221,14 +214,14 @@ def report_text(rep: dict[str, Any], *, compact: bool = False) -> str:
     if rows:
         lines.append("Average signal after fees and slippage:")
         for r in sorted(rows, key=lambda r: r["net_r"] or 0, reverse=True)[: 4 if compact else None]:
-            line = f"  {r['title']}: {_r(r['net_r'])} over {r['n']} ({round(100 * (r['win_rate'] or 0))}% won)"
+            line = f"  {r['title']}: {fmt.r(r['net_r'])} over {r['n']} ({round(100 * (r['win_rate'] or 0))}% won)"
             if r["cost_r"] is not None and not compact:
                 line += f", costs {r['cost_r']:.2f}R a signal"
             if r["real_n"] and r["sim_n"]:
-                line += f"; your real trades {_r(r['real_net_r'])} over {r['real_n']} vs {_r(r['sim_net_r'])} simulated"
+                line += f"; your real trades {fmt.r(r['real_net_r'])} over {r['real_n']} vs {fmt.r(r['sim_net_r'])} simulated"
             lines.append(line)
             if not compact and r["n_path"] >= rep["min_row"]:
-                path = f"    went {_r(r['mfe_r'])} for and {_r(r['mae_r'])} against on average"
+                path = f"    went {fmt.r(r['mfe_r'])} for and {fmt.r(r['mae_r'])} against on average"
                 if r["winners_left_r"] is not None:
                     path += f"; winners closed {r['winners_left_r']:.2f}R below their best"
                 if r["gave_back"] is not None and r["n_losers"] >= rep["min_row"]:
@@ -236,10 +229,10 @@ def report_text(rep: dict[str, Any], *, compact: bool = False) -> str:
                 lines.append(path)
     m = rep["manual"]
     if m and m["n"]:
-        lines.append(f"Your manual trades: {_r(m['net_r'])} over {m['n']} ({round(100 * (m['win_rate'] or 0))}% won).")
+        lines.append(f"Your manual trades: {fmt.r(m['net_r'])} over {m['n']} ({round(100 * (m['win_rate'] or 0))}% won).")
     f = rep.get("first_trade")
     if f and f["n"]:
-        lines.append(f"First trades after starting: {_r(f['net_r'])} over {f['n']} ({round(100 * (f['win_rate'] or 0))}% won).")
+        lines.append(f"First trades after starting: {fmt.r(f['net_r'])} over {f['n']} ({round(100 * (f['win_rate'] or 0))}% won).")
     ex = execution_line(rep["execution"])
     if ex:
         lines.append(ex)

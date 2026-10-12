@@ -228,6 +228,9 @@ class LiveRunner:
             from topstep_bot.recommendations import RecommendationBook
 
             core.recommender = RecommendationBook(core, cfg.recommendations.strategies or None)
+        from topstep_bot.reasoning import Reasoner
+
+        core.attach_reasoner(Reasoner(core))
         await self._warmup()
         await core.begin_day(today, acct.balance, realized, closed_today)
         core.risk.live_guards = True
@@ -374,6 +377,7 @@ class LiveRunner:
             except Exception as exc:  # noqa: BLE001 - trading can go on with the knowledge we have
                 log.warning("Training failed: %s", exc)
                 core.event("warning", f"Could not retrain the knowledge base: {exc}")
+        self.refresh_policy()
         core.event("info", self._knowledge_ready_text(kb))
 
     @staticmethod
@@ -459,7 +463,35 @@ class LiveRunner:
         result = await core.memory.learn(self.cfg, self.contract, self.client, self.now())
         message = result.text()
         core.event("info", message)
+        lab = await self.run_lab()
+        if lab is not None:
+            message += "\n" + lab
         return message
+
+    async def run_lab(self) -> str | None:
+        """Replay both decision rules over the long-run memory (decision_lab.py) and trade with the one it supports."""
+        from topstep_bot.decision_lab import result_text, run_lab
+
+        core = self.core
+        if core is None or core.memory is None:
+            return None
+        observations = list(core.memory.knowledge.obs)
+        try:
+            result = await asyncio.to_thread(run_lab, self.cfg, observations)
+        except Exception as exc:  # noqa: BLE001 - the bot keeps the rule it has
+            log.warning("The decision lab failed: %s", exc)
+            return None
+        text = result_text(result)
+        log.info(text)
+        self.refresh_policy(result)
+        return text
+
+    def refresh_policy(self, result: dict | None = None) -> None:
+        """Trade with the decision rule config.yaml (or, on auto, the decision lab) asks for."""
+        from topstep_bot.decision_lab import resolve_policy
+
+        if self.core is not None:
+            self.core.set_policy(*resolve_policy(self.cfg, result))
 
     async def _learn_loop(self) -> None:
         """Outside the bot's entry window and while flat: retrain the knowledge base once each session has
@@ -470,6 +502,7 @@ class LiveRunner:
             if core is None or not core.orders.is_flat or core.schedule.entry_block_reason(now) is None:
                 continue  # inside the entry window or in a trade: learn later, so trading never waits on it
             await self._retrain_if_due(now)
+            self.refresh_policy()  # another account may have rerun the decision lab; never switches mid-session
             memory = core.memory
             if memory is None or memory.running or (self._learn_after and now < self._learn_after):
                 continue

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topstep-bot"
-version = "2.1.0"
+version = "2.2.0"
 description = "Automated futures trading bot for Topstep accounts via the TopstepX (ProjectX Gateway) API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,7 +15,7 @@ dependencies = [
     "PyYAML>=6",
     "tzdata>=2024.1",
     "rich>=13",
-    "anthropic>=1.13",  # the AI coach (coach.py); imported only when it runs
+    "anthropic>=1.13",  # the AI coach (coach.py) and AI answers (brain/llm.py); imported only when used
 ]
 
 [project.optional-dependencies]

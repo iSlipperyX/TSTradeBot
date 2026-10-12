@@ -20,7 +20,8 @@ to be honest about small samples rather than tune results until they look good.
 
 Spending: every API call's token usage is priced and logged in data/coach/usage.jsonl. A session stops
 once it reaches coach.max_session_usd, and no session starts once this month's spending reaches
-coach.monthly_budget_usd. API credits are bought on the Claude Console (platform.claude.com).
+coach.monthly_budget_usd. The Ask tab's AI answers (brain/llm.py) use the same key, log here too and
+count toward the same monthly budget. API credits are bought on the Claude Console (platform.claude.com).
 """
 
 from __future__ import annotations
@@ -36,12 +37,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from topstep_bot.config import BotConfig, load_secrets
+from topstep_bot.config import CLAUDE_KEY_ENV, BotConfig, load_secrets
 
 log = logging.getLogger("topstep_bot.coach")
 UTC = timezone.utc
 
-ENV_KEY = "COACH_ANTHROPIC_API_KEY"  # its own name: a system-wide ANTHROPIC_API_KEY is never picked up by accident
+ENV_KEY = CLAUDE_KEY_ENV  # shared with the Ask answers (brain/llm.py)
 CONSOLE_URL = "https://platform.claude.com"
 BILLING_URL = "https://platform.claude.com/settings/billing"
 KEYS_URL = "https://platform.claude.com/settings/keys"
@@ -232,7 +233,7 @@ class Coach:
         return self.folder / "usage.jsonl"
 
     def spent(self, month: str | None = None) -> float:
-        """Dollars spent on coaching this calendar month (UTC), from the usage log."""
+        """Dollars spent on Claude this calendar month (UTC): coaching and the Ask tab's AI answers, from the usage log."""
         month = month or datetime.now(UTC).strftime("%Y-%m")
         total = 0.0
         path = self._usage_path()
@@ -264,9 +265,16 @@ class Coach:
             return total
         return one(model, usage)
 
-    def _log_usage(self, model: str, usage: Any, cost: float) -> None:
+    def log_usage(self, model: str, usage: Any, cost: float | None = None, source: str = "coach") -> float:
+        """Price (unless ``cost`` is given) and log one response; the Ask tab's AI answers log here too (source "ask")."""
+        cost = self.price(model, usage) if cost is None else cost
+        self._log_usage(model, usage, cost, source)
+        return cost
+
+    def _log_usage(self, model: str, usage: Any, cost: float, source: str = "coach") -> None:
         self.folder.mkdir(parents=True, exist_ok=True)
-        row = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "model": model, "input": _tokens(usage, "input_tokens"),
+        row = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "source": source, "model": model,
+               "input": _tokens(usage, "input_tokens"),
                "output": _tokens(usage, "output_tokens"), "cache_read": _tokens(usage, "cache_read_input_tokens"),
                "cache_write": _tokens(usage, "cache_creation_input_tokens"), "cost": round(cost, 6)}
         with self._usage_path().open("a", encoding="utf-8") as f:
@@ -775,7 +783,7 @@ class Coach:
         if pending:
             lines.append("Waiting for your approval: " + "; ".join(p["title"] for p in pending))
         if not s["key_saved"]:
-            lines.append(f"Add a Claude API key on the dashboard's Coach tab (create one at {KEYS_URL}).")
+            lines.append(f"Add a Claude API key on the dashboard's AI Coach or Setup tab (create one at {KEYS_URL}).")
         return "\n".join(lines)
 
 

@@ -32,6 +32,13 @@ knowledge:                      # what the bot learns while it runs (drives the 
   backups_kept: 14              # daily copies of the knowledge base in data/knowledge_backups (every live observation is also kept in a ledger)
   deep_learning: true           # long-run memory: keep every bar, backfill history and replay it all daily (reports only)
   deep_history_days: 365        # how far back the long-run memory reaches (up to 3650)
+  policy: auto                  # how the adaptive strategy decides: auto = the classic rule until the decision lab
+                                # shows the new evidence rule clearly ahead; or classic / evidence
+
+brain:                          # the central intelligence: ask the bot why (dashboard Ask tab, or type to it in Telegram)
+  ai: false                     # true = a Claude model writes the answers (the Claude API key, shared with the coach)
+  model: claude-opus-5-5
+  explain_trades: true          # add why a trade was taken, and what it taught, to its Telegram alerts
 
 first_trade:                    # one educated trade soon after the bot starts (the "Teach the bot" goal turns it on)
   enabled: false
