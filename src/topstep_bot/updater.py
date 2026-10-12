@@ -112,6 +112,10 @@ class UpdateInfo:
     problem: str | None = None  # why it can't be installed automatically (until you fix it)
     error: str | None = None  # the check itself failed
     needs_token: bool = False  # it failed because the repository is private and there is no GitHub token
+    # The bot folder already has the newest code (a 'git pull', or an install made outside this program),
+    # but this program started before it and still runs the old code: installing = restarting.
+    restart_only: bool = False
+    running: str | None = None  # commit this program started on, when it differs from the folder's
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -134,6 +138,10 @@ class UpdateInfo:
             return f"Could not check for updates: {self.error}"
         if not self.available:
             return f"Topstep Bot is up to date (version {version_label(self.version, self.current)})."
+        if self.restart_only:
+            newer = f" ({self.version} → {self.new_version})" if self.new_version and self.new_version != self.version else ""
+            return (f"A newer Topstep Bot is already in the bot folder{newer}, but the running bot started before it: "
+                    "restart to use it.")
         n = self.change_count
         what = f"{n} change{'s' if n != 1 else ''}" if self.exact else f"{self.file_count} changed file{'s' if self.file_count != 1 else ''}"
         version = f" ({self.version} → {self.new_version})" if self.new_version and self.new_version != self.version else ""
@@ -287,6 +295,16 @@ class Updater:
         self.api = api
         self.transport = transport
         self._client: httpx.Client | None = None  # opened when needed, closed after each check/install
+        # The code this program runs: the folder's commit when it started (git), and the imported version.
+        self.running_commit: str | None = self._head() if self.method == "git" else None
+        here = project_root()  # the imported version describes this folder only if it is the one running
+        self.running_version: str | None = __version__ if here is not None and here.resolve() == self.root.resolve() else None
+
+    def _head(self) -> str | None:
+        try:
+            return self._git("rev-parse", "HEAD", timeout=15) or None
+        except (UpdateError, OSError, subprocess.SubprocessError):
+            return None
 
     @classmethod
     def for_config(cls, cfg: Any, token: str | None = None, **kw: Any) -> Updater | None:
@@ -345,10 +363,37 @@ class Updater:
         except (httpx.HTTPError, OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
             log.warning("Update check failed", exc_info=True)
             info.error = f"{type(exc).__name__}: {exc}"
+        if not info.error and not info.available:
+            self._check_running(info)
         info.change_count = max(info.change_count, len(info.changes))
         info.file_count = max(info.file_count, len(info.files))
         self._save(check=info.to_dict())
         return info
+
+    def _check_running(self, info: UpdateInfo) -> None:
+        """GitHub has nothing newer than the folder, but is the folder newer than what is running?"""
+        disk_version = info.version
+        if self.method == "git" and self.running_commit and info.current and self.running_commit != info.current:
+            ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", self.running_commit, info.current], cwd=self.root,
+                                      capture_output=True, creationflags=NO_WINDOW).returncode == 0
+            if not ancestor:
+                return  # the folder went back (an undo): nothing newer to offer
+            info.change_count = int(self._git("rev-list", "--count", "--first-parent", f"{self.running_commit}..{info.current}"))
+            out = self._git("log", f"-{MAX_CHANGES}", "--first-parent", "--format=%H%x1f%an%x1f%cI%x1f%B%x1e",
+                            f"{self.running_commit}..{info.current}")
+            for record in out.split("\x1e"):
+                fields = record.strip().split("\x1f")
+                if len(fields) == 4:
+                    info.changes.append(Change(fields[0], commit_title(fields[3]), fields[1], fields[2]))
+        elif self.method == "git" or self.running_version is None or disk_version == self.running_version:
+            return
+        info.available = info.restart_only = True
+        info.running = self.running_commit
+        running_version = self.running_version
+        if self.running_commit:
+            running_version = version_of(self._git("show", f"{self.running_commit}:{VERSION_FILE}", check=False)) or running_version
+        info.version, info.new_version = running_version or disk_version, disk_version
+        info.latest = info.current
 
     # git ---------------------------------------------------------------
 
@@ -517,6 +562,13 @@ class Updater:
         say = progress or (lambda _: None)
         if not info.available or not info.latest:
             raise UpdateError("Already up to date - nothing to install.")
+        if info.restart_only:  # the files are already new: check they start, then the caller restarts
+            say("Checking that the new version starts...")
+            self.verify(config_path)
+            record = {"method": "restart", "from": info.running, "to": info.latest, "status": "installed", "at": _now()}
+            self._save(last_install=record, check=None)
+            self.running_commit = info.latest
+            return record
         if info.problem:
             raise UpdateError(f"Can't install: {info.problem}.")
         old_pyproject = self._read("pyproject.toml")
@@ -537,6 +589,7 @@ class Updater:
             raise UpdateError(f"{exc}. Nothing changed: the previous version was restored.") from None
         record.update(status="installed", at=_now())
         self._save(last_install=record, check=None)  # the last check described the old version
+        self.running_commit = record["to"]  # a restart into it follows; don't offer it again meanwhile
         log.info("Update installed: %s -> %s (%s)", (record.get("from") or "unknown")[:7], record["to"][:7], self.method)
         return record
 
@@ -675,6 +728,8 @@ class Updater:
 
     def can_roll_back(self) -> bool:
         rec = self.state().get("last_install") or {}
+        if rec.get("method") == "restart":  # only a git folder knows the commit that ran before
+            return rec.get("status") == "installed" and bool(rec.get("from")) and self.method == "git"
         return rec.get("status") in ("installed", "applying") and bool(rec.get("from") or rec.get("method") == "download")
 
     def rollback(self, record: dict | None = None) -> dict:
@@ -686,7 +741,10 @@ class Updater:
         rec = dict(record or self.state().get("last_install") or {})
         if not rec:
             raise UpdateError("There is no update to undo.")
-        if rec["method"] == "git":
+        if rec["method"] == "restart" and self.method != "git":
+            raise UpdateError("The bot only restarted into files that were already there: there is no copy of the "
+                              "previous version to put back.")
+        if rec["method"] in ("git", "restart"):
             if not rec.get("from"):
                 raise UpdateError("The previous version is unknown - it can't be restored automatically.")
             self._git("reset", "--keep", "--quiet", rec["from"], timeout=120)

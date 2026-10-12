@@ -389,3 +389,48 @@ def test_state_file_survives_a_corrupt_write(tmp_path):
     assert load_state(tmp_path) == {}
     save_state(tmp_path, {"installed": "abc"})
     assert json.loads((tmp_path / "updates.json").read_text()) == {"installed": "abc"}
+
+
+@needs_git
+def test_a_folder_newer_than_the_running_bot_offers_a_restart(world):
+    """A 'git pull' (or a commit) made while the bot runs: GitHub has nothing newer, but the running code is old."""
+    running = git(world.bot, "rev-parse", "HEAD")
+    assert world.updater.running_commit == running and not world.updater.check().available
+    new = world.commit({"src/topstep_bot/engine.py": "ENGINE = 2\n", "src/topstep_bot/__init__.py": '__version__ = "1.1.0"\n'},
+                       "Faster engine")
+    git(world.bot, "pull", "-q", "origin", "main")  # the folder moves on; the running program doesn't
+    info = world.updater.check()
+    assert info.available and info.restart_only and info.can_install and info.latest == new and info.running == running
+    assert [c.title for c in info.changes] == ["Faster engine"] and info.new_version == "1.1.0"
+    assert "restart to use it" in info.headline() and "1.0.0 → 1.1.0" in info.headline()
+    record = world.updater.install(info, "config.yaml")
+    assert record["method"] == "restart" and record["to"] == new and world.verified == ["config.yaml"]
+    assert git(world.bot, "rev-parse", "HEAD") == new  # nothing was changed in the folder
+    assert not world.updater.check().available  # not offered again while the restart happens
+    assert world.updater.can_roll_back()
+    world.updater.rollback()
+    assert git(world.bot, "rev-parse", "HEAD") == running
+
+
+@needs_git
+def test_a_folder_that_went_back_offers_nothing(world):
+    old = git(world.bot, "rev-parse", "HEAD")
+    world.commit({"src/topstep_bot/engine.py": "ENGINE = 2\n"}, "Faster engine")
+    info = world.updater.check()
+    world.updater.install(info, "config.yaml")
+    world.updater.rollback()  # undo: the folder is behind what ran
+    assert git(world.bot, "rev-parse", "HEAD") == old
+    info = world.updater.check()
+    assert info.available and not info.restart_only  # GitHub's version is offered as a normal update again
+
+
+def test_a_zip_copy_newer_than_the_running_bot_offers_a_restart(tmp_path):
+    up = Updater(tmp_path, REPO, "main", tmp_path / "data", method="download")
+    up.running_version = "1.0.0"
+    info = UpdateInfo(method="download", branch="main", version="1.1.0", current="abc1234")
+    up._check_running(info)
+    assert info.restart_only and info.available and info.version == "1.0.0" and info.new_version == "1.1.0"
+    same = UpdateInfo(method="download", branch="main", version=updater_mod.__version__)
+    up.running_version = updater_mod.__version__
+    up._check_running(same)
+    assert not same.available
