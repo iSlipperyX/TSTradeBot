@@ -144,3 +144,42 @@ def test_cli_learn_imports_a_csv_and_reports_the_long_run(tmp_path, monkeypatch,
     assert "What the bot learned over the long run" in capsys.readouterr().out
     assert cli.main(["-c", "config.yaml", "insights"]) == 1  # the recent knowledge base was never trained here
     assert "learn" in [name for name, _ in cli.MENU]
+
+
+def test_backfill_reaches_into_the_previous_contracts_once(tmp_path):
+    """TopstepX serves only recent data per contract: history before the current one's comes from the ones before it."""
+    from topstep_bot.api.rest import ProjectXError
+    from topstep_bot.memory import previous_contracts
+    from topstep_bot.models import Contract
+
+    assert previous_contracts("CON.F.US.MNQ.Z26") == ["CON.F.US.MNQ.U26", "CON.F.US.MNQ.M26"]
+    assert previous_contracts("CON.F.US.MNQ.H27", 1) == ["CON.F.US.MNQ.Z26"]
+    assert previous_contracts("CON.F.US.CLE.F27", 1) == ["CON.F.US.CLE.Z26"] and previous_contracts("OFFLINE.MNQ") == []
+    series = bars5(days=40)
+    cut = series[len(series) // 2].ts
+    now = series[-1].ts + timedelta(minutes=5)
+
+    class Contracts(FakeClient):
+        def __init__(self):
+            super().__init__(series)
+            self.ids = []
+
+        async def retrieve_bars_range(self, contract_id, start, end, unit, unit_number, live=False):
+            self.ids.append(contract_id)
+            if contract_id.endswith("M26"):
+                raise ProjectXError("/api/History/retrieveBars failed (code 1)")
+            bars = await super().retrieve_bars_range(contract_id, start, end, unit, unit_number, live)
+            # the current contract only has the recent half; the previous one the rest (and some overlap)
+            return [b for b in bars if (b.ts >= cut) == contract_id.endswith("Z26") or b.ts >= cut - timedelta(days=3)]
+
+    cfg = BotConfig.model_validate({"data_dir": str(tmp_path), "knowledge": {"deep_history_days": 60}})
+    z26 = Contract("CON.F.US.MNQ.Z26", "MNQZ6", 0.25, 0.5, root="MNQ")
+    memory = LongRunMemory.open(cfg)
+    client = Contracts()
+    added = run(memory.backfill(client, z26, 60, now))
+    assert added == len(series) and client.ids == ["CON.F.US.MNQ.Z26", "CON.F.US.MNQ.U26", "CON.F.US.MNQ.M26"]
+    owners = {c for (c,) in memory.library._db.execute("SELECT DISTINCT contract FROM bars")}
+    assert owners == {"CON.F.US.MNQ.Z26", "CON.F.US.MNQ.U26"}  # the overlap stays the front month's
+    client.ids.clear()
+    assert run(memory.backfill(client, z26, 60, now)) == 0 and client.ids == []  # each contract is asked once
+    memory.close()

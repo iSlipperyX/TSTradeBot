@@ -4,29 +4,15 @@ from __future__ import annotations
 
 import html
 import json
-import math
 from datetime import datetime
 from pathlib import Path
 
+from topstep_bot import fmt
 from topstep_bot.training import TrainingReport
 
 # Categorical slots in fixed order (validated for colour-vision deficiency as adjacent line pairs).
 LIGHT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
-
-
-def _money(v: float | None) -> str:
-    if v is None:
-        return "-"
-    return f"-${abs(v):,.0f}" if v < 0 else f"${v:,.0f}"
-
-
-def _pct(v: float | None) -> str:
-    return "-" if v is None else f"{v * 100:.0f}%"
-
-
-def _pf(v: float) -> str:
-    return "∞" if isinstance(v, float) and math.isinf(v) else f"{v:.2f}"
 
 
 def build_training_report(report: TrainingReport, symbol: str, timeframe: int) -> str:
@@ -52,10 +38,10 @@ def build_training_report(report: TrainingReport, symbol: str, timeframe: int) -
         final = html.escape(", ".join(f"{k}={v}" for k, v in r.final.params) or "defaults") if r.final else "-"
         rows.append(
             f"<tr><td><i class='sw' style='background:var(--s{slot[r.strategy] + 1})'></i>{html.escape(r.strategy)}{mark}</td>"
-            f"<td class='num {'neg' if o.net < 0 else ''}'>{_money(o.net)}</td><td class='num'>{o.trades}</td>"
-            f"<td class='num'>{_pf(o.profit_factor)}</td><td class='num'>{_pct(o.win_rate)}</td>"
+            f"<td class='num {'neg' if o.net < 0 else ''}'>{fmt.dollars(o.net)}</td><td class='num'>{o.trades}</td>"
+            f"<td class='num'>{fmt.pf(o.profit_factor)}</td><td class='num'>{fmt.pct(o.win_rate)}</td>"
             f"<td class='num'>{o.avg_r:+.2f}</td><td class='num'>{o.sharpe:.2f}</td>"
-            f"<td class='num'>{_money(o.max_drawdown)}</td><td class='num'>{_pct(o.combine_pass_rate)}</td>"
+            f"<td class='num'>{fmt.dollars(o.max_drawdown)}</td><td class='num'>{fmt.pct(o.combine_pass_rate)}</td>"
             f"<td class='{verdict[0]}'>{html.escape(verdict[1])}</td><td class='muted'>{final}</td></tr>"
         )
 
@@ -77,8 +63,8 @@ def build_training_report(report: TrainingReport, symbol: str, timeframe: int) -
         stable = ("Only these settings were tested, so nothing was tuned." if rec.n_candidates == 1 else
                   f"The same settings were chosen in {rec.stability:.0%} of windows.")
         verdict = ("good", f"Recommended: {rec.strategy}",
-                   f"With {settings}. Out-of-sample {_money(rec.oos.net)} over {rec.oos.trades} trades, profit factor "
-                   f"{_pf(rec.oos.profit_factor)}, max drawdown {_money(rec.oos.max_drawdown)}. {stable}")
+                   f"With {settings}. Out-of-sample {fmt.dollars(rec.oos.net)} over {rec.oos.trades} trades, profit factor "
+                   f"{fmt.pf(rec.oos.profit_factor)}, max drawdown {fmt.dollars(rec.oos.max_drawdown)}. {stable}")
     else:
         verdict = ("bad", "No strategy held up out-of-sample",
                    "None made money on the test windows it had never seen. Don't go live on these results.")
@@ -86,7 +72,7 @@ def build_training_report(report: TrainingReport, symbol: str, timeframe: int) -
     if report.current is not None:
         c = report.current
         current = (f"<p class='sub'>Your current setting ({html.escape(report.current_label)}) on the same test windows: "
-                   f"{_money(c.net)} over {c.trades} trades, profit factor {_pf(c.profit_factor)}.</p>")
+                   f"{fmt.dollars(c.net)} over {c.trades} trades, profit factor {fmt.pf(c.profit_factor)}.</p>")
     return TEMPLATE.format(
         title=html.escape(f"Walk-forward tuning · {symbol} {timeframe}-minute bars"),
         subtitle=html.escape(f"{report.first_day} → {report.last_day} · {report.candidates} candidate settings · "

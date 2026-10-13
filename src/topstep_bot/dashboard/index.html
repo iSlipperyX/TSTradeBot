@@ -504,6 +504,24 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
   .sfield input[type=text], .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select { width:100%; }
   .pagehead { margin-top:16px; }
 }
+/* ask: the central intelligence */
+.chat { display:flex; flex-direction:column; gap:10px; max-height:520px; overflow:auto; padding:2px 2px 6px; }
+.chat .q, .chat .a { padding:9px 12px; border-radius:var(--r); max-width:92%; white-space:pre-wrap; overflow-wrap:anywhere; font-size:13.5px; }
+.chat .q { align-self:flex-end; background:var(--accent); color:var(--on-accent); border-bottom-right-radius:4px; }
+.chat .a { align-self:flex-start; background:var(--surface2); border:1px solid var(--border); border-bottom-left-radius:4px; }
+.chat .a .by { display:block; margin-top:6px; font-size:11px; color:var(--muted); }
+.chat .a.wait { color:var(--muted); }
+.askbar { display:flex; gap:8px; margin-top:10px; }
+.askbar input { flex:1; min-width:0; font:inherit; padding:8px 11px; border-radius:var(--r); border:1px solid var(--border); background:var(--surface); color:var(--text); }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.chips button { font-weight:500; font-size:12.5px; padding:4px 10px; border-radius:999px; }
+.declist { font-size:13px; }
+.declist button { display:block; width:100%; text-align:left; font-weight:500; border:0; border-bottom:1px solid var(--border); border-radius:0; padding:7px 2px; background:transparent; }
+.declist button:hover { background:var(--surface2); }
+.declist .st { display:inline-block; min-width:62px; margin-right:6px; text-align:center; }
+.declist .st.taken { background:var(--accent-soft); color:var(--accent); } .declist .st.skipped { background:var(--warnbg); color:var(--warn); }
+.declist .st.passed { background:var(--track); color:var(--muted); }
+.explain { white-space:pre-wrap; font-size:13px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--r); padding:10px 12px; margin-top:10px; overflow-wrap:anywhere; }
 </style>
 </head>
 <body>
@@ -511,7 +529,7 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
 <aside class="rail">
   <div class="brandbox">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="#1d2636"/><path d="M7 21l6-6 4 4 8-9" stroke="#7ea4f2" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand">Topstep Bot<small>Futures console · v2.1</small></div>
+    <div class="brand">Topstep Bot<small>Futures console · v2.2</small></div>
   </div>
   <nav class="tabs" aria-label="Sections">
     <div class="grp">Trading</div>
@@ -520,6 +538,7 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
     <button data-tab="ideas"><svg viewBox="0 0 16 16"><path d="M8 1.5a4.5 4.5 0 0 0-2.5 8.2V12h5V9.7A4.5 4.5 0 0 0 8 1.5z"/><path d="M6 14.5h4"/></svg>Ideas <span class="count" id="ideacount" hidden></span></button>
     <button data-tab="market"><svg viewBox="0 0 16 16"><path d="M4 2v12M4 5h-1.5v5H4M12 3v11M12 6h-1.5v4H12M8 1v13M8 4H6.5v7H8"/></svg>Market</button>
     <div class="grp">Learning</div>
+    <button data-tab="ask"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M6.2 6.2a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.4"/><path d="M8 11.6v.1"/></svg>Ask</button>
     <button data-tab="knowledge"><svg viewBox="0 0 16 16"><path d="M2 3.5h4.5a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 0-1.5-1.5H2zM14 3.5H9.5A1.5 1.5 0 0 0 8 5v8.5a1.5 1.5 0 0 1 1.5-1.5H14z"/></svg>Knowledge</button>
     <button data-tab="lab"><svg viewBox="0 0 16 16"><path d="M6 1.5v4.2L2.2 12.6A1.3 1.3 0 0 0 3.3 14.5h9.4a1.3 1.3 0 0 0 1.1-1.9L10 5.7V1.5M5 1.5h6M4.2 10h7.6"/></svg>Simulations <span class="count" id="labflag" hidden>run</span></button>
     <button data-tab="coach"><svg viewBox="0 0 16 16"><path d="M2.5 3h11v7.5H8L4.5 13v-2.5h-2z"/><path d="M5.5 6.5h5"/></svg>AI Coach <span class="count" id="coachcount" hidden></span></button>
@@ -646,6 +665,45 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
     </div>
   </section>
 
+  <!-- ASK: the central intelligence -->
+  <!-- ASK (the central intelligence) -->
+  <section class="tab" id="tab-ask">
+    <div class="pagehead"><div><h1>Ask the bot</h1><p>Why it took or skipped each trade, what it learned, and which decision rule it trusts.</p></div></div>
+    <div class="grid two">
+      <div class="panel">
+        <div class="head"><h2>Ask</h2><span class="spacer"></span><span class="meta" id="ask-mode"></span></div>
+        <div class="chat" id="ask-chat" aria-live="polite">
+          <div class="a">Ask me why I took or skipped a trade, what I learned, how a strategy is doing or what's next. I answer from my own records.</div>
+        </div>
+        <form class="askbar" id="ask-form"><input id="ask-q" maxlength="1000" autocomplete="off" placeholder="e.g. why did you take the last trade?">
+          <button class="primary" id="ask-send">Ask</button></form>
+        <div class="chips" id="ask-chips">
+          <button type="button">Why did you take the last trade?</button><button type="button">Why didn't you trade today?</button>
+          <button type="button">What did you learn?</button><button type="button">When is the next trade?</button>
+          <button type="button">Which decision rule are you using?</button><button type="button">What do you know?</button></div>
+        <p class="hint">Answers come only from the bot's records (decisions, trades, knowledge, the decision lab, the Simulation Lab and
+          the AI coach's lessons). It can't place trades or change settings. Turn on AI answers on the Setup tab for free-form questions.</p>
+      </div>
+      <div class="panel">
+        <div class="head"><h2>Decisions</h2><span class="spacer"></span>
+          <select id="dec-filter" class="picker" style="width:auto"><option value="">All</option><option value="taken">Taken</option>
+            <option value="skipped">Skipped by a rule</option><option value="passed">Passed on</option></select>
+          <button class="small" id="dec-reload">Refresh</button></div>
+        <div class="declist" id="dec-list"><div class="empty">Loading…</div></div>
+        <div class="explain" id="dec-explain" hidden></div>
+        <p class="hint">Every signal the bot weighs is recorded with what it knew at that moment: each strategy's verdict, the evidence,
+          the market and your limits, then the result. For signals it didn't trade, the result is what they would have made.</p>
+      </div>
+    </div>
+    <div class="panel gap-top">
+      <div class="head"><h2>Decision lab</h2><span class="spacer"></span><span class="meta">replayed without peeking</span></div>
+      <div class="explain" id="dlab-text" style="margin-top:8px">Loading…</div>
+      <p class="hint">The lab replays the classic and the evidence decision rules day by day over the long-run memory, using only
+        what was known before each day, with your trade limits. The bot switches to the evidence rule only when it wins clearly over
+        enough days; until then it keeps the classic rule. Simulated results after costs, not a promise: real fills are usually a little worse.</p>
+    </div>
+  </section>
+
   <!-- TRADE (manual trade ticket) -->
   <section class="tab" id="tab-trade">
     <div class="pagehead"><div><h1>Trade ticket</h1><p>Place your own trade with the bot's stop, sizing and Topstep checks.</p></div></div>
@@ -764,6 +822,9 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
           <div class="track" id="mem-track" hidden><div class="fill" id="mem-bar"></div></div></div>
         <button class="small" id="learn" title="Download the history the bot is still missing and replay all of it through every strategy">Learn from history now</button>
       </div>
+      <p class="hint">The long-run memory keeps every price bar the bot sees and, once a day outside trading hours, replays all of them
+        through every strategy. It feeds these reports and the decision lab (Ask tab). Under the evidence rule it also backs up the recent
+        knowledge base below when the bot decides a trade; every risk rule applies either way.</p>
     </div>
     <div class="panel gap-top">
       <div class="head"><h2>What works when</h2><span class="spacer"></span><button class="small" id="train">Retrain now</button></div>
@@ -927,12 +988,12 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
           <div id="co-key-form">
             <div class="sfield" style="grid-template-columns:1fr;border-top:0"><label for="co-key">API key</label>
               <div class="ctl"><input type="password" id="co-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" style="width:100%"></div>
-              <div class="help" style="grid-column:1">Tested with Claude, then saved in the .env file on this PC. It is never shown again or sent anywhere else.</div></div>
+              <div class="help" style="grid-column:1">Tested with Claude, then saved in the .env file on this PC. It is never shown again or sent anywhere else. The Ask tab's AI answers use the same key.</div></div>
             <div class="row"><button class="small primary" id="co-key-save">Test and save</button><button class="small" id="co-key-remove" hidden>Remove key</button></div>
             <div class="msg" id="co-key-msg"></div>
           </div>
           <h3>Credits</h3>
-          <p class="meta" style="margin:0 0 8px">Coaching is billed to your Claude API account. Buy prepaid credits on the Claude Console. The bot itself never
+          <p class="meta" style="margin:0 0 8px">Coaching and AI answers on the Ask tab are billed to your Claude API account and share the monthly limit set on this tab. Buy prepaid credits on the Claude Console. The bot itself never
             handles payment.</p>
           <div class="row"><a class="btnlink primary" id="co-buy" href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener noreferrer">Buy credits</a>
             <a class="btnlink" id="co-keys-link" href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener noreferrer">Create an API key</a></div>
@@ -1200,6 +1261,23 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
     </div>
 
     <div class="panel" style="margin-top:14px">
+      <h2 class="steptitle">AI answers <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
+      <p class="hint" style="margin-top:2px">The Ask tab and Telegram answer from the bot's records by themselves. With a Claude API key, a Claude
+        model writes the answers instead and can take any question. It reads the same records through read-only lookups and can't trade or
+        change settings. The AI coach uses the same key, and both count toward the coach's monthly budget (AI Coach tab).</p>
+      <div class="sfield"><label for="su-ai-key">Claude API key</label>
+        <div class="ctl"><input type="password" id="su-ai-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+          <button class="small primary" id="su-ai-save">Check and save</button><button class="small" id="su-ai-remove" hidden>Remove</button></div>
+        <div class="help">From platform.claude.com &gt; API keys. Checked with Anthropic, then saved in the .env file on this PC. Saving it here or on the AI Coach tab is the same.</div></div>
+      <div class="sfield"><span class="lbl">Use AI answers</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-ai-on"><span>Let the AI answer questions (the built-in answers stay as the fallback)</span></label></div></div>
+      <div class="sfield"><label for="su-ai-model">Model</label>
+        <div class="ctl"><input type="text" id="su-ai-model" class="short" style="width:220px" spellcheck="false"></div>
+        <div class="help">claude-opus-5-5 is the default.</div></div>
+      <div class="msg" id="su-ai-msg"></div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
       <h2 class="steptitle">Start with Windows <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
       <label class="checkline" style="margin-top:6px"><input type="checkbox" id="su-auto">
         <span>Start Topstep Bot about 30 seconds after I sign in to Windows, and start the bot in the mode used last.
@@ -1356,6 +1434,7 @@ function showTab(name) {
   if (name === "logs") loadLogs();
   if (name === "trade") { loadTicket(); loadMarkets(false); }
   if (name === "knowledge") { loadInsights(true); loadBrief(true); }
+  if (name === "ask") loadAsk();
   if (name === "setup") loadSetup(false);
   if (name === "lab") { loadLab(true); loadMarkets(false); }
   if (name === "coach") loadCoach(true);
@@ -2317,7 +2396,7 @@ function fillSetup() {
   SU_SUG = suSuggestion();
   su("path").textContent = SU.exists ? `Saved in ${SU.path}` : `Creates ${SU.path}`;
   suMsg("save-msg", "");
-  renderAccounts(); renderAlerts(); renderAutostart(); suRender(); renderAccountPanel();
+  renderAccounts(); renderAlerts(); renderAutostart(); renderAI(); suRender(); renderAccountPanel();
   if (SU.login.api_key_saved && (!SU.report || SU.report_age > 300)) checkAccounts(false);
 }
 
@@ -2650,6 +2729,66 @@ su("dc-save").onclick = async () => {
 };
 
 // start with Windows
+// ---- ask: the central intelligence (brain/)
+let ASK_BUSY = false;
+function chatLine(cls, text, by) {
+  const div = document.createElement("div"); div.className = cls; div.textContent = text;
+  if (by) { const s = document.createElement("span"); s.className = "by"; s.textContent = by; div.appendChild(s); }
+  $("ask-chat").appendChild(div); $("ask-chat").scrollTop = $("ask-chat").scrollHeight; return div;
+}
+async function askBot(question) {
+  question = (question || "").trim();
+  if (!question || ASK_BUSY) return;
+  ASK_BUSY = true; $("ask-send").disabled = true; $("ask-q").value = "";
+  chatLine("q", question);
+  const wait = chatLine("a wait", "Looking it up…");
+  const d = await post("ask", {question});
+  wait.remove();
+  if (d.ok === false) chatLine("a", d.message || "No answer.");
+  else chatLine("a", (d.note ? d.note + "\n\n" : "") + d.answer, d.by === "ai" ? "AI answer from the bot's records" : "built-in answer");
+  if (d.mode) $("ask-mode").textContent = d.mode;
+  ASK_BUSY = false; $("ask-send").disabled = false;
+}
+$("ask-form").onsubmit = e => { e.preventDefault(); askBot($("ask-q").value); };
+document.querySelectorAll("#ask-chips button").forEach(b => b.onclick = () => askBot(b.textContent));
+async function fact(name, args) {
+  const d = await post("facts", {name, args: args || {}});
+  return d.ok === false ? {error: d.message} : (d.data || {});
+}
+async function loadDecisions() {
+  const status = $("dec-filter").value;
+  const d = await fact("decisions", status ? {status, limit: 25} : {limit: 25});
+  const items = d.items || [];
+  $("dec-list").innerHTML = items.length ? items.map(x =>
+    `<button type="button" data-id="${esc(x.id)}"><span class="st ${esc(x.status)}">${esc(x.status)}</span>${esc(x.summary)}</button>`).join("")
+    : `<div class="empty">${esc(d.error || d.text || "No decisions recorded yet.")}</div>`;
+  $("dec-list").querySelectorAll("button").forEach(b => b.onclick = async () => {
+    const e = await fact("explain_decision", {id: b.dataset.id});
+    $("dec-explain").hidden = false; $("dec-explain").textContent = e.text || e.error || "Not found.";
+  });
+}
+async function loadDecisionLab() { const d = await fact("lab"); $("dlab-text").textContent = d.text || d.error || "Not available."; }
+function loadAsk() { loadDecisions(); loadDecisionLab(); }
+$("dec-filter").onchange = loadDecisions;
+$("dec-reload").onclick = loadAsk;
+
+// ---- setup: AI answers
+function renderAI() {
+  const a = SU.ai || {};
+  su("ai-on").checked = !!a.enabled; su("ai-model").value = a.model || "claude-opus-5-5";
+  su("ai-key").value = ""; su("ai-key").placeholder = a.key_saved ? "saved - leave empty to keep it" : "sk-ant-…";
+  su("ai-remove").hidden = !a.key_saved;
+}
+async function saveAI(body) {
+  su("ai-save").disabled = true; suMsg("ai-msg", body.api_key ? "Checking the key with Anthropic…" : "");
+  const d = await post("setup/ai", Object.assign({model: su("ai-model").value.trim()}, body));
+  su("ai-save").disabled = false; suMsg("ai-msg", d.message, d.ok !== false);
+  if (d.ok !== false) loadSetup(true); else renderAI();
+}
+su("ai-save").onclick = () => saveAI({api_key: su("ai-key").value.trim(), enabled: true});
+su("ai-on").onchange = () => saveAI({enabled: su("ai-on").checked});
+su("ai-remove").onclick = async () => { if (await ask("Remove the Claude API key? The bot goes back to its built-in answers, and the AI coach stops until a key is saved again.")) saveAI({remove: true}); };
+
 function renderAutostart() {
   const a = SU.autostart; su("auto").checked = a.enabled; su("auto").disabled = !a.supported;
   if (!a.supported) suMsg("auto-msg", "Only available on Windows.");
@@ -2962,7 +3101,7 @@ $("co-key-save").onclick = async () => {
 };
 $("co-key").addEventListener("keydown", e => { if (e.key === "Enter") $("co-key-save").click(); });
 $("co-key-remove").onclick = async () => {
-  if (!await ask("Remove the Claude API key from this PC? The coach can't run until you add one again.")) return;
+  if (!await ask("Remove the Claude API key from this PC? The coach can't run, and the Ask tab uses its built-in answers, until you add one again.")) return;
   const d = await post("coach/key/remove"); coMsg("co-key-msg", d.message, d.ok !== false); loadCoach(true);
 };
 $("co-settings-save").onclick = async () => {

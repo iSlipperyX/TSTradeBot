@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from topstep_bot import fmt
 from topstep_bot.config import BotConfig, Secrets
 from topstep_bot.factory import starting_balance
 from topstep_bot.instruments import SPECS, offline_contract
@@ -70,10 +71,6 @@ def account_hints(name: str) -> tuple[str | None, str | None]:
     return plan, stage
 
 
-def _money(v: float) -> str:
-    return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
-
-
 async def run_preflight(
     cfg: BotConfig,
     secrets: Secrets,
@@ -100,13 +97,13 @@ async def run_preflight(
     # ---- risk settings (no network needed)
     mll = plan.max_loss_limit
     if cfg.risk.risk_per_trade > 0.15 * mll:
-        rep.add(WARN, "Risk per trade", f"{_money(cfg.risk.risk_per_trade)} is over 15% of your {_money(mll)} MLL - a few losses could end the account")
+        rep.add(WARN, "Risk per trade", f"{fmt.money(cfg.risk.risk_per_trade)} is over 15% of your {fmt.money(mll)} MLL - a few losses could end the account")
     else:
-        rep.add(OK, "Risk per trade", f"{_money(cfg.risk.risk_per_trade)} ({cfg.risk.risk_per_trade / mll:.0%} of the MLL)")
+        rep.add(OK, "Risk per trade", f"{fmt.money(cfg.risk.risk_per_trade)} ({cfg.risk.risk_per_trade / mll:.0%} of the MLL)")
     if cfg.risk.personal_daily_loss_limit > 0.5 * mll:
-        rep.add(WARN, "Daily loss limit", f"{_money(cfg.risk.personal_daily_loss_limit)} is over half your MLL")
+        rep.add(WARN, "Daily loss limit", f"{fmt.money(cfg.risk.personal_daily_loss_limit)} is over half your MLL")
     else:
-        rep.add(OK, "Daily loss limit", f"{_money(cfg.risk.personal_daily_loss_limit)} per day")
+        rep.add(OK, "Daily loss limit", f"{fmt.money(cfg.risk.personal_daily_loss_limit)} per day")
     # ---- Topstep rules that depend on this computer and the settings
     hosted = hosting_warning()
     if hosted:
@@ -116,16 +113,16 @@ async def run_preflight(
         rep.add(OK, "Your computer", "looks like a personal computer (Topstep prohibits VPS/VPN/remote servers)")
     dll = cfg.account.topstep_daily_loss_limit
     if dll is not None:
-        rep.add(OK, "Topstep Daily Loss Limit", f"{_money(dll)}: the bot stops new trades at 90% of it and closes trades "
-                f"at 95%; your own limit {_money(cfg.risk.personal_daily_loss_limit)} comes first")
+        rep.add(OK, "Topstep Daily Loss Limit", f"{fmt.money(dll)}: the bot stops new trades at 90% of it and closes trades "
+                f"at 95%; your own limit {fmt.money(cfg.risk.personal_daily_loss_limit)} comes first")
     else:
         rep.add(INFO, "Topstep Daily Loss Limit", "none configured. If you added one at checkout, set "
                 "account.topstep_daily_loss_limit: true")
     if cfg.account.stage == "combine":
         cap = cfg.risk.daily_profit_target or 0.4 * plan.profit_target
         rep.add(OK if cap < plan.consistency_day_limit else WARN, "Consistency Target",
-                f"best day must stay at or below {_money(plan.consistency_day_limit)} (55% of the target); the bot stops "
-                f"opening trades at {_money(cap)}" + (" and closes out at 50%" if cfg.risk.consistency_guard else
+                f"best day must stay at or below {fmt.money(plan.consistency_day_limit)} (55% of the target); the bot stops "
+                f"opening trades at {fmt.money(cap)}" + (" and closes out at 50%" if cfg.risk.consistency_guard else
                                                        " (consistency_guard is OFF)"))
     root = cfg.instrument.symbol
     spec = SPECS.get(root)
@@ -139,7 +136,7 @@ async def run_preflight(
 
     if cfg.risk.ramp_up_days:
         rep.add(INFO, "Ramp-up", f"first {cfg.risk.ramp_up_days} live day(s) on a new account risk "
-                f"{cfg.risk.ramp_up_risk_fraction:.0%} of normal ({_money(cfg.risk.risk_per_trade * cfg.risk.ramp_up_risk_fraction)}/trade)")
+                f"{cfg.risk.ramp_up_risk_fraction:.0%} of normal ({fmt.money(cfg.risk.risk_per_trade * cfg.risk.ramp_up_risk_fraction)}/trade)")
     else:
         rep.add(WARN, "Ramp-up", "off - the bot trades full size from its first live trade")
 
@@ -183,7 +180,7 @@ async def run_preflight(
         if blocked:
             rep.add(FAIL, "Account type", blocked)
             return rep
-        rep.add(OK if account.can_trade else FAIL, "Account", f"{account.name} (id {account.id}), balance {_money(account.balance)}"
+        rep.add(OK if account.can_trade else FAIL, "Account", f"{account.name} (id {account.id}), balance {fmt.money(account.balance)}"
                 + ("" if account.can_trade else " - NOT allowed to trade right now"))
         hint_plan, hint_stage = account_hints(account.name)
         mismatch = []
@@ -192,7 +189,7 @@ async def run_preflight(
         if hint_stage and hint_stage != cfg.account.stage:
             mismatch.append(f"type looks like {hint_stage}")
         if "DLL" in account.name.upper() and cfg.account.topstep_daily_loss_limit is None:
-            rep.add(WARN, "Topstep Daily Loss Limit", f"the account name suggests a Topstep DLL of {_money(plan.daily_loss_limit)}; "
+            rep.add(WARN, "Topstep Daily Loss Limit", f"the account name suggests a Topstep DLL of {fmt.money(plan.daily_loss_limit)}; "
                     "the bot will enforce it - set account.topstep_daily_loss_limit: true to make that explicit")
         if mismatch:
             rep.add(WARN, "Account type", f"config says {cfg.account.plan} {cfg.account.stage}, but the account name suggests "
@@ -215,7 +212,7 @@ async def run_preflight(
                 source = "fresh account"
             if floor is None and ask_mll is not None:
                 answer = ask_mll(
-                    f"This account's balance ({_money(account.balance)}) differs from the starting balance, so the bot "
+                    f"This account's balance ({fmt.money(account.balance)}) differs from the starting balance, so the bot "
                     f"can't work out the Maximum Loss Limit itself.\nEnter the MLL shown in your Topstep dashboard "
                     f"(e.g. {start - mll + 500:,.0f}), or press Enter to skip"
                 )
@@ -233,7 +230,7 @@ async def run_preflight(
                 tracker = LossLimitTracker(start, mll, floor=floor)
                 room = tracker.room(account.balance)
                 status = OK if room > 2 * cfg.risk.mll_buffer else (WARN if room > 0 else FAIL)
-                rep.add(status, "Max Loss Limit", f"floor {_money(floor)} ({source}); room {_money(room)}")
+                rep.add(status, "Max Loss Limit", f"floor {fmt.money(floor)} ({source}); room {fmt.money(room)}")
         finally:
             journal.close()
 
@@ -370,7 +367,7 @@ async def _strategy_check(cfg: BotConfig, client, contract, days: int, rep: Pref
     if mine is None:
         rep.add(WARN, "Strategy check", "the configured strategy could not be backtested")
         return
-    detail = (f"{mine['title']}: {_money(mine['net'])} over {mine['trades']} trades, max drawdown {_money(mine['max_dd'])}"
+    detail = (f"{mine['title']}: {fmt.money(mine['net'])} over {mine['trades']} trades, max drawdown {fmt.money(mine['max_dd'])}"
               + (f", Combine pass rate {mine['pass_rate']:.0%}" if mine["pass_rate"] is not None else ""))
     good = mine["net"] > 0 and mine["breaches"] == 0
     rep.add(OK if good else WARN, "Strategy check", detail + ("" if good else " - it LOST money or hit the MLL on recent data"))

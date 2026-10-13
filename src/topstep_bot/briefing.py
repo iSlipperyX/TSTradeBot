@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
+from topstep_bot import fmt
 from topstep_bot.insights import execution_line, hint_line
 from topstep_bot.knowledge import KEPT_SOURCES
 
@@ -21,14 +22,6 @@ if TYPE_CHECKING:
     from topstep_bot.engine import TradingCore
 
 GAVE_BACK_NOTE = 0.3  # losers up 1R first: worth a mention from this share on
-
-
-def _r(v: float | None) -> str:
-    return "-" if v is None else f"{v:+.2f}R"
-
-
-def _pct(v: float | None) -> str:
-    return "-" if v is None else f"{round(100 * v)}%"
 
 
 def _memory_lines(core: TradingCore, today: date) -> list[str]:
@@ -83,7 +76,7 @@ def _now_lines(core: TradingCore, today: date) -> tuple[str, list[str]]:
     if subs is None:
         row = rows.get(strat.name)
         o = row["overall"] if row else None
-        seen = f"; I have seen {o['n']} of its signals ({_r(o['mean_r'])} average)" if o and o["n"] else ""
+        seen = f"; I have seen {o['n']} of its signals ({fmt.r(o['mean_r'])} average)" if o and o["n"] else ""
         return title, [f"I trade {strat.title} only, whatever the knowledge base says{seen}."]
     if slot == "off":
         return title, ["No strategy trades outside regular hours. At the open I'll check the knowledge base again for each one."]
@@ -121,16 +114,16 @@ def _works_lines(core: TradingCore) -> list[str]:
         return ["Too few signals per strategy to compare yet."]
     lines = []
     for r in rows[:3]:
-        line = f"{r['title']}: {_r(r['net_r'])} per signal after costs over {r['n']} ({_pct(r['win_rate'])} won)"
+        line = f"{r['title']}: {fmt.r(r['net_r'])} per signal after costs over {r['n']} ({fmt.pct(r['win_rate'])} won)"
         if r["name"] in lr:
-            line += f"; over the long run {_r(lr[r['name']]['net_r'])} over {lr[r['name']]['n']:,}"
+            line += f"; over the long run {fmt.r(lr[r['name']]['net_r'])} over {lr[r['name']]['n']:,}"
         lines.append(line + ".")
     worst = rows[-1]
     if len(rows) > 3 and (worst["net_r"] or 0) < 0:
-        lines.append(f"Weakest lately: {worst['title']} at {_r(worst['net_r'])} over {worst['n']}.")
+        lines.append(f"Weakest lately: {worst['title']} at {fmt.r(worst['net_r'])} over {worst['n']}.")
     m = rep.get("manual")
     if m and m["n"]:
-        lines.append(f"Your manual trades: {_r(m['net_r'])} over {m['n']} ({_pct(m['win_rate'])} won).")
+        lines.append(f"Your manual trades: {fmt.r(m['net_r'])} over {m['n']} ({fmt.pct(m['win_rate'])} won).")
     return lines
 
 
@@ -146,7 +139,7 @@ def _lesson_lines(core: TradingCore) -> list[str]:
         lines.append(f"Worth testing, not proven{where}: {hint_line(hints[0])}")
     for r in rep["strategies"]:
         if r["gave_back"] is not None and r["gave_back"] >= GAVE_BACK_NOTE and r["n_losers"] >= rep["min_row"]:
-            lines.append(f"{_pct(r['gave_back'])} of {r['title']}'s losing signals were 1R in profit first: a breakeven stop or a "
+            lines.append(f"{fmt.pct(r['gave_back'])} of {r['title']}'s losing signals were 1R in profit first: a breakeven stop or a "
                          "nearer target might help (an idea to test, not a rule).")
             break
     ex = execution_line(rep["execution"])

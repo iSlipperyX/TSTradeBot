@@ -580,6 +580,14 @@ class ProxyActions:
         except (RuntimeError, ValueError):
             return []
 
+    async def ask(self, question: str, account: str | None = None) -> str:
+        """The central intelligence's answer (Telegram)."""
+        out = await self.ctl.ask(question, account, "telegram")
+        text = out["answer"]
+        if out.get("note"):
+            text = f"({out['note']})\n{text}"
+        return self._tag(self.ctl.bots[out["account"]], text) if out.get("account") else text
+
     async def find_idea(self, rec_id: str, account: str | None = None) -> dict | None:
         try:
             return (await self._one(account).action("find_idea", {"id": rec_id}))["item"]
@@ -627,6 +635,8 @@ class Controller:
                 ("POST", "/api/bot/restart", lambda r: self._lifecycle(r, "restart")),
                 ("POST", "/api/mode", self._mode),
                 ("POST", "/api/action/*", self._proxy),
+                ("POST", "/api/ask", self._ask),
+                ("POST", "/api/facts", self._fact),
                 ("POST", "/api/updates/check", lambda r: self.updates.check_text(source(r))),
                 ("POST", "/api/updates/install", lambda r: self.updates.install(source(r), str(r.json().get("when", "now")))),
                 ("POST", "/api/updates/cancel", lambda r: self.updates.cancel(source(r))),
@@ -641,6 +651,7 @@ class Controller:
                 ("POST", "/api/setup/discord", lambda r: self.setup.discord_save(r.json())),
                 ("POST", "/api/setup/github_token", lambda r: self.setup.github_token(r.json())),
                 ("POST", "/api/setup/autostart", lambda r: self.setup.autostart(r.json())),
+                ("POST", "/api/setup/ai", lambda r: self.setup.ai(r.json())),
                 ("POST", "/api/setup/accounts/check", lambda r: self.setup.check_accounts(force=bool(r.json().get("force", True)))),
                 ("POST", "/api/setup/accounts/save", lambda r: self.setup.save_account(r.json())),
                 ("POST", "/api/setup/accounts/remove", lambda r: self.setup.remove_account(r.json())),
@@ -684,6 +695,9 @@ class Controller:
         self._research_task: asyncio.Task | None = None
         self._lab_tasks: list[asyncio.Task] = []  # every market's history refresh and the nightly Simulation Lab
         self.phone = PhoneAccess(self)  # after the dashboard's routes: the phone link serves some of them
+        from topstep_bot.brain import Brain
+
+        self.brain = Brain(cfg)  # the central intelligence (dashboard chat, Telegram questions)
 
     # ---------------------------------------------------------------- accounts
 
@@ -872,6 +886,46 @@ class Controller:
         data.pop("ok", None)
         return data
 
+    async def _ask(self, req: Request) -> dict:
+        body = req.json()
+        return await self.ask(str(body.get("question") or ""), body.get("account"),
+                              "phone" if req.remote else "dashboard")
+
+    async def _fact(self, req: Request) -> dict:
+        body = req.json()
+        args = body.get("args")
+        bot = self._brain_bot(body.get("account"))
+        return {"data": await self._fetcher(bot)(str(body.get("name") or ""), args if isinstance(args, dict) else {})}
+
+    def _brain_bot(self, account: str | None) -> BotProcess:
+        return self.bot if self.multi and account in (None, ALL) else self.pick(account)[0]
+
+    def _fetcher(self, bot: BotProcess) -> Callable[[str, dict], Awaitable[dict]]:
+        """The central intelligence's lookups for one account: from its running bot, else from its files."""
+        cfg = self.account_cfg(bot.account) if self.multi else self.cfg
+
+        async def fetch(name: str, args: dict) -> dict:
+            if bot.running and bot.state == "running":
+                try:
+                    return (await bot.action("facts", {"name": name, "args": args}))["data"]
+                except (RuntimeError, ValueError, KeyError) as exc:
+                    log.info("Central intelligence: the bot couldn't answer '%s' (%s) - using its files", name, exc)
+            from topstep_bot.brain.facts import Facts
+
+            facts = Facts(cfg, offline=self.offline_text(bot))
+            return await asyncio.to_thread(facts.call, name, args)
+
+        return fetch
+
+    async def ask(self, question: str, account: str | None, channel: str) -> dict:
+        """Answer a question about one account's bot (brain/): live while it runs, from its files while stopped."""
+        bot = self._brain_bot(account)
+        who = f"Account {bot.account}. " if self.multi else ""
+        state = "The bot is running." if bot.running and bot.state == "running" else \
+            "The bot is not running: only its saved records are available, not the live picture."
+        out = await self.brain.ask(question, self._fetcher(bot), f"{channel}:{bot.account}", who + state)
+        return {**out, "account": bot.account if self.multi else None, "mode": self.brain.mode_text()}
+
     async def start_one(self, bot: BotProcess, source: str) -> str:
         """Start one account's bot, unless setup isn't finished (then say what is missing)."""
         if not bot.running and (blocker := self.setup.blocker()):
@@ -986,9 +1040,6 @@ class Controller:
         return "\n".join(lines)
 
     # ---------------------------------------------------------------- text helpers
-
-    def uptime_text(self) -> str:
-        return self.bot.info()["uptime"]
 
     def offline_text(self, bot: BotProcess | None = None) -> str:
         b = bot or self.bot

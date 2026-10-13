@@ -1,10 +1,12 @@
 """Adaptive All-Day: runs every strategy all session and trades only what is proven to be working.
 
-Each bar goes to every sub-strategy. When one of them wants to enter, the knowledge base
-(knowledge.py) is asked whether that strategy has been profitable at this time of day in the
-current volatility regime. Only proven signals are traded; when several strategies signal on
-the same bar the one with the best evidence wins. The sub-strategy that opened the trade keeps
-managing it (exits and trailing stops).
+Each bar goes to every sub-strategy. When one of them wants to enter, the bot's decision rule
+(policy.py, over the knowledge base in knowledge.py) is asked whether that strategy has been
+profitable at this time of day in the current volatility regime. Only proven signals are traded;
+when several strategies signal on the same bar the one with the best evidence wins. The
+sub-strategy that opened the trade keeps managing it (exits and trailing stops). Every such
+decision - taken or passed, with each candidate's verdict - goes to ``on_evaluation`` so the bot
+can explain it later (reasoning.py).
 
 The bot keeps learning while this runs: every signal from every sub-strategy - traded or not - is
 followed to its outcome and added to the knowledge base, and the base is retrained on recent
@@ -21,6 +23,7 @@ from datetime import date, datetime
 
 from topstep_bot.knowledge import KnowledgeBase, Verdict, slot_for
 from topstep_bot.models import Bar, Signal
+from topstep_bot.policy import Judge
 from topstep_bot.strategies.base import Setup, Strategy, StrategyContext
 
 log = logging.getLogger("topstep_bot.adaptive")
@@ -61,6 +64,8 @@ class AdaptiveAllDay(Strategy):
         if not self.subs:
             raise ValueError("adaptive: no usable sub-strategy")
         self.knowledge: KnowledgeBase | None = None
+        self.judge: Judge | None = None
+        self.on_evaluation: Callable[[dict], None] | None = None  # every decision, for the bot's explanations
         self.regime_fn: Callable[[], str] = lambda: "calm"
         self.owner: str | None = None
         self._owner_bars = 0
@@ -68,10 +73,14 @@ class AdaptiveAllDay(Strategy):
         self._warned = False
         self._allowed_cache: tuple[tuple, list[str]] | None = None
 
-    def bind_knowledge(self, knowledge: KnowledgeBase | None, regime_fn: Callable[[], str]) -> None:
-        """The engine attaches the knowledge base and the live regime detector."""
+    def bind_knowledge(self, knowledge: KnowledgeBase | None, regime_fn: Callable[[], str],
+                       judge: Judge | None = None) -> None:
+        """The engine attaches the knowledge base, the live regime detector and the decision rule.
+
+        Without a ``judge`` the classic rule (``KnowledgeBase.verdict``) decides."""
         self.knowledge = knowledge
         self.regime_fn = regime_fn
+        self.judge = judge if knowledge is not None else None
         self._allowed_cache = None
 
     @property
@@ -113,23 +122,35 @@ class AdaptiveAllDay(Strategy):
         if ctx.warmup or not candidates:
             return None
         slot, regime = slot_for(ctx.local_close.time()), self.regime_fn()
+        hhmm = ctx.local_close.strftime("%H:%M")
         best: tuple[Strategy, Signal, Verdict] | None = None
+        weighed = []
         for s, sig in candidates:
             if not self.allows(sig.action):
                 continue
             v = self._verdict(s.name, slot, regime, ctx.day)
-            self.decisions.appendleft({"time": ctx.local_close.strftime("%H:%M"), "strategy": s.name, "side": sig.side.label,
-                                       "allowed": v.allowed, "why": v.why})
-            log.info("adaptive: %s %s at %s (%s/%s) - %s", s.title, sig.side.label, ctx.local_close.strftime("%H:%M"),
+            self.decisions.appendleft({"time": hhmm, "strategy": s.name, "side": sig.side.label, "allowed": v.allowed,
+                                       "why": v.why})
+            weighed.append({"strategy": s.name, "title": s.title, "side": sig.side.label, "allowed": v.allowed,
+                            "level": v.level, "score": round(v.score, 3), "why": v.why, "signal": sig.reason,
+                            "stop": sig.stop_price, "target": sig.target_price})
+            log.info("adaptive: %s %s at %s (%s/%s) - %s", s.title, sig.side.label, hhmm,
                      slot, regime, "TAKING: " + v.why if v.allowed else "skipped: " + v.why)
             if v.allowed and (best is None or v.score > best[2].score):
                 best = (s, sig, v)
+        if weighed and self.on_evaluation is not None:
+            try:
+                self.on_evaluation({"bar_close": ctx.bar_close, "time": hhmm, "day": ctx.day.isoformat(), "slot": slot,
+                                    "regime": regime, "policy": self.judge.describe() if self.judge else "classic rule",
+                                    "candidates": weighed, "chosen": best[0].name if best else None})
+            except Exception:  # noqa: BLE001 - explaining a decision must never stop the trade
+                log.exception("adaptive: could not record the decision")
         if best is None:
             return None
         s, sig, v = best
         self.owner, self._owner_bars = s.name, 0
         sig.reason = f"{s.title}: {sig.reason} [{slot}/{regime}: {v.why}]"
-        sig.meta.update(strategy=s.name, slot=slot, regime=regime, score=round(v.score, 3))
+        sig.meta.update(strategy=s.name, slot=slot, regime=regime, score=round(v.score, 3), level=v.level)
         return sig
 
     def trailing_stop(self, bar: Bar, ctx: StrategyContext) -> float | None:
@@ -146,7 +167,7 @@ class AdaptiveAllDay(Strategy):
                 self._warned = True
                 log.warning("adaptive: no knowledge base attached - no trades until one is (run 'topstep-bot train')")
             return Verdict(False, "unproven", 0.0, "no knowledge base")
-        v = self.knowledge.verdict(name, slot, regime, day)
+        v = self.judge.verdict(name, slot, regime, day) if self.judge else self.knowledge.verdict(name, slot, regime, day)
         if not v.allowed and v.level == "unproven" and self.p["trade_unproven"]:
             return Verdict(True, "unproven", 0.0, v.why + " (trading anyway: trade_unproven)")
         return v
@@ -156,7 +177,7 @@ class AdaptiveAllDay(Strategy):
         return self._verdict(name, slot, regime, day).allowed
 
     def allowed_now(self, slot: str, regime: str, day: date) -> list[str]:
-        key = (slot, regime, day, self.knowledge.updated if self.knowledge else -1)
+        key = (slot, regime, day, self.judge.version if self.judge else self.knowledge.updated if self.knowledge else -1)
         if self._allowed_cache and self._allowed_cache[0] == key:
             return self._allowed_cache[1]
         names = [s.name for s in self.subs if self._verdict(s.name, slot, regime, day).allowed]

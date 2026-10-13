@@ -10,14 +10,9 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from topstep_bot import fmt
 from topstep_bot.engine import TradingCore
 from topstep_bot.live import Controls
-
-
-def _money(v: float | None) -> str:
-    if v is None:
-        return "-"
-    return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
 
 
 class BotActions:
@@ -27,6 +22,7 @@ class BotActions:
         self.controls = controls
         self._retrain = retrain  # LiveRunner.retrain: downloads history and rebuilds the knowledge base
         self._learn = learn  # LiveRunner.learn: backfills the market library and replays all of it (memory.py)
+        self._facts = None  # the central intelligence's lookups (brain/facts.py), made on first use
 
     def pause(self, source: str) -> str:
         if self.core.risk.paused:
@@ -73,8 +69,8 @@ class BotActions:
             f"Status: {state}",
             f"Feed: {'connected' if s['connected'] else 'DISCONNECTED'}",
             "",
-            f"Balance: {_money(s['balance'])}",
-            f"Today: {_money(r['day_pnl'])}  (open {_money(s['open_pnl'])})",
+            f"Balance: {fmt.money(s['balance'])}",
+            f"Today: {fmt.money(r['day_pnl'])}  (open {fmt.money(s['open_pnl'])})",
         ]
         t = s["trade"]
         if t:
@@ -86,12 +82,12 @@ class BotActions:
         else:
             lines.append("Position: flat")
         lines += [
-            f"MLL room: {_money(r['mll_room'])} (floor {_money(r['mll_floor'])})",
-            f"Daily loss used: {_money(max(0.0, -r['day_pnl']))} of {_money(r['daily_loss_limit'])}",
+            f"MLL room: {fmt.money(r['mll_room'])} (floor {fmt.money(r['mll_floor'])})",
+            f"Daily loss used: {fmt.money(max(0.0, -r['day_pnl']))} of {fmt.money(r['daily_loss_limit'])}",
             f"Trades today: {r['trades_today']} of {r['max_trades']}",
         ]
         if s["profit_target"]:
-            lines.append(f"Combine progress: {_money(s['total_profit'])} of {_money(s['profit_target'])}")
+            lines.append(f"Combine progress: {fmt.money(s['total_profit'])} of {fmt.money(s['profit_target'])}")
         lines.append(f"Time: {s['time']}")
         if s.get("forecast"):
             lines.append(f"⏳ {s['forecast']['headline']}")
@@ -105,14 +101,14 @@ class BotActions:
                 return "No closed trades yet."
             return "Recent trades:\n" + "\n".join(
                 f"{(r['exit_time'] or '')[:16].replace('T', ' ')}  {r['side']} {r['size']}  "
-                f"{_money(r['net_pnl'] or 0)}  ({r['exit_reason']})"
+                f"{fmt.money(r['net_pnl'] or 0)}  ({r['exit_reason']})"
                 for r in rows
             )
         if not trades:
             return "No closed trades yet."
         return "Recent trades:\n" + "\n".join(
             f"{self.core.schedule.local(t.closed_at).strftime('%m-%d %H:%M')}  {t.side.label} {t.filled_size}  "
-            f"{_money(t.net_pnl)}  ({t.exit_reason})"
+            f"{fmt.money(t.net_pnl)}  ({t.exit_reason})"
             for t in trades
             if t.closed_at
         )
@@ -251,6 +247,16 @@ class BotActions:
             raise RuntimeError("Training is only available while the bot is connected to TopstepX")
         return await self._retrain(source)
 
+    # ------------------------------------------------------------------ the central intelligence
+
+    def facts(self, name: str, args: dict | None) -> dict:
+        """One read-only lookup for the central intelligence (brain/), with the live picture."""
+        if self._facts is None:
+            from topstep_bot.brain.facts import Facts
+
+            self._facts = Facts(self.core.cfg, core=self.core, actions=self)
+        return {"data": self._facts.call(name, args if isinstance(args, dict) else {})}
+
     # ------------------------------------------------------------------ single entry point
 
     async def handle(self, name: str, payload: dict) -> dict | str:
@@ -292,6 +298,8 @@ class BotActions:
             return self.brief()
         if name == "insights_csv":
             return self.insights_csv(str(payload.get("scope") or "recent"))
+        if name == "facts":
+            return self.facts(str(payload.get("name", "")), payload.get("args"))
         if name == "open_ideas":
             return {"items": self.open_ideas()}
         if name == "find_idea":
