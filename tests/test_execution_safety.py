@@ -249,7 +249,7 @@ def test_a_crashed_background_loop_stops_the_bot_loudly(mnq, tmp_path):
     async def go():
         cfg = BotConfig.model_validate({"data_dir": str(tmp_path)})
         runner = LiveRunner(cfg, Secrets(username="u", api_key="k"), Controls())
-        runner.core = build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=runner.now, account_label="t")
+        runner.attach(build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=runner.now, account_label="t"))
 
         async def broken():
             raise RuntimeError("boom")

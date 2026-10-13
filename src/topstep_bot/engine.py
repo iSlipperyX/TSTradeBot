@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -29,6 +29,7 @@ from topstep_bot.market_context import MarketContext
 from topstep_bot.models import Account, Bar, Contract, OrderSide, Signal
 from topstep_bot.notify import Notifier
 from topstep_bot.policy import Judge
+from topstep_bot.risk.book import Exposure, mini_units
 from topstep_bot.risk.manager import RiskManager
 from topstep_bot.risk.topstep import LossLimitTracker
 from topstep_bot.sessions import SessionSchedule
@@ -53,7 +54,8 @@ UTC = timezone.utc
 
 FLATTEN_RETRY = timedelta(seconds=5)
 QUOTE_FRESH = timedelta(seconds=5)  # older bid/offer quotes aren't trusted for pricing entries
-MIN_CEILING_TICKS = 4  # a trade with less room than this before the consistency line isn't worth its costs
+MIN_CEILING_TICKS = 4
+CHART_BARS = 120  # bars kept for the trade chart (10 hours of 5-minute bars)  # a trade with less room than this before the consistency line isn't worth its costs
 
 
 @dataclass
@@ -147,6 +149,11 @@ class TradingCore:
         self.market_pick: dict | None = None  # why this market, when the bot picked it (market_pick.py)
         self.market_today: dict | None = None  # a market you switched to for the rest of the day
         self.news_archive = None  # training only: past calendars from the research library (labels news days)
+        # Several markets in one account (live.py): the desk rolls every market's day together, and only the
+        # market keeping the account's records writes the day's result (``keeps_records``).
+        self.day_roller: Callable[[datetime], Awaitable[None]] | None = None
+        self.keeps_records = True
+        self.chart_bars: deque[Bar] = deque(maxlen=CHART_BARS)  # recent bars for the dashboard's trade chart
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
@@ -266,8 +273,8 @@ class TradingCore:
                                f"cut to {self.cfg.aggressive.stressed_risk:.0%} today")
 
     async def end_day(self) -> None:
-        if self.current_day is None:
-            return
+        if self.current_day is None or not self.keeps_records:
+            return  # another market of this account records the day (one record per account and day)
         floor = self.tracker.end_of_day(self.balance)
         rec = DayRecord(
             self.current_day, self.risk.day_start_balance, self.balance, self._day_min_equity, self.risk.trades_today
@@ -292,6 +299,12 @@ class TradingCore:
             )
 
     async def roll_day_if_needed(self, ts: datetime) -> None:
+        if self.day_roller is not None:  # several markets: the desk rolls them all at once, records first
+            await self.day_roller(ts)
+            return
+        await self.roll_own_day(ts)
+
+    async def roll_own_day(self, ts: datetime) -> None:
         day = self.schedule.trading_day(ts)
         if day == self.current_day:
             return
@@ -322,6 +335,8 @@ class TradingCore:
     def observe_bar(self, bar: Bar) -> None:
         """Update the bot's own indicators (ATR, regime) with a closed bar."""
         self.last_bar = bar
+        if not self.chart_bars or bar.ts > self.chart_bars[-1].ts:
+            self.chart_bars.append(bar)
         self.atr.update(bar.high, bar.low, bar.close)
         rth = self.schedule.is_rth(bar.ts, self.strategy.rth_open, self.strategy.rth_close)
         self.regime.update(bar.high, bar.low, bar.close, rth=rth)
@@ -592,6 +607,28 @@ class TradingCore:
         await self.orders.update_stop(best)
 
     # ------------------------------------------------------------------ prices
+
+    def exposure(self) -> Exposure:
+        """What this market has on right now, for the account book (risk/book.py): open P&L, what it could
+        still lose if its stop filled late, what it could still make at its target, and its size."""
+        c, t, pos = self.contract, self.orders.trade, self.orders.position
+        if t is None and pos == 0:
+            return Exposure(symbol=c.name)
+        price = self.last_price if self.last_price is not None else (t.ref_price if t else None)
+        per_contract_extra = (self.cfg.risk.slippage_ticks + self.risk.jump_ticks) * c.tick_value + self.orders.fees_round_turn
+        if t is None:  # a position the bot doesn't manage (yet): assume the widest stop it would ever use
+            size = abs(pos)
+            at_risk = size * (self.cfg.risk.max_stop_ticks * c.tick_value + per_contract_extra)
+            return Exposure(self.orders.open_pnl(), at_risk, 0.0, mini_units(size, c.is_micro), size, c.name)
+        size = max(t.size if t.state == TradeState.PENDING else 0, abs(pos), t.filled_size)
+        sign = t.side.sign
+        ref = price if price is not None else t.stop_price
+        loss_points = max(0.0, (ref - t.stop_price) * sign)
+        at_risk = size * (loss_points * c.point_value + per_contract_extra)
+        upside = 0.0
+        if t.target_price is not None:
+            upside = size * max(0.0, (t.target_price - ref) * sign) * c.point_value
+        return Exposure(self.orders.open_pnl(), at_risk, upside, mini_units(size, c.is_micro), size, c.name)
 
     async def on_price(self, ts: datetime, price: float) -> None:
         self.last_price = price

@@ -13,6 +13,7 @@ from topstep_bot.instruments import SPECS
 from topstep_bot.journal import Journal
 from topstep_bot.models import Contract
 from topstep_bot.notify import Notifier
+from topstep_bot.risk.book import AccountBook
 from topstep_bot.risk.guards import OrderGuard
 from topstep_bot.risk.manager import RiskManager
 from topstep_bot.risk.topstep import PLANS, LossLimitTracker, starting_balance_for
@@ -43,13 +44,21 @@ def build_core(
     mll_floor: float | None = None,
     journal: Journal | None = None,
     notifier: Notifier | None = None,
+    book: AccountBook | None = None,
+    tracker: LossLimitTracker | None = None,
+    guard_from: OrderGuard | None = None,
 ) -> TradingCore:
+    """One market's trading core. A desk trading several markets in one account passes the account's
+    shared ``book``, MLL ``tracker`` and an existing lane's guard (``guard_from``), so every limit counts the
+    whole account."""
     plan = PLANS[cfg.account.plan]
     schedule = SessionSchedule(market_session(cfg.session, contract.root or contract.name))
     floor = cfg.account.mll_floor_override if cfg.account.mll_floor_override is not None else mll_floor
-    tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
+    if tracker is None:
+        tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
     fees = fees_for(cfg, contract)
-    risk = RiskManager(cfg.risk, cfg.account, plan, contract, schedule, tracker, fees, cfg.funded, cfg.aggressive)
+    risk = RiskManager(cfg.risk, cfg.account, plan, contract, schedule, tracker, fees, cfg.funded, cfg.aggressive,
+                       book=book)
     params = dict(cfg.strategy.params)
     if cfg.aggressive.enabled and cfg.strategy.name == "adaptive":  # more chances a day, each still judged and risk-checked
         params.setdefault("trades_multiple", cfg.aggressive.trades_multiple)
@@ -65,8 +74,8 @@ def build_core(
         strategy_name=strategy.name,
         max_risk_overrun=cfg.execution.max_risk_overrun,
     )
-    orders.guard = OrderGuard(risk.max_contracts_topstep)
-    return TradingCore(
+    orders.guard = OrderGuard(risk.max_contracts_topstep, share_with=guard_from)
+    core = TradingCore(
         cfg=cfg,
         contract=contract,
         broker=broker,
@@ -80,3 +89,6 @@ def build_core(
         journal=journal,
         notifier=notifier,
     )
+    if book is not None:
+        book.register(risk.lane, core.exposure)
+    return core

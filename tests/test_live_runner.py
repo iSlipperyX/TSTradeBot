@@ -15,7 +15,7 @@ from topstep_bot.backtest.data import synthetic_bars
 from topstep_bot.bars import resample
 from topstep_bot.config import BotConfig, Secrets
 from topstep_bot.execution import TradeState
-from topstep_bot.live import Controls, LiveRunner
+from topstep_bot.live import Controls, Lane, LiveRunner
 from topstep_bot.models import OrderSide
 
 from .conftest import run
@@ -335,10 +335,11 @@ def test_training_falls_back_to_saved_history_when_the_download_fails(tmp_path):
 
     memory = Memory()
     memory.library = library
-    runner.core = SimpleNamespace(memory=memory)
-    runner.contract = SimpleNamespace(id=CONTRACT["id"])
+    lane = Lane(runner, runner.cfg)
+    lane.core = SimpleNamespace(memory=memory)
+    lane.contract = SimpleNamespace(id=CONTRACT["id"])
     end = fake.bars[-1].ts + timedelta(minutes=5)
-    bars, origin = run(runner._training_bars(30, end))
+    bars, origin = run(lane._training_bars(30, end))
     assert origin == "saved history only: the download failed" and bars[-1] == fake.bars[-1]
     assert bars[0].ts >= end - timedelta(days=30)
 
@@ -346,7 +347,7 @@ def test_training_falls_back_to_saved_history_when_the_download_fails(tmp_path):
     empty = MarketLibrary(tmp_path / "empty.sqlite")
     memory.library = empty
     with pytest.raises(httpx.ConnectError):
-        run(runner._training_bars(30, end))
+        run(lane._training_bars(30, end))
     empty.close()
 
 
@@ -359,7 +360,8 @@ def test_a_bot_that_runs_for_days_retrains_after_each_session(tmp_path):
     runner = make_runner(FakeTopstepX(), 1, "paper", tmp_path)
     kb = KnowledgeBase(tmp_path / "k.json")
     kb.trained = {"at": "2026-10-08T21:10:00+00:00", "to": "2026-10-08", "days": 60, "code": "old"}
-    runner.core = SimpleNamespace(knowledge=kb, schedule=SessionSchedule(runner.cfg.session), event=lambda *a, **k: None)
+    lane = Lane(runner, runner.cfg)
+    lane.core = SimpleNamespace(knowledge=kb, schedule=SessionSchedule(runner.cfg.session), event=lambda *a, **k: None)
     calls = []
 
     async def retrain(source):
@@ -368,9 +370,9 @@ def test_a_bot_that_runs_for_days_retrains_after_each_session(tmp_path):
             raise RuntimeError("TopstepX is down")
         return "ok"
 
-    runner.retrain = retrain
+    lane.retrain = retrain
     friday_evening = datetime(2026, 10, 9, 21, 30, tzinfo=UTC)  # 16:30 CT, after Friday's close
-    run(runner._retrain_if_due(friday_evening))
-    run(runner._retrain_if_due(friday_evening + timedelta(minutes=5)))  # failed: waits an hour before trying again
-    run(runner._retrain_if_due(friday_evening + timedelta(hours=1, minutes=1)))
+    run(lane._retrain_if_due(friday_evening))
+    run(lane._retrain_if_due(friday_evening + timedelta(minutes=5)))  # failed: waits an hour before trying again
+    run(lane._retrain_if_due(friday_evening + timedelta(hours=1, minutes=1)))
     assert calls == ["daily", "daily"]

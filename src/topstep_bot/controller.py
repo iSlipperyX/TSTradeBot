@@ -61,7 +61,7 @@ BACKOFF = (10, 30, 60, 120, 300)
 HEALTHY_AFTER = 600  # seconds of uptime that reset the crash backoff
 STOP_TIMEOUT = 45  # seconds to wait for a graceful stop (it flattens first)
 ACTION_TIMEOUT = 8  # seconds to wait for the bot to answer a request
-SLOW_ACTIONS = {"train": 600, "learn": 3600}  # training replays weeks of history; learning backfills and replays up to a year
+SLOW_ACTIONS = {"train": 600, "learn": 3600, "add_market": 900, "switch_market": 900}  # a new market warms up and trains  # training replays weeks of history; learning backfills and replays up to a year
 STATE_FILE = "controller.json"
 MAIN = "main"  # the account name when config.yaml has no 'accounts' list
 ALL = "all"
@@ -990,9 +990,10 @@ class Controller:
         """Trade another market for the rest of today (trade ticket, Simulations tab, Telegram /switch), or go
         back to the usual one (``symbol`` empty or USUAL).
 
-        The bot must be flat: it restarts on the new market (its own strategy trades it too, with every risk
-        rule and Topstep guard as before). Accounts that copy this account's calls follow it. The switch ends
-        at 15:10 CT; after the daily restart the account is back on its usual market or pick."""
+        A running bot switches at once, without a restart (live.py): the new market starts, and the old one is
+        dropped as soon as it is flat (it takes no new trades meanwhile). Every risk rule and Topstep guard applies
+        as before. Accounts that copy this account's calls follow it. The switch ends at 15:10 CT; after the daily
+        restart the account is back on its usual market(s) or pick."""
         from topstep_bot import market_pick as mp
         from topstep_bot.instruments import SPECS
         from topstep_bot.risk.topstep import PLANS, product_limit
@@ -1021,15 +1022,18 @@ class Controller:
         followers = [b for b in self.bots.values() if self.multi and any(
             p.name == b.account and p.follow == bot.account for p in self.cfg.accounts)]
         group = [bot, *followers]
-        for b in group:
-            if b.running:
-                status = await b.status()
-                snap = status.get("bot") if status else None
-                if snap and (snap.get("position") or snap.get("trade")):
-                    raise ValueError(f"A trade is open{f' on {b.account}' if self.multi else ''}. Close it first, then switch markets.")
         lines = []
         for b in group:
             bcfg = self.account_cfg(b.account)
+            if b.running and b.state == "running":  # switch live, no restart
+                if back:
+                    mp.clear_today(bcfg)
+                target = mp.current_symbol(bcfg) if back else symbol  # back: the usual market (or its pick)
+                answer = await b.action("switch_market", {"symbol": target, "source": source})
+                text = str(answer.get("message") or answer.get("text") or "") if isinstance(answer, dict) else str(answer)
+                b._event("info", f"{b.who}: {text.splitlines()[0] if text else 'market switched'} - requested by {source}")
+                lines.append(f"{b.who + ': ' if self.multi else ''}{text}")
+                continue
             if back:
                 mp.clear_today(bcfg)
                 what = f"back on its usual market ({mp.current_symbol(bcfg)})"
@@ -1037,11 +1041,7 @@ class Controller:
                 mp.set_today(bcfg, symbol, source)
                 what = f"trading {symbol} ({SPECS[symbol].description}) for the rest of today"
             b._event("warning", f"{b.who}: {what} - requested by {source}", alert=True)
-            if b.running:
-                await b.restart(source)
-                lines.append(f"{b.who} is restarting, {what}. It is ready in about half a minute.")
-            else:
-                lines.append(f"{b.who} will start {what}.")
+            lines.append(f"{b.who} will start {what}.")
         if not back:
             lines.append("At 15:10 CT the switch ends; after the daily restart the bot is back on its usual market.")
         return "\n".join(lines)

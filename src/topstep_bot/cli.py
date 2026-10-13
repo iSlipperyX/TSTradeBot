@@ -720,7 +720,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         from topstep_bot.control import BotActions
         from topstep_bot.worker_api import start_worker_api
 
-        server = await start_worker_api(BotActions(core, controls, retrain=runner.retrain, learn=runner.learn), core.snapshot)
+        actions = BotActions(core, controls, retrain=runner.retrain, learn=runner.learn, desk=runner)
+        server = await start_worker_api(actions, runner.snapshot)
         if server:
             servers.append(server)
 

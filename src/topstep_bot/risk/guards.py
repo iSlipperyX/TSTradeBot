@@ -28,6 +28,16 @@ DEFAULT_MAX_ACTIONS_PER_MINUTE = 30
 DEFAULT_MAX_ENTRIES_PER_DAY = 20
 
 
+class _Counts:
+    """Order actions and entries of one account: shared by the guards of every market it trades, so the
+    rate breaker and the daily entry limit count the whole account, never one market at a time."""
+
+    def __init__(self) -> None:
+        self.actions: deque[datetime] = deque()
+        self.entries: dict[str, int] = {}
+        self.tripped: str | None = None
+
+
 class OrderGuard:
     def __init__(
         self,
@@ -35,13 +45,32 @@ class OrderGuard:
         *,
         max_actions_per_minute: int = DEFAULT_MAX_ACTIONS_PER_MINUTE,
         max_entries_per_day: int = DEFAULT_MAX_ENTRIES_PER_DAY,
+        share_with: OrderGuard | None = None,
     ):
         self.max_contracts = max_contracts
         self.max_actions_per_minute = max_actions_per_minute
         self.max_entries_per_day = max_entries_per_day
-        self._actions: deque[datetime] = deque()
-        self._entries: dict[str, int] = {}
-        self.tripped: str | None = None
+        self._counts = share_with._counts if share_with is not None else _Counts()
+
+    @property
+    def _actions(self) -> deque[datetime]:
+        return self._counts.actions
+
+    @property
+    def _entries(self) -> dict[str, int]:
+        return self._counts.entries
+
+    @_entries.setter
+    def _entries(self, value: dict[str, int]) -> None:
+        self._counts.entries = value
+
+    @property
+    def tripped(self) -> str | None:
+        return self._counts.tripped
+
+    @tripped.setter
+    def tripped(self, value: str | None) -> None:
+        self._counts.tripped = value
 
     def check_entry(self, size: int, current_position: int, now: datetime) -> str | None:
         """None if an entry of ``size`` contracts may be sent now, else why not."""

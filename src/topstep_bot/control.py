@@ -9,20 +9,45 @@ trading within the limits already in config.yaml.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 
 from topstep_bot import fmt
 from topstep_bot.engine import TradingCore
-from topstep_bot.live import Controls
+from topstep_bot.live import Controls, LiveRunner
+
+# The market one request names (several markets at once): per request, so requests running side by side never mix.
+_PINNED: ContextVar[TradingCore | None] = ContextVar("pinned_market", default=None)
+MARKET_ACTIONS = ("markets", "add_market", "remove_market", "switch_market", "focus_market")
 
 
 class BotActions:
+    """``core``: the market the actions act on. With ``desk`` (the running bot, live.py) that is the market shown on
+    the dashboard, or the one a request names (``market`` in its payload), and the market actions are available."""
+
     def __init__(self, core: TradingCore, controls: Controls, retrain: Callable[[str], Awaitable[str]] | None = None,
-                 learn: Callable[[str], Awaitable[str]] | None = None):
-        self.core = core
+                 learn: Callable[[str], Awaitable[str]] | None = None, desk: LiveRunner | None = None):
+        self._core = core
+        self.desk = desk
         self.controls = controls
         self._retrain = retrain  # LiveRunner.retrain: downloads history and rebuilds the knowledge base
         self._learn = learn  # LiveRunner.learn: backfills the market library and replays all of it (memory.py)
         self._facts = None  # the central intelligence's lookups (brain/facts.py), made on first use
+
+    @property
+    def core(self) -> TradingCore:
+        pinned = _PINNED.get()
+        if pinned is not None:
+            return pinned
+        if self.desk is not None and self.desk.core is not None:
+            return self.desk.core
+        return self._core
+
+    @core.setter
+    def core(self, value: TradingCore) -> None:
+        self._core = value
+
+    def all_cores(self) -> list[TradingCore]:
+        return self.desk.cores() if self.desk is not None and self.desk.cores() else [self.core]
 
     def pause(self, source: str) -> str:
         if self.core.risk.paused:
@@ -124,10 +149,22 @@ class BotActions:
         return self._remote().preview(key, value)
 
     def change_setting(self, key: str, value, source: str) -> str:
-        return self._remote().apply(key, value, source)
+        """A setting applies to every market the account trades."""
+        answer = self._remote().apply(key, value, source)
+        for core in self.all_cores():
+            if core is not self.core and core.remote is not None:
+                try:
+                    core.remote.apply(key, value, source)
+                except Exception as exc:  # noqa: BLE001 - the main market changed; say what didn't follow
+                    answer += f"\n{core.contract.name}: {exc}"
+        return answer
 
     def reset_settings(self, source: str) -> str:
-        return self._remote().reset(source)
+        answer = self._remote().reset(source)
+        for core in self.all_cores():
+            if core is not self.core and core.remote is not None:
+                core.remote.reset(source)
+        return answer
 
     def settings_text(self) -> str:
         return self._remote().settings_text()
@@ -251,17 +288,70 @@ class BotActions:
 
     def facts(self, name: str, args: dict | None) -> dict:
         """One read-only lookup for the central intelligence (brain/), with the live picture."""
-        if self._facts is None:
+        if self._facts is None or self._facts[0] is not self.core:  # rebuilt when the market shown changes
             from topstep_bot.brain.facts import Facts
 
-            self._facts = Facts(self.core.cfg, core=self.core, actions=self)
-        return {"data": self._facts.call(name, args if isinstance(args, dict) else {})}
+            self._facts = (self.core, Facts(self.core.cfg, core=self.core, actions=self))
+        return {"data": self._facts[1].call(name, args if isinstance(args, dict) else {})}
+
+    # ------------------------------------------------------------------ single entry point
+
+    # ------------------------------------------------------------------ markets (several at once)
+
+    def _desk(self) -> LiveRunner:
+        if self.desk is None:
+            raise RuntimeError("Markets can only be changed while the bot is running")
+        return self.desk
+
+    async def market_action(self, name: str, payload: dict, source: str) -> dict | str:
+        desk = self._desk()
+        symbol = str(payload.get("symbol") or "").strip().upper()
+        if name == "markets":
+            return desk.markets_view()
+        if name == "add_market":
+            return await desk.add_market(symbol, source)
+        if name == "remove_market":
+            return await desk.remove_market(symbol, source, flatten=bool(payload.get("flatten")))
+        if name == "switch_market":
+            return await desk.switch_market(payload.get("from") or None, symbol, source)
+        return desk.set_focus(symbol)
+
+    def markets_text(self) -> str:
+        if self.desk is None:
+            return f"Trading {self.core.contract.name}."
+        view = self.desk.markets_view()
+        lines = [f"Trading {len(view['lanes'])} market(s) (up to {view['max']} at once):"]
+        for m in view["lanes"]:
+            t = m.get("trade")
+            state = f"{t['side']} {t['size']} @ {t['entry'] or 'pending'}" if t else "flat"
+            extra = f" - {m['closing']}" if m.get("closing") else ""
+            lines.append(f"• {m['symbol']} ({m.get('contract', '')}): {state}, {m.get('trades_today', 0)} trade(s) "
+                         f"today{extra}")
+        e = view.get("exposure")
+        if e:
+            lines.append(f"Open P&L {fmt.money(e['open_pnl'])}, at risk if every stop fills late "
+                         f"{fmt.money(e['at_risk'])}, size {e['minis']:g} mini units")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------ single entry point
 
     async def handle(self, name: str, payload: dict) -> dict | str:
-        """Run action ``name`` (the bot's local API calls this). Raises ValueError for bad input."""
+        """Run action ``name`` (the bot's local API calls this). Raises ValueError for bad input.
+
+        ``market`` in the payload runs it on that market (several markets at once); default: the one shown."""
         source = str(payload.get("source") or "dashboard")
+        if name in MARKET_ACTIONS:
+            return await self.market_action(name, payload, source)
+        market = payload.get("market")
+        if market and self.desk is not None and name not in ("pause", "resume", "flatten", "stop"):
+            token = _PINNED.set(self.desk.lane_for(str(market)).core)
+            try:
+                return await self._handle(name, payload, source)
+            finally:
+                _PINNED.reset(token)
+        return await self._handle(name, payload, source)
+
+    async def _handle(self, name: str, payload: dict, source: str) -> dict | str:
         simple = {"pause": self.pause, "resume": self.resume, "flatten": self.flatten, "stop": self.stop}
         if name in simple:
             return simple[name](source)
@@ -289,7 +379,7 @@ class BotActions:
         texts = {"status_text": self.status_text, "ideas_text": self.ideas_text, "trades_text": self.trades_text,
                  "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text,
                  "brief_text": self.brief_text, "next_text": self.next_text, "market_text": self.market_text,
-                 "funded_text": self.funded_text, "rules_text": self.rules_text}
+                 "funded_text": self.funded_text, "rules_text": self.rules_text, "markets_text": self.markets_text}
         if name in texts:
             return {"text": texts[name]()}
         if name == "insights":

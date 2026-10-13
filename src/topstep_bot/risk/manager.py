@@ -28,12 +28,14 @@ from datetime import date, datetime, timedelta
 from topstep_bot import funded
 from topstep_bot.config import AccountConfig, AggressiveConfig, FundedConfig, RiskConfig
 from topstep_bot.models import Contract
+from topstep_bot.risk.book import MICROS_PER_MINI, AccountBook, Exposure
 from topstep_bot.risk.topstep import (
     CombineProgress,
     LossLimitTracker,
     PlanSpec,
     combine_progress,
     max_contracts_allowed,
+    max_minis_allowed,
 )
 from topstep_bot.sessions import SessionSchedule
 
@@ -62,6 +64,8 @@ class RiskManager:
         fees_round_turn: float,
         funded_cfg: FundedConfig | None = None,
         aggressive_cfg: AggressiveConfig | None = None,
+        book: AccountBook | None = None,
+        lane: str | None = None,
     ):
         from topstep_bot.network import default_jump_ticks
 
@@ -75,17 +79,10 @@ class RiskManager:
         self.schedule = schedule
         self.tracker = tracker
         self.fees_round_turn = fees_round_turn
-        self.day: date | None = None
-        self.day_start_balance = 0.0
-        self.trades_today = 0
-        self.wins_today = 0
-        self.consecutive_losses = 0
-        self.last_loss_at: datetime | None = None
-        self.lock_reason: str | None = None
-        self.paused = False
-        self.risk_scale = 1.0  # < 1 during the live ramp-up period
-        # Best finished day of the Combine so far (for the Consistency Target); set by the engine.
-        self.best_prior_day = 0.0
+        # The day's state lives in the account book, shared with the other markets this account trades
+        # (risk/book.py); a lane of its own (the usual single market) gets a private book.
+        self.book = book if book is not None else AccountBook()
+        self.lane = lane or contract.id or contract.name
         # Live and paper trading turn on the guards that need a real account history or a news
         # calendar (news position-size cap, stop at the Combine target). Backtests replay many
         # Combine attempts from one run and have no calendar, so they leave these off.
@@ -95,8 +92,29 @@ class RiskManager:
         self.jump_ticks = default_jump_ticks(contract.root or contract.name)
         self.stressed = False  # the network marks this market as stressed (aggressive mode sizes down)
         self.network_note = ""
-        self.realized_today = 0.0
-        self.day_peak = 0.0  # best realized P&L today (the aggressive mode's lock-in)
+
+    # ------------------------------------------------- the shared day state
+
+    def _shared(name: str):  # noqa: N805 - builds properties at class creation
+        return property(lambda self: getattr(self.book, name), lambda self, v: setattr(self.book, name, v))
+
+    day = _shared("day")
+    day_start_balance = _shared("day_start_balance")
+    trades_today = _shared("trades_today")
+    wins_today = _shared("wins_today")
+    consecutive_losses = _shared("consecutive_losses")
+    last_loss_at = _shared("last_loss_at")
+    lock_reason = _shared("lock_reason")
+    paused = _shared("paused")
+    risk_scale = _shared("risk_scale")
+    best_prior_day = _shared("best_prior_day")
+    realized_today = _shared("realized_today")
+    day_peak = _shared("day_peak")
+    del _shared
+
+    def others(self) -> Exposure:
+        """What the account's other markets have on right now (nothing when this is the only one)."""
+        return self.book.others(self.lane)
 
     # ----------------------------------------------------------------- limits
 
@@ -129,7 +147,8 @@ class RiskManager:
         ceiling = self.profit_ceiling()
         if ceiling is None or self.day is None:  # no trading day started yet: no day P&L to measure against
             return None
-        return ceiling - self.day_pnl(balance)
+        # The other markets' open trades can still make their targets: that part of the room is theirs.
+        return ceiling - self.day_pnl(balance) - self.others().upside
 
     def locked_floor(self) -> float | None:
         """Aggressive mode: the realized profit today that is locked in (None until the day has made enough)."""
@@ -153,15 +172,30 @@ class RiskManager:
         risk = min(risk, a.max_risk_multiple * base)
         if self.stressed:
             risk *= a.stressed_risk
-        return max(0.0, min(risk, a.cushion_share * (self.tracker.room(balance) - self.cfg.mll_buffer)))
+        others = self.others()
+        room = self.tracker.room(balance + others.open_pnl) - others.at_risk - self.cfg.mll_buffer
+        return max(0.0, min(risk, a.cushion_share * room))
 
     @property
     def topstep_dll(self) -> float | None:
         return self.account_cfg.topstep_daily_loss_limit
 
     def max_contracts_topstep(self) -> int:
-        """Topstep's own position limit for today, in contracts of this instrument."""
-        return max_contracts_allowed(self.plan, self.stage, self.day_start_balance, self.contract.root, self.contract.is_micro)
+        """Topstep's own position limit for today, in contracts of this instrument.
+
+        Topstep's cap counts every open position in the account (10 micros = 1 mini), so what the other
+        markets hold is taken off it first."""
+        cap = max_contracts_allowed(self.plan, self.stage, self.day_start_balance, self.contract.root, self.contract.is_micro)
+        used = self.others().minis
+        if used <= 0:
+            return cap
+        return max(0, min(cap, self._contracts_in(max_minis_allowed(self.plan, self.stage, self.day_start_balance) - used)))
+
+    def _contracts_in(self, minis: float) -> int:
+        """How many contracts of this instrument fit in ``minis`` mini-contract units."""
+        if minis <= 0:
+            return 0
+        return math.floor(minis * MICROS_PER_MINI + 1e-9) if self.contract.is_micro else math.floor(minis + 1e-9)
 
     def news_size_cap(self, now: datetime | None) -> int | None:
         """Half of Topstep's max when a scheduled major release is near (or the calendar is unknown).
@@ -174,7 +208,8 @@ class RiskManager:
         calendar_known = news is not None and news.fetched_at is not None
         if calendar_known and not any(now <= e.time <= now + NEWS_SIZE_GUARD for e in news.events):
             return None
-        return max(1, self.max_contracts_topstep() // 2)
+        full = max_contracts_allowed(self.plan, self.stage, self.day_start_balance, self.contract.root, self.contract.is_micro)
+        return min(max(1, full // 2), self.max_contracts_topstep())
 
     def max_contracts(self, now: datetime | None = None) -> int:
         cap = self.max_contracts_topstep()
@@ -193,7 +228,7 @@ class RiskManager:
             return None
         today = self.day_pnl(balance, open_pnl)
         best = max(self.best_prior_day, today)
-        return combine_progress(self.plan, balance + open_pnl - self.tracker.starting_balance, best)
+        return combine_progress(self.plan, self.equity(balance, open_pnl) - self.tracker.starting_balance, best)
 
     def _combine_reason(self, balance: float, open_pnl: float) -> str | None:
         """Why the Combine rules say stop trading now (target reached / consistency line), or None."""
@@ -221,39 +256,23 @@ class RiskManager:
     ) -> None:
         """Begin a trading day. After a mid-day restart, pass today's closed trades as (time, net P&L)
         so the trade count, losing streak and post-loss cooldown carry on where they left off."""
-        self.day = day
-        self.day_start_balance = balance - realized_so_far
-        self.trades_today = 0
-        self.wins_today = 0
-        self.consecutive_losses = 0
-        self.last_loss_at = None
-        self.lock_reason = None
-        self.realized_today = 0.0
-        self.day_peak = 0.0
-        for ts, net_pnl in sorted(closed_today or []):
-            self.record_trade(net_pnl, ts)
-        if not closed_today:
-            self.realized_today = realized_so_far
-            self.day_peak = max(0.0, realized_so_far)
+        if self.book.shared and self.book.day == day:
+            return  # the desk already started today for the whole account
+        self.book.start_day(day, balance, realized_so_far, closed_today)
 
     def record_trade(self, net_pnl: float, ts: datetime) -> None:
-        self.trades_today += 1
-        self.realized_today += net_pnl
-        self.day_peak = max(self.day_peak, self.realized_today)
-        if net_pnl < 0:
-            self.consecutive_losses += 1
-            self.last_loss_at = ts
-        else:
-            self.wins_today += 1
-            self.consecutive_losses = 0
+        self.book.record_trade(net_pnl, ts)
 
     def lock(self, reason: str) -> str:
-        if self.lock_reason is None:
-            self.lock_reason = reason
-        return reason
+        return self.book.lock(reason)
 
     def day_pnl(self, balance: float, open_pnl: float = 0.0) -> float:
-        return balance + open_pnl - self.day_start_balance
+        """The account's P&L today: realized, this market's ``open_pnl`` and every other market's open P&L."""
+        return balance + open_pnl + self.others().open_pnl - self.day_start_balance
+
+    def equity(self, balance: float, open_pnl: float = 0.0) -> float:
+        """The account's equity: the balance plus every open position (this market's ``open_pnl`` and the others')."""
+        return balance + open_pnl + self.others().open_pnl
 
     # ---------------------------------------------------------------- sizing
 
@@ -275,7 +294,7 @@ class RiskManager:
         # Hard limits: a stop-out, even one that fills a jump late, must not reach any of them.
         hard = [
             self.cfg.personal_daily_loss_limit + day_pnl,
-            self.tracker.room(balance) - self.cfg.mll_buffer,
+            self.tracker.room(self.equity(balance)) - self.cfg.mll_buffer,
         ]
         if self.topstep_dll:
             hard.append(0.9 * self.topstep_dll + day_pnl)
@@ -286,7 +305,8 @@ class RiskManager:
         if locked is not None:  # aggressive mode: a stop-out must not give back the locked-in profit
             hard.append(day_pnl - locked)
         soft = self.trade_risk(balance, conviction)
-        budget = min(hard)
+        # Every other market's open trade could stop out too (and fill late): the budget left is what remains.
+        budget = min(hard) - self.others().at_risk
         if soft <= 0 or budget <= 0:
             return 0
         size = min(math.floor(soft / rpc), math.floor(budget / self.worst_loss_per_contract(entry, stop)))
@@ -325,7 +345,7 @@ class RiskManager:
                              f"keeping ${day_pnl:,.0f}")
         if day_pnl <= -self.cfg.personal_daily_loss_limit:
             return self.lock(f"personal daily loss limit ${self.cfg.personal_daily_loss_limit:,.0f} reached")
-        if self.tracker.room(balance + open_pnl) <= self.cfg.mll_buffer:
+        if self.tracker.room(self.equity(balance, open_pnl)) <= self.cfg.mll_buffer:
             return "too close to the Maximum Loss Limit"
         if self.topstep_dll and day_pnl <= -0.9 * self.topstep_dll:
             return self.lock("within 10% of Topstep daily loss limit")
@@ -336,7 +356,7 @@ class RiskManager:
 
     def check_open_risk(self, balance: float, open_pnl: float) -> str | None:
         """Called on every price update. Returns a reason if the position must be flattened now."""
-        equity = balance + open_pnl
+        equity = self.equity(balance, open_pnl)
         day_pnl = equity - self.day_start_balance
         if day_pnl <= -self.cfg.personal_daily_loss_limit:
             return self.lock(f"personal daily loss limit hit (day P&L ${day_pnl:,.2f})")
@@ -360,7 +380,7 @@ class RiskManager:
         return f"Topstep's maximum position size may not be held into news ({event.label})"
 
     def snapshot(self, balance: float, open_pnl: float) -> dict:
-        equity = balance + open_pnl
+        equity = self.equity(balance, open_pnl)
         progress = self.combine_progress(balance, open_pnl)
         return {
             "day": self.day.isoformat() if self.day else None,

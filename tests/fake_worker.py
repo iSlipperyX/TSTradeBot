@@ -9,6 +9,7 @@ Behaviour is driven by the environment / actions:
   action "crash"     exit with code 3
   action "maint"     exit with code 75 (daily maintenance restart)
   action "train"     answer after FAKE_TRAIN_SECONDS (default 0), like a long knowledge-base training
+  action "switch_market"  switch without a restart, like the real bot
 """
 
 import asyncio
@@ -53,6 +54,11 @@ async def main() -> int:
             return "bye"
         if name == "status_text":
             return {"text": f"fake bot {ACCOUNT} in {MODE} mode"}
+        if name == "switch_market":  # like the real bot: switches live, the old market finishes its open trade
+            text = f"Now trading {payload.get('symbol')}."
+            if position:
+                text += " MNQ takes no new trades and is dropped as soon as its open trade is closed."
+            return text
         if name == "bad":
             raise ValueError("bad request from fake")
         return {"echo": name, "payload": payload}

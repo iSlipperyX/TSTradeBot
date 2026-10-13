@@ -115,6 +115,9 @@ class AccountConfig(_Section):
         return str(v).strip().lower() if v not in (None, "") else None
 
 
+MAX_MARKETS = 6  # markets one account trades at the same time (live.py)
+
+
 class InstrumentConfig(_Section):
     symbol: str = Field(default="MNQ", description="What to trade (with auto_pick: the market used when none shows an edge).")
     contract_id: str | None = None
@@ -131,10 +134,35 @@ class InstrumentConfig(_Section):
                     "RATES, AGS.",
     )
 
+    markets: list[str] = Field(
+        default_factory=list,
+        description="More markets to trade at the same time as `symbol`, in this same account. Every Topstep limit "
+                    "(MLL, daily loss, position size, consistency) counts all of them together. Up to "
+                    f"{MAX_MARKETS - 1} more.",
+    )
+    max_markets: int = Field(
+        default=1, ge=1, le=MAX_MARKETS,
+        description="With auto_pick: trade up to this many of the best-scoring markets at once (each still has to "
+                    "show an edge on days it wasn't trained on).",
+    )
+
     @field_validator("symbol")
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.strip().upper()
+
+    @field_validator("markets")
+    @classmethod
+    def _known_markets(cls, v: list[str]) -> list[str]:
+        from topstep_bot.instruments import SPECS
+
+        out = list(dict.fromkeys(s.strip().upper() for s in v if s.strip()))
+        unknown = [s for s in out if s not in SPECS]
+        if unknown:
+            raise ValueError(f"unknown market(s) in markets: {', '.join(unknown)} (known: {', '.join(SPECS)})")
+        if len(out) > MAX_MARKETS - 1:
+            raise ValueError(f"at most {MAX_MARKETS - 1} markets besides the main one")
+        return out
 
     @field_validator("candidates")
     @classmethod
