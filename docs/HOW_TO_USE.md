@@ -57,10 +57,31 @@ coach and the Ask tab's optional AI answers now share one Claude API key and one
   consistency line any more, and every loss limit now allows for a sudden jump past the stop
   ([section 39](#two-protections-that-work-in-every-goal)).
 - **The market network.** Every market Topstep permits, read together: which move together, which
-  are stressed, what is scheduled, how far each can jump. On the Market tab, in Telegram (`/network`)
+  are stressed, what is scheduled, how far each can jump. On Knowledge → Market data, in Telegram (`/network`)
   and to the AI ([section 40](#40-the-market-network)).
 - **One Claude integration.** The AI coach and the Ask answers share one key, one model list with
   prices, one spending log and the same plain-words errors.
+
+**New in 4.0:**
+
+- **Several markets at once, switched without a restart.** One account can trade up to six markets at
+  the same time. Add, drop or switch them from the markets strip at the top of the dashboard or in
+  Telegram (`/markets`, `/add`, `/drop`, `/switch`); an open trade keeps its stop and target, and every
+  Topstep limit counts all the markets together ([section 41](#41-several-markets-at-once)).
+- **A probability calculator.** Every signal gets its chance of winning, its average win and loss and
+  its expected value after costs, with an 80% range. The bot skips a signal it is at least 90% sure
+  loses, and *Make money every day* sizes each trade by the strength of its edge
+  ([section 42](#42-the-probability-calculator)).
+- **A knowledge network that grows by itself.** Related markets inform each other's odds, and each
+  night the bot learns a few more related markets from the history saved on your PC
+  ([section 43](#43-the-knowledge-network)).
+- **A more aggressive *Make money every day*.** Each strategy may trade three times its usual count,
+  each market brings its own 12 trades a day, and a large, well-measured edge may risk up to 1.5 times
+  the usual amount ([section 39](#39-make-money-every-day-the-aggressive-mode)).
+- **Charts of the current trade** on the Overview and the trade ticket ([section 44](#44-the-trade-chart)).
+- **A simpler dashboard.** Seven tabs instead of eleven: **Ask** explains anything in the bot, and
+  **Knowledge** puts real trades, simulations and market data in one place
+  ([section 45](#45-the-simpler-dashboard)).
 
 ---
 
@@ -106,6 +127,11 @@ coach and the Ask tab's optional AI answers now share one Claude API key and one
 38. [The central intelligence: ask the bot why](#38-the-central-intelligence-ask-the-bot-why)
 39. [Make money every day: the aggressive mode](#39-make-money-every-day-the-aggressive-mode)
 40. [The market network](#40-the-market-network)
+41. [Several markets at once](#41-several-markets-at-once)
+42. [The probability calculator](#42-the-probability-calculator)
+43. [The knowledge network](#43-the-knowledge-network)
+44. [The trade chart](#44-the-trade-chart)
+45. [The simpler dashboard](#45-the-simpler-dashboard)
 
 ---
 
@@ -585,11 +611,12 @@ that file.
 
 ### The dashboard
 
-The dashboard is laid out like a trading desk: a **navigation rail** on the left (Trading: Overview,
-Trade, Ideas, Market; Learning: Knowledge, Simulations, AI Coach; System: Settings, Setup, Logs), a
-**status bar** along the top, and the page you picked underneath. On a phone or a narrow window the
-rail becomes a row of tabs across the top. Counts on the rail show live ideas, a running simulation
-and coach proposals waiting for you. At the bottom of the rail: the **Logs** badge, the phone-link
+The dashboard is laid out like a trading desk: a **navigation rail** on the left (Overview, Trade,
+Ask, Knowledge, then Settings, Setup and Logs), a **status bar** along the top, the **markets strip**
+under it while the bot runs, and the page you picked underneath. Tabs with more than one page (Trade,
+Ask and Knowledge) show their pages as buttons at the top. On a phone or a narrow window the rail
+becomes a row of tabs across the top. Counts on the rail show live ideas, a running simulation and a
+deep review with proposals waiting for you. At the bottom of the rail: the **Logs** badge, the phone-link
 badge and the **Auto / Light / Dark** theme switch (Auto follows your computer).
 
 **Status bar** (always visible):
@@ -616,6 +643,10 @@ badge and the **Auto / Light / Dark** theme switch (Auto follows your computer).
   by, so weekends and the days in `no_trade_dates` (holidays) and outside `trade_weekdays` are skipped.
   On such a day a note says so. CME's own holiday hours can differ, so check its calendar for
   early closes.
+- **Markets strip** (while the bot runs): one chip per market the account trades, with its price
+  line, position and open P&L. Click a chip to show that market on every page, **×** to stop trading
+  it, and **Add a market** to trade another one alongside, all without a restart. The account's total
+  open P&L and size are on the right ([section 41](#41-several-markets-at-once)).
 - When the bot isn't running, a **banner** shows why (e.g. "stop requested from Telegram",
   "crashed: …", "could not start: …") with **Start bot** and **See logs** buttons.
 
@@ -629,8 +660,10 @@ badge and the **Auto / Light / Dark** theme switch (Auto follows your computer).
   - *Combine profit target* progress, with the Consistency Target status underneath.
   - *Trades today*.
   - **Pause / Resume / Flatten & halt** buttons.
-- **Current trade:** side and size, who opened it (*bot*, *idea* you took, or *you*), entry, stop,
-  target, dollars at risk, live P&L in dollars and R, and why it was opened. Two buttons:
+- **Current trade:** a live candle chart of the market with the trade's entry, stop and target
+  ([section 44](#44-the-trade-chart)); then side and size, who opened it (*bot*, *idea* you took, or
+  *you*), entry, stop, target, dollars at risk, live P&L in dollars and R, why it was opened and its odds
+  when it was opened ([section 42](#42-the-probability-calculator)). Two buttons:
   - **Close trade** closes it at the market and **the bot keeps running** (Flatten & halt, by
     contrast, stops all trading until a restart).
   - **Stop to breakeven** moves the stop to the entry price. It's available once price is at least
@@ -645,31 +678,43 @@ badge and the **Auto / Light / Dark** theme switch (Auto follows your computer).
 - **Today's trades:** every closed trade today, who opened it, entry, exit, P&L, R and how it ended.
 - **Activity:** everything the bot did, newest first.
 
-**Trade tab:** open your own trade with suggestions from the bot — see
-[Trading manually from the dashboard](#trading-manually-from-the-dashboard) below.
-
-**Ideas tab:** recommended trades with **Take** buttons and today's results per strategy — see
-[section 16](#16-recommended-trades). A badge on the tab shows how many ideas are live.
-
-**Market tab:** what the bot knows about the market it trades right now — key levels, a normal
-day's range in points and dollars, today's market-moving reports, headlines and a profile of the
-contract. See [section 30](#30-what-the-bot-knows-about-the-market-and-the-news).
-
 **Account goal panel** (Overview): progress to your Combine pass or your next Express Funded payout —
-see [section 31](#31-funded-account-goals-and-topsteps-rules).
+see [section 32](#32-funded-account-goals-and-topsteps-rules).
 
-**Knowledge tab:** what the bot has learned — for every strategy, time of day and regime, the average
-result per signal and whether the adaptive strategy trades it right now — with a **Retrain now** button,
-plus a **Your manual trades** panel: your record by time of day and regime and your latest trades.
-See [section 17](#17-training-and-the-knowledge-base-how-the-bot-learns).
+**Trade tab**, two pages:
 
-**Simulations tab:** the Simulation Lab — the bot replayed through history as fresh Combines,
-every playbook (market + strategy) scored, and a **Use** button to make one the bot's. See
-[section 34](#34-simulation-lab-hundreds-of-combines-from-history). The Overview shows a summary.
+- **Ticket:** open your own trade with suggestions from the bot, the odds of each strategy on your side
+  and a chart of your stop and target — see
+  [Trading manually from the dashboard](#trading-manually-from-the-dashboard) below.
+- **Ideas:** recommended trades with **Take** buttons, their odds and today's results per strategy —
+  see [section 16](#16-recommended-trades). A badge on the tab shows how many ideas are live.
 
-**AI Coach tab:** Claude reviews the bot's evidence, runs its own simulations, records lessons and
-proposes changes you approve. Your Claude API key, credits and spending limits are here too. See
-[section 35](#35-the-ai-coach-claude-teaches-the-bot).
+**Ask tab**, two pages:
+
+- **Ask:** ask anything about the bot in your own words — why it took or skipped a trade, the odds now,
+  which markets it trades, what a rule or setting means — plus every decision it made and the decision
+  lab. See [section 38](#38-the-central-intelligence-ask-the-bot-why) and
+  [section 45](#45-the-simpler-dashboard).
+- **Deep review:** the AI coach. Claude reviews the bot's evidence, runs its own simulations, records
+  lessons and proposes changes you approve. Your Claude API key, credits and spending limits are here
+  too. See [section 35](#35-the-ai-coach-claude-teaches-the-bot).
+
+**Knowledge tab**, four pages:
+
+- **Overview:** every source of the bot's knowledge in one place (real trades, signals watched live, real
+  market history, simulations, related markets), the probability calculator's odds now, how well its
+  predictions held up, what the bot knows in plain words and the knowledge network. See
+  [section 45](#45-the-simpler-dashboard).
+- **What works:** for every strategy, time of day and regime, the average result per signal and whether
+  the adaptive strategy trades it right now, with a **Retrain now** button, plus **Your manual trades**:
+  your record by time of day and regime and your latest trades. See
+  [section 17](#17-training-and-the-knowledge-base-how-the-bot-learns).
+- **Simulations:** the Simulation Lab — the bot replayed through history as fresh Combines, every
+  playbook (market + strategy) scored, and a **Use** button to make one the bot's. See
+  [section 34](#34-simulation-lab-hundreds-of-combines-from-history). The Overview shows a summary.
+- **Market data:** what the bot knows about the market shown — key levels, a normal day's range in
+  points and dollars, today's market-moving reports, headlines, the market network and a profile of the
+  contract. See [section 31](#31-what-the-bot-knows-about-the-market-and-the-news).
 
 **Settings tab:** change risk, limits, times, the news pause and the auto-traded strategy — see
 [section 19](#19-changing-settings-from-the-dashboard-or-telegram).
@@ -721,7 +766,13 @@ and the reasons behind it:
 - **live ideas** from the last 15 minutes that agree or disagree with your side (**Use its levels**
   copies an idea's stop and target into the ticket);
 - **your own manual trades**, overall and at this time of day and regime (after 5 trades in the same
-  slot and regime, your record counts toward the reading).
+  slot and regime, your record counts toward the reading);
+- the **probability calculator's** odds for the strategies on your side right now: the chance of a win,
+  its 80% range and the expected result after costs ([section 42](#42-the-probability-calculator)).
+
+The ticket's **Chart** shows the last few hours with your planned entry, stop and target as dashed
+lines, the dollars at risk and the R:R, and it moves as you change them
+([section 44](#44-the-trade-chart)).
 
 This is evidence from past signals and trades, not a forecast. A "Supported" trade can still lose.
 
@@ -735,7 +786,7 @@ exits your trade. Manage it from the Overview's **Close trade** and **Stop to br
 **How the bot learns from your trades.** When a manual trade closes, its result (in R), time of day,
 regime and how it ended are added to the knowledge base, tagged **manual**. Manual trades are kept
 apart from the strategies' evidence: they never switch a strategy on or off, but the trade ticket and
-the Knowledge tab show your record next to the strategies', so over a Combine you can see where your
+the Knowledge tab's **What works** page show your record next to the strategies', so over a Combine you can see where your
 own trades work and where they don't. Like the bot's real trades, they count double and are never
 dropped by retraining. Trades closed by a shutdown, halt or daily restart aren't counted (the
 ending says nothing about the trade).
@@ -747,7 +798,7 @@ toward, before it happens. Each card is one setup: a strategy, a side and your c
 
 - **bot trades it** (blue border) means the auto-traded strategy places this trade when it fires.
   With the adaptive strategy that's any sub-strategy the knowledge base allows right now; the others
-  show **idea only**, and when they fire they appear as ideas on the Ideas tab instead.
+  show **idea only**, and when they fire they appear as ideas on the Trade tab's Ideas page instead.
 - **The checklist** is the strategy's own entry rules in plain words. ✔ is met, ○ is still waiting.
   They're checked against the live price as if the current bar closed there, so a card can tick and
   untick as the price moves. Strategies only act on closed bars, so nothing happens until the bar
@@ -1136,7 +1187,10 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/research` | What the bot has gathered from the internet ([section 33](#33-research-knowledge-that-grows-from-the-internet)) |
 | `/network` | The market network: the board's mood, the biggest moves against normal, busy asset classes, your market's peers, reports in the next 24 hours and jump allowance ([section 40](#40-the-market-network)) |
 | `/lab` | The Simulation Lab's latest results: Combines passed/failed, the best playbooks, the opportunities, the held-out check and its suggestion ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
-| `/switch MES` | **Trade another market for the rest of today** (asks to confirm; the bot must have no open trade). `/switch usual` goes back ([section 37](#37-trading-another-market-today)) |
+| `/switch MES` | **Trade another market instead, for the rest of today**, without a restart (asks to confirm; an open trade on the old market keeps its stop and target and finishes first). `/switch usual` goes back ([section 37](#37-trading-another-market-today)) |
+| `/markets` | The markets the bot trades now, each with its position and trades today, and the account's total at risk ([section 41](#41-several-markets-at-once)) |
+| `/add MES` | **Trade another market alongside the others**, at once (asks to confirm). Every Topstep limit counts all of them together |
+| `/drop MES` | **Stop trading a market** (asks to confirm). An open trade there keeps its stop and target and finishes first |
 | `/coach` | The AI coach: latest lessons, proposals waiting for you, and this month's spending ([section 35](#35-the-ai-coach-claude-teaches-the-bot)) |
 | `/accounts` | All your accounts at a glance ([section 29](#29-trading-several-accounts)) |
 | `/next` | **When the next trade is likely**, and what that estimate is based on (also a button under every message) |
@@ -1371,7 +1425,7 @@ elsewhere; an **unproven** one is not traded at all (unless you set `trade_unpro
 
 Everything is visible:
 
-- **Dashboard → Knowledge tab:** the full table (✔ trades now, ✘ switched off, ? unproven), counts
+- **Dashboard → Knowledge tab → What works:** the full table (✔ trades now, ✘ switched off, ? unproven), counts
   by source, when it was last trained, the current slot and regime, and **Retrain now**.
 - **Telegram:** `/knowledge` for the same table in text, `/train` to retrain.
 - **`topstep-bot train`** prints the table after training; `bot.log` records every signal the adaptive
@@ -1393,7 +1447,7 @@ changes a trading decision yet; it is recorded now because a real fill can never
 
 The report built from it:
 
-- **Dashboard → Knowledge tab → What the bot has learned:** each strategy's average result before
+- **Dashboard → Knowledge tab → What works → What the bot has learned:** each strategy's average result before
   and after costs, its best and worst points, the share of losers that were 1R in profit first (a
   sign a breakeven stop or target might help), and real trades against simulated ones. Below that,
   real fill slippage against what backtests assume, *conditions worth testing*, and a **Compare by**
@@ -1459,12 +1513,12 @@ old evidence fades out. Next to it, the bot keeps a far bigger **long-run memory
   of 5-minute bars takes about a minute.
 - It runs once a day **outside the bot's entry window and only while flat**, so trading never waits on
   it (normally right after the 16:05 CT restart). Run it any time with **Learn from history now** on the
-  Knowledge tab, `/learn`, menu **19** or `topstep-bot learn`.
+  Knowledge tab's Overview, `/learn`, menu **19** or `topstep-bot learn`.
 - Have older data? `topstep-bot learn --import mydata.csv` adds a CSV of bars (1-minute or your
   bot's timeframe) to the library, then replays. `--offline` replays without downloading; `--days 730`
   reaches further back for that run.
 
-**What it changes:** what the bot can tell you. The Knowledge tab's **What the bot has learned** has a
+**What it changes:** what the bot can tell you. The **What the bot has learned** panel (Knowledge → What works) has a
 **Recent / Long run** switch, the briefing compares each strategy's recent results with the long run
 (a strategy that is hot lately but weak over a year deserves suspicion), and conditions worth testing
 get far more data. `topstep-bot insights --longrun` prints the long-run report.
@@ -1828,14 +1882,15 @@ your phone; if it doesn't arrive, look at the PC.
 then. Act on any alert.
 
 **After 15:10 CT:** confirm the position is flat. Review the day with menu **9 (journal)** and the
-Knowledge tab (or menu **17**, insights).
+Knowledge tab's **What works** page (or menu **17**, insights).
 
 **When an update is waiting:** read what changed (dashboard Settings tab, or `/update`) and install
 it **after the close**, so the bot never restarts mid-session.
 
 **Weekly:** compare the bot's MLL floor and position limit with your TopstepX dashboard and Risk
-Settings (Topstep changes product limits with market conditions); look at the Knowledge tab to see
-which strategies have stopped (or started) working.
+Settings (Topstep changes product limits with market conditions); look at Knowledge → What works to see
+which strategies have stopped (or started) working, and at Knowledge → Overview → *How well it predicts*
+to see whether the probability calculator's odds are holding up.
 
 **Every month or two:** if you trade a single strategy, re-run **tune** (menu 15) on fresh data.
 
@@ -1874,6 +1929,8 @@ instrument:
   auto_pick: false             # true = the bot picks the market each day (section 31)
   candidates: []               # markets auto_pick chooses from (default: the micros your plan allows);
                                # also ALL, MICROS or an asset class: EQUITY, CRYPTO, FX, ENERGY, METALS, RATES, AGS
+  markets: []                  # more markets to trade at the same time as symbol, e.g. [MGC, MCL] (up to 5; section 41)
+  max_markets: 1               # with auto_pick: trade up to this many of the best-scoring markets at once (1-6)
 
 strategy:
   name: adaptive               # adaptive | noise_breakout | orb_momentum | orb | ema_trend
@@ -1981,15 +2038,26 @@ funded:                        # Express Funded payout goals (section 32)
 aggressive:                    # "Make money every day" (section 39); the Setup tab writes this
   enabled: false
   daily_goal: null             # $ per day; default 45% of the profit target (must stay under 50% on a Combine)
-  trades_multiple: 2           # adaptive: each strategy may trade this many times its own daily count
+  trades_multiple: 3           # adaptive: each strategy may trade this many times its own daily count (1-4)
   unproven_risk: 0.5           # share of the risk per trade for signals the knowledge base hasn't proven
-  house_money: 0.25            # share of today's realized profit added to the next trade's risk
-  max_risk_multiple: 2.0       # ...never past this multiple of risk.risk_per_trade
+                               # (used until the probability calculator has enough outcomes for a signal)
+  house_money: 0.35            # share of today's realized profit added to the next trade's risk
+  max_risk_multiple: 2.5       # ...never past this multiple of risk.risk_per_trade
+  max_conviction: 1.5          # a large, well-measured edge may risk up to this multiple (probability.sizing)
+  trades_per_market: true      # several markets: each brings its own risk.max_trades_per_day
   cushion_share: 0.25          # one trade never risks more than this share of the room above the MLL
   lock_in_at: 0.5              # once the day has made this share of its goal...
   give_back: 0.4               # ...it can't give back more than this share of its best (and stops if it does)
   stressed_risk: 0.5           # risk per trade while the market network marks the market as stressed
   flatten_before_news: true    # close an open trade just before a high-impact release
+
+probability:                   # the probability calculator and the knowledge network (sections 42 and 43)
+  enabled: true                # work out P(win) and the expected value of every signal
+  veto: true                   # skip a signal it is at least 90% sure loses after costs (with enough evidence)
+  sizing: true                 # Make money every day: size by a quarter of the Kelly fraction
+  network: true                # related markets of the same asset class inform the odds (at 30% weight)
+  grow_network: true           # outside trading hours, while flat, learn related markets from saved history
+  grow_per_day: 3              # related markets learned per day at most (0 = none)
 
 research:                      # what the bot gathers from the internet (section 33)
   enabled: true
@@ -2181,7 +2249,7 @@ Check your API subscription is active. Paste the key again on the dashboard's Se
 `risk.risk_per_trad: unknown setting`). Fix it in `config.yaml` with Notepad; indentation (spaces)
 matters in YAML.
 
-**The bot never trades.** With the `adaptive` strategy, first open the Knowledge tab: if it is not
+**The bot never trades.** With the `adaptive` strategy, first open Knowledge → What works: if it is not
 trained yet, press **Retrain now** (or run menu 5); if every cell is ✘ or ?, no strategy has proven
 itself lately and the bot is right to wait. Otherwise look at the dashboard's Activity list and
 `bot.log` — skipped signals are logged with a reason (outside the entry window, news blackout, daily
@@ -2586,8 +2654,8 @@ stored key is masked in log files. If a key is missing when a bot starts, that a
 ## 31. What the bot knows about the market and the news
 
 The bot now knows the market it trades, not just its own strategies. All of this is on the dashboard's
-**Market** tab and in Telegram **/market** (`/brief` is still "what the bot knows" about its own
-strategies, [section 17](#what-the-bot-knows-and-when-it-trades-next)).
+**Knowledge** tab → **Market data** page (for the market shown on the markets strip) and in Telegram
+**/market** (`/brief` is still "what the bot knows" about its own strategies, [section 17](#what-the-bot-knows-and-when-it-trades-next)).
 
 **The contract.** For each market (S&P, Nasdaq, Dow, Russell, gold, crude — minis and micros): exchange,
 contract months, expiry, how it rolls, regular hours, tick and point value, what moves it (e.g.
@@ -2607,7 +2675,7 @@ as much as ES; the Russell gaps and fakes out more often).
 **The news that matters for it.** Before, the bot paused around high-impact US releases. Now, with
 `news.per_instrument: true` (default), it also pauses around the **medium-impact reports that move your
 market** — e.g. the Wednesday EIA crude inventories for CL/MCL, ISM and jobless claims for the index
-futures. The Market tab lists today's reports with forecast and previous values, plus the next three
+futures. Knowledge → Market data lists today's reports with forecast and previous values, plus the next three
 days.
 
 **Headlines.** The latest headlines about your market (from Yahoo Finance's free feeds for the future
@@ -2620,7 +2688,7 @@ levels, the reports that day and the bot's own result — so you build up a hist
 conditions next to your trades.
 
 **It learns from the news.** Every live observation in the knowledge base now notes whether the day had
-a market-moving report. The Knowledge tab's **news / quiet days** column (and `/knowledge`) shows each
+a market-moving report. The **news / quiet days** column on Knowledge → What works (and `/knowledge`) shows each
 strategy's average result on each kind of day. Replayed history is labelled too, from the research
 library's calendar archive ([section 33](#33-research-knowledge-that-grows-from-the-internet)) — but
 only for days the archive covers; older days count as "unknown", never as "quiet". The bot doesn't act
@@ -2664,8 +2732,11 @@ fitted to.
   minute or two longer. The bot keeps the dashboard informed meanwhile.
 - An open position on the account keeps its market. A pick is reused for 20 hours, so a restart
   during the day doesn't pick again; changing the strategy, plan, risk or candidates picks again.
-- The **Market** tab's **Why this market** panel shows every candidate's result and the reason;
-  the pick is saved in `market_pick.json` in the account's folder.
+- The **Why this market** panel (Knowledge → Market data) shows every candidate's result and the
+  reason; the pick is saved in `market_pick.json` in the account's folder.
+- **Several at once:** with `max_markets` above 1 (Setup tab → **Markets at once**), the bot also trades
+  the next best markets that qualified, up to that many, never two sizes of one product
+  ([section 41](#41-several-markets-at-once)).
 
 **Honest limits.** TopstepX keeps about 60 days of intraday history, so the held-back part is two to
 four weeks until the long-run memory has collected more (it uses up to 120 days when it has them).
@@ -2719,14 +2790,14 @@ settings).
 
 While the dashboard is open, the bot keeps gathering information from free public sources into a
 **research library** (`data/research/`). The library only grows: the longer the bot runs, the more
-it knows. The dashboard's **Market** tab ("What the bot gathers from the internet") and Telegram
+it knows. The **Research library** panel (Knowledge → Market data) and Telegram
 **/research** show what it holds and when each source was last collected.
 
 | What | From | How often | What it's used for |
 |---|---|---|---|
 | **Economic calendar archive** | The same free calendar the news filter uses | Every 6 hours | Every week's calendar is kept, so when the bot retrains it knows which past days had a report that moves your market (the knowledge base's news/quiet days) |
 | **Headline archive** | Yahoo Finance feeds for each market your accounts trade, and the ETF that tracks it | Every 30 minutes | A searchable record of what was said about your market, kept next to its sessions |
-| **Daily price history** | Yahoo Finance's daily chart for the continuous future | Daily | Up to ten years of daily ranges, so the Market tab can say whether today and recent days are unusually quiet or wild |
+| **Daily price history** | Yahoo Finance's daily chart for the continuous future | Daily | Up to ten years of daily ranges, so Knowledge → Market data can say whether today and recent days are unusually quiet or wild |
 | **Topstep's rule pages** | Eight help.topstep.com articles: Combine and Express Funded parameters, Maximum and Daily Loss Limits, the Consistency Target, the Scaling Plan, API access and prohibited strategies | Every 12 hours | If Topstep changes a page, you get an alert (Telegram/Discord and Activity) with a link. The bot never changes its own rules from a web page: you read the change and update your settings if needed |
 | **Your own sources** | RSS feeds or pages you list in `research.sources` | With the headlines | Feeds are archived like headlines; pages are watched for changes like the rule pages |
 
@@ -2747,7 +2818,7 @@ research:
 Good to know:
 
 - **It never trades on any of it.** Nothing in the library places, sizes, blocks or closes a trade.
-  It feeds the reports, the Market tab, the knowledge base's news labels and the rule-change alerts.
+  It feeds the reports, Knowledge → Market data, the knowledge base's news labels and the rule-change alerts.
 - **The controller collects, the bots read.** With several accounts the internet is asked once, for
   every market the accounts trade; each account's bot reads the shared library.
 - **A failing source doesn't stop the others.** The panel shows which one failed and why; it tries
@@ -2781,7 +2852,7 @@ Each market uses its own contract size, tick value and Topstep fees, but your ac
 a full-size contract whose stops are too wide for your risk per trade simply takes no trade. The adaptive strategy starts each simulation knowing only what it would have known
 that morning: it is trained on the days before the start, never on the days it is about to trade.
 
-**Run it.** Simulations tab → choose the start days per playbook (4 is about a minute; 12 gives 384
+**Run it.** Knowledge tab → Simulations → choose the start days per playbook (4 is about a minute; 12 gives 384
 Combines) → **Run simulations**. Or `topstep-bot simulate --starts 6`. The bot keeps trading meanwhile.
 
 **Reading the results.**
@@ -2808,7 +2879,7 @@ history and runs the lab on all of them, so the Opportunities list is fresh ever
 changes a setting or places a trade. Turn it off with `lab.nightly: false`.
 
 **Teaching.** With **Teach long-run memory** ticked, every market's history is also added to the
-long-run memory and replayed through every strategy, so the Knowledge tab's *Long run* view and the
+long-run memory and replayed through every strategy, so the *Long run* view (Knowledge → What works) and the
 AI coach cover every market the bot could trade. The knowledge base the bot actually trades with is
 still retrained by the bot itself from fresh history each day.
 
@@ -2837,7 +2908,7 @@ writes down what it learned, and proposes changes. You decide what to apply.
   tab and every later session starts from them, so what it learns builds up over time. You can
   remove any lesson with **Forget**.
 - **Propose:** a different playbook (market + strategy), or a *lower* risk setting (risk per trade,
-  daily loss limit, trades per day). Proposals wait on the AI Coach tab with **Apply** and
+  daily loss limit, trades per day). Proposals wait on the Ask tab's **Deep review** page with **Apply** and
   **Dismiss**. Applying writes `config.yaml` (with a backup); the bot uses it after a restart.
 
 **What it can't do:** place, close or size a trade; change a setting by itself; raise your risk; or
@@ -2848,8 +2919,8 @@ found" rather than tune results until they look good.
 
 1. **Create a Claude API account and key.** Open
    [platform.claude.com/settings/keys](https://platform.claude.com/settings/keys) (the **Create an API
-   key** button on the AI Coach tab), sign in or sign up, and create a key. It starts with `sk-ant-`.
-2. **Buy credits.** The Claude API is prepaid. On the AI Coach tab press **Buy credits** (it opens
+   key** button on Ask → Deep review), sign in or sign up, and create a key. It starts with `sk-ant-`.
+2. **Buy credits.** The Claude API is prepaid. On Ask → Deep review press **Buy credits** (it opens
    [platform.claude.com/settings/billing](https://platform.claude.com/settings/billing)) and add
    credits there, with your own card on Anthropic's site. The bot never sees or handles payment
    details. $5–$10 is plenty to start.
@@ -2873,7 +2944,7 @@ shows the latest lessons, proposals and spending.
 ### Cost
 
 You pay Anthropic per token (roughly per word read and written). Every call is priced and logged in
-`data/coach/usage.jsonl`, and the AI Coach tab shows this month's total.
+`data/coach/usage.jsonl`, and Ask → Deep review shows this month's total.
 
 | Model | Price per million tokens (input / output) | Use it for |
 |---|---|---|
@@ -2911,7 +2982,7 @@ busiest hours, what moves it and which reports matter for it.
 | Interest rates | ZT, ZF, ZN, TN, ZB, UB |
 | Agriculture | ZC, ZW, ZS, ZM, ZL (grains), HE, LE (livestock) |
 
-**Their history.** The Simulations tab's **Markets and price history** panel lists every market with
+**Their history.** The **Markets and price history** panel (Knowledge → Simulations) lists every market with
 the history on this PC, where it came from, how busy the market is now compared with its own last ten
 years, its 20-day trend and whether your plan may trade it. **Download every market** brings them all up
 to date (also `topstep-bot markets --download`, or menu 23):
@@ -2943,25 +3014,32 @@ it. Yahoo's continuous future can differ from TopstepX's contract for a day or t
 ## 37. Trading another market today
 
 You can move an account to **any** market Topstep permits for the rest of the trading day, then it goes
-back by itself:
+back by itself. Since 4.0 a running bot switches **at once, without a restart**, and it can also trade
+several markets side by side ([section 41](#41-several-markets-at-once)):
 
-- **Trade tab:** the **Market** list at the top of the ticket → pick a market → **Trade … today**.
-- **Simulations tab:** **Trade today** next to an opportunity or a market in the Markets list.
+- **Trade tab:** the **Market** list at the top of the ticket → pick a market → **Switch to …** (or
+  **Add … alongside** to keep the current one too).
+- **Markets strip:** **Add a market** next to the chips, and **×** on a chip to drop one.
+- **Knowledge → Simulations:** **Trade today** next to an opportunity or a market in the Markets list.
 - **Telegram:** `/switch MES` (with several accounts: `/switch c1 MES`), then confirm.
 
 What happens:
 
-1. The account must have **no open trade** (close it first). Otherwise the switch is refused.
-2. The bot restarts on the new market (about half a minute). Its own strategy trades that market too,
-   and your trade ticket places trades there, with every risk setting, Topstep guard and news pause
-   exactly as before. With the adaptive strategy, the bot first learns that market's recent history.
-3. At **15:10 CT** the switch ends; after the daily restart the account is back on its usual market (or
+1. The new market starts straight away: the bot loads its recent history, learns it (with the adaptive
+   strategy) and trades it with its own strategy, and your trade ticket places trades there, with every
+   risk setting, Topstep guard and news pause exactly as before.
+2. The old market takes no new trades. If it has an **open trade**, that trade keeps its stop and target
+   and the old market goes once it is closed; otherwise it goes at once. Two sizes of one product
+   (MNQ and NQ, say) can only be switched while flat, because both at once would double one bet.
+3. At **15:10 CT** the switch ends; after the daily restart the account is back on its usual markets (or
    its Auto pick). A switch made after 15:10 CT is for the next trading day. **Back to usual market**
-   (or `/switch usual`) ends it earlier.
+   (or `/switch usual`) ends it earlier. When the bot isn't running, the switch is saved and used when
+   it starts.
 
 Accounts that copy another account's calls follow it: switch the leader, not the follower. The hedge
-guard still keeps accounts from holding opposite positions in the same or related markets. The switch
-is saved in `market_today.json` in the account's folder.
+guard still keeps accounts (and the markets of one account) from holding opposite positions in the same
+or related markets. The day's markets are saved in `market_today.json` in the account's folder, so a
+restart during the day keeps them.
 
 ---
 ## 38. The central intelligence: ask the bot why
@@ -3019,12 +3097,12 @@ Claude model write the answers:
    Claude subscription and is billed per use; a question usually costs from a few cents to a few tens of cents, more with
    `brain.effort: high`). If you already saved one for the AI coach, skip this: it is the same key.
 2. Dashboard → **Setup** tab → **AI answers** → paste the key → **Check and save** (saving it on the
-   **AI Coach** tab does the same). The key is checked first and stored in `.env` on your PC as
+   **Deep review** page on the Ask tab does the same). The key is checked first and stored in `.env` on your PC as
    `COACH_ANTHROPIC_API_KEY`, like your other keys.
 3. Tick **Let the AI answer questions**.
 
 Every AI answer is priced and logged with the coach's usage (`data/coach/usage.jsonl`) and counts
-toward the same monthly limit (`coach.monthly_budget_usd`, AI Coach tab). Once the month's limit is
+toward the same monthly limit (`coach.monthly_budget_usd`, Ask → Deep review). Once the month's limit is
 reached, the Ask tab goes back to its built-in answers until you raise it or the month ends.
 
 The AI gets **read-only lookups** into the same records and nothing else: it can't trade or change
@@ -3074,13 +3152,22 @@ Choose **Make money every day** on the Setup tab (step 2, *What is this account 
 **What changes:**
 
 - **Strategy:** `adaptive` with every strategy, including the ones the knowledge base hasn't judged
-  yet. A strategy the evidence shows is *losing* at this time of day still isn't traded. Each
-  strategy may trade **twice its usual daily count** (ORB's one breakout a day becomes two), so the
-  bot takes every chance its strategies find, up to **12 trades a day**.
-- **Size by conviction:** a signal the knowledge base hasn't proven yet trades at **half** the risk
-  per trade; a proven one at full risk.
-- **Press on good days:** a quarter of the day's *realized* profit is added to the next trade's risk,
-  never past **twice** your risk per trade. A losing day never increases the size.
+  yet. A strategy the evidence shows is *losing* at this time of day still isn't traded, and neither is
+  a signal the probability calculator is at least 90% sure loses. Each strategy may trade **three times
+  its usual daily count** (ORB's one breakout a day becomes three), so the bot takes every chance its
+  strategies find, up to **12 trades a day per market**: trading several markets, each brings its own
+  12 (`aggressive.trades_per_market`), while every loss limit still counts the whole account.
+- **Size by edge:** the probability calculator sizes each trade by a quarter of the Kelly fraction
+  ([section 42](#42-the-probability-calculator)): a large, well-measured edge risks up to **1.5 times**
+  your risk per trade (`aggressive.max_conviction`), a thin one as little as a quarter of it. Until the
+  calculator has enough outcomes for a signal, one the knowledge base hasn't proven trades at **half**
+  the risk and a proven one at full risk.
+- **Press on good days:** 35% of the day's *realized* profit is added to the next trade's risk, never
+  past **2.5 times** your risk per trade. A losing day never increases the size.
+- **Coming from 3.0?** 3.0's Setup tab wrote its own numbers into `config.yaml` (a quarter of the day's
+  profit, at most twice the risk). Press **Save** on the Setup tab once with *Make money every day*
+  chosen and they move to 4.0's; numbers you changed yourself are kept. A new `config.yaml` lists these
+  settings as comments, so later versions can improve them.
 - **Daily profit goal:** trading stops for the day once it is reached. The default is 45% of the
   profit target ($1,350 on a 50K, $2,700 on a 100K, $4,050 on a 150K); type your own on the Setup tab.
   On a Combine it must stay under 50% of the target, because of the consistency rule.
@@ -3096,8 +3183,8 @@ Choose **Make money every day** on the Setup tab (step 2, *What is this account 
 The **Overview** shows a *Make money every day* panel: today's progress toward the goal, what the next
 trade may risk and why, how much is locked in, and the consistency line no trade can cross.
 
-**Honest expectations.** Aggressive means more trades and bigger size on good days, so the swings are
-bigger in both directions. More trades are not more profit: each extra trade only helps if the
+**Honest expectations.** Aggressive means more trades and bigger size on good days and strong edges, so
+the swings are bigger in both directions. More trades are not more profit: each extra trade only helps if the
 strategy behind it has an edge, and the bot's evidence for most strategies is still small. On
 simulated data (40 days, 12 seeds per market, MNQ, MES and MCL) the aggressive mode averaged about 2
 trades a day against about 1.7 for *Pass the Combine*; the strategies find only so many signals.
@@ -3127,7 +3214,7 @@ of four times that floor). It only ever makes trades smaller.
 
 ## 40. The market network
 
-The bot trades one market per account, but markets move together: the index futures follow each
+Whether the bot trades one market or several, markets move together: the index futures follow each
 other, bonds and gold rise when stocks are feared, the dollar moves every currency future, crude leads
 the energy complex. The market network reads every market Topstep permits together, from what the bot
 already collects:
@@ -3144,18 +3231,241 @@ already collects:
 - **The bot's own evidence:** the Simulation Lab's best playbooks.
 - **Jump allowance:** how far each market can jump against a stop (above).
 
-Where to see it: **Market** tab → **Market network** (your market highlighted), `/network` in Telegram,
+Where to see it: **Knowledge** tab → **Market data** → **Market network** (your market highlighted), `/network` in Telegram,
 `topstep-bot network`, and the Ask tab ("is gold stressed?", "how are the markets moving together?").
 The AI coach reads it with its own lookup.
 
 It builds from the daily history the research library downloads (section 33) and the 5-minute history
-in the market library (Simulations tab → *Download history*), and is rebuilt every hour while the
+in the market library (Knowledge → Simulations → *Download every market*), and is rebuilt every hour while the
 dashboard runs. A picture older than 36 hours isn't used: the bot falls back to the class defaults.
 
 **What it may change:** only protection. The jump allowance makes trades smaller, and in the aggressive
 mode a stressed market halves the risk per trade. It never makes the bot trade bigger or more often,
 and never picks a direction: correlations and moods change, and treating them as signals would be
 fitting the past.
+
+---
+
+## 41. Several markets at once
+
+One account can trade up to **six markets at the same time**, and you can add, drop or switch them
+while the bot runs, without a restart. An open trade is never cut short by a change: it keeps its stop
+and target.
+
+**Choose them on the Setup tab.** Under *What to trade*, **Markets at once** sets how many:
+
+- **One** (the default): one market, as before. You can still add more while the bot runs.
+- **2 to 6, with a market picked:** choose the others under **Also trade**. Pick markets that don't move
+  together if you can (an index, gold and crude, say): the bot never holds opposite positions in related
+  markets, so two index futures often get in each other's way. Two sizes of one product (MNQ and NQ)
+  can't be traded together, because that would double one bet.
+- **2 to 6, with Auto:** each day the bot trades up to that many of the best-scoring markets. Each one
+  must show an edge on days held back from its training, the same test as the single pick
+  ([section 36](#36-every-market-topstep-permits)); on a day when fewer show one, it trades fewer.
+
+Press **Save**. These are the markets the bot starts with each day (`instrument.markets` and
+`instrument.max_markets` in `config.yaml`).
+
+**While it runs: the markets strip.** Under the status bar, each market has a chip with its symbol and
+name, a small price line, its position and its open P&L or today's result.
+
+- **Click a chip** to show that market: the Overview, the trade ticket and the Knowledge tab follow it.
+- **×** drops that market. A market with an open trade takes no new trades and goes as soon as that
+  trade is closed (its stop and target stay in place); to close it now, show it and press **Close trade**.
+- **Add a market** starts another one at once: the bot loads its recent history, learns it and trades
+  it with its own strategy.
+- On the right: the whole account's open P&L, what it has at risk at the stops and its size in minis
+  (10 micros count as 1 mini).
+
+The trade ticket's **Market** list can also switch the shown market or add one alongside
+([section 37](#37-trading-another-market-today)). Changes made while the bot runs last for the rest of
+the trading day: after the daily restart the account is back on the markets from the Setup tab. A
+restart during the day keeps them.
+
+**In Telegram:** `/markets` lists what the bot trades with each market's position and trades today,
+`/add MES` adds a market, `/drop MES` drops one and `/switch MES` (or `/switch usual`) replaces the
+market shown. Each asks you to confirm. With several accounts, name the account first: `/add c1 MES`.
+
+**What the markets share.** Every Topstep rule counts the whole account, not each market:
+
+- **One Maximum Loss Limit and one daily loss limit.** Each market's room counts the other markets'
+  open trades, including what each could still lose if its stop filled late (the jump allowance).
+- **Topstep's position limit** counts every open position in the account (10 micros = 1 mini), so a
+  market's size comes down while the others hold contracts.
+- **The consistency line.** The room left for today's profit counts what the other markets' open trades
+  could still make at their targets, so all of them winning together still can't cross the line.
+- **The day:** one daily result, one pause, one losing-streak stop and one daily restart for all of them.
+- **The hedge guard:** no opposite positions in the same or related markets, inside this account or
+  across accounts.
+
+Each market has its own strategy, knowledge base (`knowledge_<SYMBOL>_5m.json`), chart, ideas and
+setups. In *Make money every day* each market brings its own `risk.max_trades_per_day`
+(`aggressive.trades_per_market`); in the other goals the day's trades are shared between the markets.
+
+**Honest note.** More markets means more signals, not more edge. Each market's strategies need evidence
+of their own, markets that move together tend to lose together, and because the limits are shared, a
+bad trade on one market leaves less room for the others.
+
+---
+
+## 42. The probability calculator
+
+Before every trade, the bot works out four things about the signal from everything it has seen, after
+fees and slippage:
+
+- **P(win):** the chance the trade ends in profit.
+- **Average win and average loss**, in R (1R is what the trade risks at its stop).
+- **Expected value:** P(win) × average win − (1 − P(win)) × average loss, in R per trade. Above 0, signals
+  like this one have paid on average; below 0, they have cost money.
+- **How sure it is:** an 80% range for P(win) and for the expected value. Few outcomes give a wide range.
+
+**Where the numbers come from.** The knowledge base records every signal of every strategy and how it
+ended: the bot's real trades (counted double), your manual trades, the signals it watched live and the
+training replays of recent history. The calculator starts wide and narrows step by step:
+
+1. related markets of the same asset class (the knowledge network, [section 43](#43-the-knowledge-network)),
+   at 30% of the weight;
+2. this market, this strategy and this side (long or short);
+3. the same at this time of day (open, midday or close);
+4. the same in this kind of market (calm or volatile).
+
+Each step moves away from the one before only as far as its own number of outcomes justifies, so eight
+lucky trades at one time of day can't outvote two hundred elsewhere, and a strategy new to this market
+starts from what it did on related ones instead of from nothing. Recent outcomes count more, the
+long-run memory joins at a small weight, and no outcome is counted twice.
+
+**What it changes.**
+
+- **It skips sure losers** (`probability.veto`, on): a signal the calculator is at least 90% sure loses
+  money after costs is skipped, and the Activity list says so with the numbers. It needs enough evidence
+  first (`knowledge.min_samples` outcomes): a signal is never skipped just for being unknown.
+- **It sizes by edge in *Make money every day*** (`probability.sizing`, on): the size follows a quarter
+  of the Kelly fraction, from a quarter of your usual risk for a thin edge up to
+  `aggressive.max_conviction` (1.5 times) for a large, well-measured one. The Kelly fraction is the
+  share of an account that would grow it fastest if the odds were exactly right; odds measured on a few
+  weeks rarely are, so the bot uses a quarter of it. Every hard limit still applies on top: the MLL, the
+  daily loss limits, Topstep's size limit and the consistency line. In the other goals the size doesn't
+  change.
+- Nothing else. The strategies still decide when to trade, and the risk rules decide whether and how big.
+
+**Where you see it.**
+
+- **Overview → Current trade:** the odds the trade had when it was opened.
+- **Overview → Getting ready to trade:** each setup's odds.
+- **Trade → Ticket:** the odds of the strategies on your side right now.
+- **Trade → Ideas:** each idea's odds.
+- **Knowledge → Overview → Probability calculator:** every strategy and side right now, with P(win) and
+  its range, average win and loss, expected value, how many outcomes it rests on (its own, related
+  markets, the long-run memory) and a verdict: **edge** (even the low end of the range is above 0),
+  **losing** (even the high end is below 0), **unclear** or **no data**.
+- **Ask** or Telegram: "what are the odds on ORB?", "how likely is a short to win now?".
+
+**How well it predicts.** Every prediction is saved with its outcome. **Knowledge → Overview → How well
+it predicts** plots what it said (across) against how often those signals actually won (up): points
+near the diagonal mean its numbers can be trusted. The **Brier score** (lower is better) is compared
+with always guessing the average win rate, and **skill** above 0 means it beats that guess. Training
+replays are scored day by day using only the days before, like live trading. Until a few hundred
+outcomes have been scored, treat its numbers as rough.
+
+**Honest limits.** A P(win) of 55% is how often signals like this one won in the past, not a promise
+about the next trade. Markets change, and on most markets the strategies' evidence is still small.
+Nothing here can guarantee a profit or a passed Combine.
+
+Settings (`probability:` in `config.yaml`, all on by default): `enabled`, `veto`, `sizing`, `network`,
+`grow_network` and `grow_per_day` (3).
+
+---
+
+## 43. The knowledge network
+
+Each market keeps its own knowledge base. The knowledge network lets related markets learn from each
+other: when the calculator works out the odds on MNQ, the knowledge bases of the other equity index
+markets (MES, ES, NQ, M2K and so on) count too, at 30% of the weight of MNQ's own outcomes. Related means
+the same asset class: equity indexes, currencies, interest rates, energy, metals, agriculture or crypto.
+
+It grows in three ways:
+
+- **Trading.** Every market the bot trades, one or several, records every signal it sees.
+- **Learning related markets by itself.** Once a day, outside the entry window and while every market is
+  flat, the bot replays the price history saved on this PC for a few related markets it doesn't trade
+  (`probability.grow_per_day`, 3 a day), through every strategy, exactly like its own training. A market
+  needs at least 25 trading days of saved history, and one learned in the last 20 hours waits its turn.
+  Nothing is traded. **Learn related markets now** (Knowledge → Overview) does it at once.
+- **Other accounts.** The knowledge bases of every account on this PC count too.
+
+More saved history means more to learn from: **Download every market** (Knowledge → Simulations) saves
+the recent 5-minute history of every market Topstep permits.
+
+**Knowledge → Overview → Knowledge network** lists the related markets: outcomes, days, win rate,
+average R, how each was learned (traded, watched or learned from saved history) and when. Ask "where
+does your knowledge come from?" on the Ask tab or in Telegram for the same in words.
+
+**What it may change:** only the odds, and mostly for a market with little evidence of its own. One
+outcome on the market itself counts as much as about three on related markets, so as a market's own record
+grows, the network matters less.
+
+---
+
+## 44. The trade chart
+
+**Overview → Current trade** opens with a live candle chart of the market shown, in Chicago time:
+
+- the last ten hours or so of bars (up to 120), with the bar forming now drawn lighter and moving with
+  every price, and a dashed line where the market was closed in between;
+- the open trade's **entry**, **stop** (red) and **target** (green) as lines with their prices on the
+  right edge, shaded red between entry and stop and green between entry and target, and the **first
+  stop** dashed once the stop has moved (breakeven or trailing);
+- today's fills: ▲ and ▼ where trades went in, ● where they came out;
+- the last price, dotted.
+
+Point at (or touch) a bar for its time, open, high, low and close. The legend underneath lists the
+prices. With several markets, click a chip on the markets strip to see another market's chart.
+
+**Trade → Ticket** has a smaller chart: pick Buy or Sell and your stop and target appear on it as dashed
+lines, with the dollars at risk and the R:R in the legend, and they move as you change them. You see
+where they sit against the last few hours before you place the trade.
+
+The chart is drawn from the same bars the strategies use. It also works on the phone dashboard
+([section 15](#open-the-dashboard-on-your-phone-inside-telegram)).
+
+---
+
+## 45. The simpler dashboard
+
+The rail has seven tabs instead of eleven. Nothing was taken away: each page moved under the tab it
+belongs to, and a tab with several pages shows them as buttons at the top.
+
+| Tab | Pages | Before 4.0 |
+|---|---|---|
+| **Overview** | – | Overview |
+| **Trade** | Ticket, Ideas | the Trade and Ideas tabs |
+| **Ask** | Ask, Deep review | the Ask and AI Coach tabs |
+| **Knowledge** | Overview, What works, Simulations, Market data | the Knowledge, Simulations and Market tabs (Overview is new) |
+| **Settings**, **Setup**, **Logs** | – | the same |
+
+**Ask** explains anything in the bot, in your own words: why it took or skipped a trade, the odds of each
+strategy now, which markets it trades, what it learned, and what any rule or setting means (ask about it
+by name, in your own words). It answers from its own records and from this guide, the Topstep rules page and every setting's
+description, with the values your account uses. With a Claude API key and AI answers on
+([section 38](#38-the-central-intelligence-ask-the-bot-why)), Claude writes the answer from the same
+lookups and can go deeper; without one, the built-in answers still work. **Deep review** is the AI coach
+([section 35](#35-the-ai-coach-claude-teaches-the-bot)).
+
+**Knowledge → Overview** brings everything the bot knows together:
+
+- six cards: **real trades** (the bot's and yours), signals **watched live**, **real market history**
+  (training replays and the long-run memory), **simulations** (the Simulation Lab's Combines),
+  **related markets** (the knowledge network) and **predictions scored**. Each opens the page with the
+  detail;
+- the **probability calculator**: every strategy and side right now ([section 42](#42-the-probability-calculator));
+- **What the bot knows**, in plain sentences, with the long-run memory and **Learn from history now**;
+- **How well it predicts**: how the calculator's past predictions held up;
+- the **knowledge network** ([section 43](#43-the-knowledge-network)).
+
+The other Knowledge pages are the ones you know: **What works**
+([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)), **Simulations**
+([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) and **Market data**
+([section 31](#31-what-the-bot-knows-about-the-market-and-the-news)).
 
 ---
 

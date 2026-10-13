@@ -24,6 +24,34 @@ Other systems: `pip install -e .` then run `topstep-bot` (it starts the dashboar
 
 No bot can guarantee passing the Combine or making a profit, and this one doesn't either.
 
+## New in 4.0
+
+- **Several markets at once** — one account trades up to six markets side by side. Add, drop or switch
+  them while the bot runs, **without a restart**, from the markets strip at the top of the dashboard or
+  in Telegram (`/markets`, `/add`, `/drop`, `/switch`); an open trade keeps its stop and target. Every
+  Topstep limit counts all of them together: one MLL, one daily loss limit, one position limit (10
+  micros = 1 mini), one consistency line, and no opposite positions in related markets.
+  ([guide](docs/HOW_TO_USE.md#41-several-markets-at-once))
+- **A probability calculator** — every signal gets its P(win), average win and loss, expected value
+  after costs and an 80% range, pooled from related markets down to this time of day and market mood.
+  The bot skips a signal it is at least 90% sure loses, *Make money every day* sizes each trade by a
+  quarter of the Kelly fraction, and every prediction is scored against its outcome so you can see how
+  well it predicts. ([guide](docs/HOW_TO_USE.md#42-the-probability-calculator))
+- **A knowledge network that grows by itself** — related markets inform each other's odds, and each
+  night, while flat, the bot learns a few more related markets from the history saved on your PC.
+  ([guide](docs/HOW_TO_USE.md#43-the-knowledge-network))
+- **More aggressive** — in *Make money every day* each strategy may trade three times its usual count,
+  each market brings its own 12 trades a day, a large, well-measured edge may risk up to 1.5 times the
+  usual amount, and 35% of the day's profit presses the next trade (up to 2.5 times the risk per trade).
+- **Charts of the current trade** — live candles with the entry, stop, target and today's fills on the
+  Overview, and your planned stop and target on the trade ticket. ([guide](docs/HOW_TO_USE.md#44-the-trade-chart))
+- **A simpler dashboard** — seven tabs instead of eleven. **Ask** explains anything in the bot from its
+  records and its own guide; **Knowledge** puts real trades, signals watched live, real market history,
+  simulations and related markets in one place. ([guide](docs/HOW_TO_USE.md#45-the-simpler-dashboard))
+
+More markets and bigger size mean bigger swings both ways. A probability is a long-run frequency from
+past signals, not a promise about the next trade.
+
 ## New in 3.0 — the first release
 
 - **Make money every day** — a third goal on the Setup tab: the bot trades every signal its strategies
@@ -88,6 +116,14 @@ Aggressive means bigger swings both ways. It can't break a Topstep rule by itsel
 
 ## Features
 
+- **Several markets at once** (new in 4.0) — up to six per account, added, dropped or switched while the
+  bot runs without a restart, with every Topstep limit counted across all of them
+  ([how](docs/HOW_TO_USE.md#41-several-markets-at-once)).
+- **Probability calculator** (new in 4.0) — P(win), payoff and expected value after costs for every
+  signal, with its range and a calibration record; it vetoes confident losers and sizes the aggressive
+  mode by edge ([how](docs/HOW_TO_USE.md#42-the-probability-calculator)).
+- **Knowledge network** (new in 4.0) — related markets inform each other's odds, and the bot learns new
+  related markets by itself from saved history ([how](docs/HOW_TO_USE.md#43-the-knowledge-network)).
 - **A central intelligence you can talk to** (new in 2.2) — ask the bot why it took or skipped a trade,
   what each trade taught it, how a strategy is doing or what's next, on the dashboard's **Ask** tab or by
   typing to it in Telegram. Every signal is recorded as a **decision record** (each strategy's verdict,
@@ -153,10 +189,13 @@ Aggressive means bigger swings both ways. It can't break a Topstep rule by itsel
   setups forming, firing and being cancelled.
 - **Recommended trades** — every strategy's signals on the dashboard and in Telegram, sized with your
   risk rules, tracked to a result; take any of them with one tap (re-priced, never oversized).
-- **Knowledge tab** — what works when, per strategy, time of day and regime, with a Retrain button;
-  `/knowledge` and `/train` in Telegram.
+- **Knowledge tab** — everything the bot knows in one place (real trades, signals watched live, real
+  market history, simulations, related markets), the odds of every strategy now, and **What works**:
+  per strategy, time of day and regime, with a Retrain button; `/knowledge` and `/train` in Telegram.
+- **Charts of the current trade** — live candles with entry, stop, target and fills on the Overview and
+  the trade ticket ([how](docs/HOW_TO_USE.md#44-the-trade-chart)).
 - **What the bot learned** — every signal and trade keeps a market snapshot, its price path (best and
-  worst point), its costs and, for real fills, the slippage. The Knowledge tab, `/knowledge` and
+  worst point), its costs and, for real fills, the slippage. Knowledge → What works, `/knowledge` and
   `topstep-bot insights` show results after costs, real fills against simulated ones and conditions
   worth testing; `--csv` exports everything for Excel.
 - **What the bot knows and when it trades next** — the bot explains in plain sentences what it knows,
@@ -190,10 +229,10 @@ Aggressive means bigger swings both ways. It can't break a Topstep rule by itsel
   that doesn't match your settings), with **+ Add account**, **Edit** and **Remove** buttons.
 - **Several API keys** — one per account or per TopstepX login if you like, managed on the dashboard
   or with `topstep-bot keys`, and masked in every log ([how](docs/HOW_TO_USE.md#30-several-api-keys)).
-- **The bot can pick its market** — set the market to Auto and each day it trades the micro where
-  its strategy did best on recent days held back from training, after costs; if none shows an
-  edge it stays on your market ([how](docs/HOW_TO_USE.md#letting-the-bot-pick-the-market)).
-- **Market knowledge** — the Market tab and `/market`: the contract's specs and what moves it, key
+- **The bot can pick its markets** — set the market to Auto and each day it trades the market (or up to
+  six) where its strategy did best on recent days held back from training, after costs; if none shows
+  an edge it stays on your market ([how](docs/HOW_TO_USE.md#letting-the-bot-pick-the-market)).
+- **Market knowledge** — Knowledge → Market data and `/market`: the contract's specs and what moves it, key
   levels, the normal day's range, today's reports for your market and its headlines; a session journal
   of market conditions next to your trades ([how](docs/HOW_TO_USE.md#31-what-the-bot-knows-about-the-market-and-the-news)).
 - **Funded-account goals** — progress to your Combine pass or next Express payout on either payout path
@@ -211,7 +250,7 @@ Aggressive means bigger swings both ways. It can't break a Topstep rule by itsel
   dashboard and Telegram what changed. It installs only when you confirm, only while no trade or order
   is open (or after the close), test-starts the new version, restarts itself, and puts the previous
   version back if anything fails. Your settings and data are kept ([how](docs/HOW_TO_USE.md#updating)).
-- 450+ automated tests, including end-to-end runs against a simulated TopstepX server and Telegram, and a test for every Topstep rule.
+- 600+ automated tests, including end-to-end runs against a simulated TopstepX server and Telegram, and a test for every Topstep rule.
 
 ## Commands
 
@@ -263,7 +302,7 @@ src/topstep_bot/
   knowledge.py    the knowledge base (what works when) and its training
   recommendations.py  every strategy's signals tracked to an outcome (feeds the knowledge base)
   memory.py       long-run memory: the market library and replaying all of it
-  brain/          the central intelligence: lookups, built-in answers, optional AI answers
+  brain/          the central intelligence: lookups, built-in answers, optional AI answers, the guide search
   reasoning.py    a decision record for every signal: verdicts, evidence, market, limits, result, lesson
   evidence.py     the evidence rule (pooled, after costs);  policy.py  which rule decides;  lab.py  the decision lab
   fmt.py          shared number formatting
@@ -273,7 +312,7 @@ src/topstep_bot/
   setup_service.py  the dashboard's Setup tab;  config_edit.py  edits config.yaml keeping comments
   worker_api.py   the bot's private local API (used by the controller)
   web.py          tiny local HTTP server shared by both
-  live.py         live/paper runner (the bot process)
+  live.py         live/paper runner (the bot process): every market of one account, added and dropped live
   training.py     walk-forward tuning ('tune');  remote.py  live settings changes
   logging_setup.py    log files, redaction, crash reports
   service.py      bot <-> controller contract;  autostart.py, keepawake.py
@@ -281,7 +320,10 @@ src/topstep_bot/
   market_knowledge.py  each market's specs and what moves it;  market_intel.py  live levels and ranges
   research.py     the research library: what the bot gathers from the internet
   funded.py       progress to the Combine pass or next payout;  crossaccount.py  the hedge guard
-  account_check.py  what TopstepX says about each account;  market_pick.py  the bot picks its market
+  account_check.py  what TopstepX says about each account;  market_pick.py  the bot picks its market(s)
+  probability.py  the probability calculator: P(win), payoff, expected value, Kelly sizing, calibration
+  knowledge_network.py  related markets' knowledge, and learning new ones from saved history
+  risk/book.py    one account's shared risk across every market it trades;  broker/shared.py  one connection, many markets
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram
   manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
   setups.py       the trades each strategy is building toward (dashboard's Getting ready to trade)
