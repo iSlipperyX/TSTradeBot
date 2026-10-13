@@ -512,7 +512,6 @@ def cmd_simulate(args: argparse.Namespace) -> int:
 def cmd_network(args: argparse.Namespace) -> int:
     """The market network (network.py): every market read together, rebuilt from the history on this PC."""
     from topstep_bot import network
-    from topstep_bot.market_knowledge import product_for
     from topstep_bot.market_pick import current_symbol
 
     cfg = _load_account(args, first_if_several=True)
@@ -520,9 +519,8 @@ def cmd_network(args: argparse.Namespace) -> int:
     if picture is None:
         with console.status("Reading every market together..."):
             picture = network.refresh(cfg)
-    focus = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else []
-    if not focus and (p := product_for(current_symbol(cfg))):
-        focus = [p.root]
+    symbols = [s.strip() for s in args.symbols.split(",")] if args.symbols else [current_symbol(cfg)]
+    focus = list(dict.fromkeys(r for sym in symbols for r in network.focus_for(sym)))
     console.print(network.text(picture, focus), markup=False, highlight=False)
     console.print(f"[dim]Saved in {network.path_for(cfg)}. The dashboard's Market tab shows it.[/]")
     return 0

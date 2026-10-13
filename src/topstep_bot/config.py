@@ -409,6 +409,10 @@ class AggressiveConfig(_Section):
         default=None, gt=0,
         description="Profit to aim for each day: trading stops for the day once it is reached. Default: 45% of the plan's "
                     "profit target (under the Combine's 55% consistency line), never above an XFA payout path's daily cap.")
+    trades_multiple: int = Field(
+        default=2, ge=1, le=3,
+        description="With the adaptive strategy: each strategy may trade this many times its own daily count (ORB's one "
+                    "breakout a day becomes two). Every one is still judged by the knowledge base and every risk rule.")
     unproven_risk: float = Field(
         default=0.5, gt=0, le=1,
         description="Share of the risk per trade used for signals the knowledge base hasn't proven yet (1 = full size).")

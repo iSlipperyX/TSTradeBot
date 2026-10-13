@@ -530,7 +530,7 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
 <aside class="rail">
   <div class="brandbox">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="#1d2636"/><path d="M7 21l6-6 4 4 8-9" stroke="#7ea4f2" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand">Topstep Bot<small>Futures console · v2.2</small></div>
+    <div class="brand">Topstep Bot<small>Futures console · v3.0</small></div>
   </div>
   <nav class="tabs" aria-label="Sections">
     <div class="grp">Trading</div>
@@ -814,6 +814,7 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
       <p class="meta" id="net-board">Loading…</p>
       <div class="tablewrap"><table id="net-table"><thead><tr><th>Market</th><th>Trend</th><th class="num">Day</th><th class="num">20 days</th>
         <th>Volatility</th><th>Moves with</th><th class="num">Jump allowance</th><th>Next 24h</th></tr></thead><tbody></tbody></table></div>
+      <button class="small" id="net-more" hidden style="margin-top:8px"></button>
       <p class="hint">Every market the bot knows, read together: how they move with each other, which ones are stressed, what is scheduled, and the
         biggest sudden jump each one has made. The bot uses it only to size trades down (jump risk, stress), never up, and never to pick a direction.
         Rebuilt every hour from the downloaded history and the research library.</p>
@@ -2092,7 +2093,7 @@ function renderPick(p) {
       <td class="num">${c.win_rate != null ? Math.round(c.win_rate * 100) + "%" : "–"}</td><td class="meta">${esc(c.note)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
 }
 
-let NET_AT = 0;
+let NET_AT = 0, NET_ALL = false;
 async function loadNetwork(force) {
   if (!force && Date.now() - NET_AT < 120000) return;
   NET_AT = Date.now();
@@ -2103,13 +2104,21 @@ async function loadNetwork(force) {
   const b = n.board, pct = x => x == null ? "–" : `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
   $("net-board").textContent = `${b.mood}${b.appetite != null ? ` (appetite ${b.appetite > 0 ? "+" : ""}${b.appetite.toFixed(2)})` : ""}. Equity volatility: ${b.equity_state}. `
     + `${n.coverage.daily} of ${n.coverage.markets} markets with daily history${n.fresh ? "" : " (out of date: the bot uses its safe defaults)"}.`;
-  const rows = [...n.rows].sort((a, c) => (c.focus - a.focus) || (Math.abs(c.move_z || 0) - Math.abs(a.move_z || 0)));
+  // one row per market with history (a micro shows under its full-size market), yours first; the rest on request
+  const shown = n.rows.filter(r => r.focus || (r.state !== "unknown" && r.symbol === r.feed));
+  const rest = n.rows.filter(r => !shown.includes(r) && r.symbol === r.feed);
+  const rows = (NET_ALL ? [...shown, ...rest] : shown).sort((a, c) => (c.focus - a.focus)
+    || ((c.state !== "unknown") - (a.state !== "unknown")) || (Math.abs(c.move_z || 0) - Math.abs(a.move_z || 0)));
+  $("net-more").hidden = !rest.length;
+  $("net-more").textContent = NET_ALL ? "Show only markets with history" : `Show ${rest.length} more markets (no daily history yet: class defaults)`;
   body.innerHTML = rows.map(r => `<tr${r.focus ? ' class="focus"' : ""}><td><b>${esc(r.symbol)}</b> <span class="muted">${esc(r.class_label)}</span></td>
     <td>${esc(r.trend || "–")}</td><td class="num">${pct(r.chg_1d)}</td><td class="num">${pct(r.chg_20d)}</td>
     <td>${esc(r.state)}${r.vol_pctile != null ? ` <span class="muted">(${Math.round(r.vol_pctile * 100)}th pct)</span>` : ""}</td>
     <td>${esc(r.peers.join(", ") || "–")}${r.divergence ? `<div class="muted">${esc(r.divergence)}</div>` : ""}</td>
     <td class="num">${r.jump} ticks</td><td>${r.events ? `${r.events} report${r.events > 1 ? "s" : ""}` : "–"}${r.headlines ? ` · ${r.headlines} headlines` : ""}</td></tr>`).join("");
 }
+
+$("net-more").onclick = () => { NET_ALL = !NET_ALL; loadNetwork(true); };
 
 function renderMarket(b) {
   renderPick(b && b.market_pick);
@@ -2668,7 +2677,7 @@ function suRender() {
     const dg = parseFloat(su("dgoal").value);
     const tooBig = stage === "combine" && dg >= gt.line;
     su("dgoal-help").textContent = tooBig ? `Must stay below ${money0(gt.line)} on a ${plan.name} Combine: past that the 55% Consistency Target would raise your profit target.`
-      : `Trading stops for the day once it is reached. Empty = ${money0(gt.profit_goal)} (45% of the profit target). Unproven signals trade at half size, `
+      : `Trading stops for the day once it is reached. Empty = ${money0(gt.profit_goal)} (45% of the profit target). Every strategy may trade twice its usual daily count, unproven signals trade at half size, `
         + "a quarter of the day's realized profit is added to the next trade's risk (at most twice your risk per trade), and once the day has made half "
         + "its goal, new trades are sized so it can't give back more than 40% of its best.";
     su("dgoal-help").className = "help" + (tooBig ? " bad" : "");

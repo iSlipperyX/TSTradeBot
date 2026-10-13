@@ -44,6 +44,7 @@ class AdaptiveAllDay(Strategy):
         "strategies": [],  # empty = every other strategy
         "trade_unproven": False,  # True = also trade strategies the knowledge base knows nothing about yet
         "direction": "both",
+        "trades_multiple": 1,  # each strategy may trade this many times its own daily count (the aggressive mode: 2)
     }
 
     def setup(self) -> None:
@@ -57,8 +58,12 @@ class AdaptiveAllDay(Strategy):
             cls = STRATEGIES.get(n)
             if cls is None:
                 raise ValueError(f"adaptive: unknown strategy '{n}'. Available: {', '.join(k for k in STRATEGIES if k != self.name)}")
+            sub_params = {}
+            multiple = max(1, int(self.p["trades_multiple"]))
+            if multiple > 1 and "max_trades_per_day" in cls.defaults:
+                sub_params["max_trades_per_day"] = cls.defaults["max_trades_per_day"] * multiple
             try:
-                self.subs.append(cls(self.contract, self.tf, self.rth_open, self.rth_close, {}))
+                self.subs.append(cls(self.contract, self.tf, self.rth_open, self.rth_close, sub_params))
             except ValueError as exc:
                 log.warning("adaptive: %s can't run on %d-minute bars (%s) - skipped", n, self.tf, exc)
         if not self.subs:

@@ -347,15 +347,11 @@ class Facts:
 
     def fact_network(self, symbol: str = "") -> dict[str, Any]:
         from topstep_bot import network
-        from topstep_bot.market_knowledge import product_for
         from topstep_bot.market_pick import current_symbol
 
         picture = network.load(self.cfg)
-        focus = []
-        for sym in (symbol, current_symbol(self.cfg)):
-            p = product_for(sym) if sym else None
-            if p and p.root not in focus:
-                focus.append(p.root)
+        focus = [r for sym in (symbol, current_symbol(self.cfg)) for r in network.focus_for(sym)]
+        focus = list(dict.fromkeys(focus))
         out: dict[str, Any] = {"text": network.text(picture, focus)}
         if picture:
             out["built"] = picture.get("built")

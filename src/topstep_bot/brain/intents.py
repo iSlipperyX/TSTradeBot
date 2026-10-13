@@ -112,7 +112,7 @@ async def answer(question: str, fetch: Fetch) -> str:
         return await text("status")
     if _has(q, "know", "knowledge", "brain", "memory", "what works", "best strateg"):
         return await text("knowledge")
-    if _has(q, "network", "correlat", "move together", "moves with", "stressed", "risk appetite", "risk.on", "risk.off",
+    if _has(q, "network", "correlat", "move together", "moving together", "moves with", "stressed", "risk appetite", "risk.on", "risk.off",
             "all markets", "across markets", "jump"):
         return await text("network", {"symbol": sym} if (sym := _symbol(question)) else {})
     if _has(q, "market", "news", "headline", "level"):

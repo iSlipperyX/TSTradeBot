@@ -1180,14 +1180,11 @@ class Controller:
     def network_view(self, account: str | None = None) -> dict | None:
         """The Market network panel: the whole board, with the selected account's market first."""
         from topstep_bot import network
-        from topstep_bot.market_knowledge import product_for
         from topstep_bot.market_pick import current_symbol
 
         focus = []
         with contextlib.suppress(ValueError, KeyError):
-            p = product_for(current_symbol(self.account_cfg(self.pick(account)[0].account)))
-            if p:
-                focus = [p.root]
+            focus = network.focus_for(current_symbol(self.account_cfg(self.pick(account)[0].account)))
         return network.view(network.load(self.cfg), focus)
 
     def request_exit(self, code: int) -> None:

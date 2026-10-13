@@ -1,0 +1,58 @@
+name: Release
+
+# After CI passes on main, tag the version in pyproject.toml and publish a GitHub release with that
+# version's section of CHANGELOG.md. A version that already has its tag is left alone, so this only
+# does something when the version number changes. (The bot's own updater follows the main branch;
+# releases are the record of each version.)
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - name: Read the version
+        id: version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Release notes from CHANGELOG.md
+        if: steps.version.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          version = os.environ["VERSION"]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          match = re.search(rf"^## {re.escape(version)}\b.*?$\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+          notes = match.group(1).strip() if match else f"Version {version}."
+          open("release_notes.md", "w", encoding="utf-8").write(notes + "\n")
+          PY
+      - name: Tag and publish
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          title=$(python3 -c "import os, re; t = open('CHANGELOG.md', encoding='utf-8').read(); m = re.search(r'^## ' + re.escape(os.environ['VERSION']) + r'\b(.*)$', t, re.M); print(('Version ' + os.environ['VERSION'] + (m.group(1).replace(' — ', ': ') if m else '')).strip())")
+          gh release create "v$VERSION" --target "$SHA" --title "$title" --notes-file release_notes.md

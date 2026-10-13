@@ -444,6 +444,20 @@ def market_line(m: dict[str, Any]) -> str:
     return line
 
 
+def focus_for(symbol: str | None) -> list[str]:
+    """The network rows for a traded symbol: its own (MNQ) and, for a micro, the market it follows (NQ)."""
+    from topstep_bot.market_knowledge import product_for
+
+    out: list[str] = []
+    sym = (symbol or "").strip().upper()
+    if sym in SPECS:
+        out.append(sym)
+    p = product_for(sym) if sym else None
+    if p and p.root not in out:
+        out.append(p.root)
+    return out
+
+
 def text(picture: dict[str, Any] | None, focus: list[str] | None = None) -> str:
     """The network in plain words (Telegram /network, the Ask answers, the coach)."""
     if not picture:
@@ -490,7 +504,7 @@ def view(picture: dict[str, Any] | None, focus: list[str] | None = None) -> dict
     rows = []
     for root, m in markets.items():
         v = m.get("daily") or {}
-        rows.append({"symbol": root, "class": m["class"], "class_label": m["class_label"], "trend": v.get("trend"),
+        rows.append({"symbol": root, "feed": m["feed"], "class": m["class"], "class_label": m["class_label"], "trend": v.get("trend"),
                      "chg_1d": v.get("chg_1d"), "chg_20d": v.get("chg_20d"), "state": v.get("state", "unknown"),
                      "vol_pctile": v.get("vol_pctile"), "move_z": v.get("move_z"),
                      "peers": [p["symbol"] for p in m.get("peers", [])[:3]], "divergence": (m.get("divergence") or {}).get("text"),
