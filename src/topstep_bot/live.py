@@ -122,12 +122,7 @@ async def resolve_contract(client: ProjectXClient, cfg: BotConfig) -> Contract:
 
 def lane_config(cfg: BotConfig, symbol: str) -> BotConfig:
     """The account's settings for one of its markets (paths such as the knowledge base follow the symbol)."""
-    if symbol.upper() == cfg.instrument.symbol:
-        return cfg
-    lane = cfg.model_copy(deep=True)
-    lane.instrument.symbol, lane.instrument.contract_id = symbol.upper(), None
-    lane.instrument.auto_pick, lane.instrument.markets = False, []
-    return lane
+    return cfg.for_market(symbol)
 
 
 def _description(symbol: str) -> str:
@@ -262,6 +257,7 @@ class Lane:
         if core is None:
             return {"symbol": self.symbol, "ready": False}
         t = core.orders.trade
+        today = [x for x in core.closed_trades if x.closed_at and core.schedule.trading_day(x.closed_at) == core.current_day]
         return {
             "symbol": self.symbol, "ready": True, "contract": core.contract.name,
             "description": _description(self.symbol),
@@ -270,9 +266,9 @@ class Lane:
             "trade": None if t is None else {"side": t.side.label, "size": t.filled_size or t.size,
                                              "entry": t.entry_price, "stop": t.stop_price, "target": t.target_price,
                                              "state": t.state.value},
-            "trades_today": sum(1 for x in core.closed_trades if x.closed_at
-                                and core.schedule.trading_day(x.closed_at) == core.current_day),
+            "trades_today": len(today), "realized_today": round(sum(x.net_pnl for x in today), 2),
             "closing": self.closing, "primary": self.primary, "halted": core.halted,
+            "spark": [round(b.close, core.contract.price_decimals) for b in list(core.chart_bars)[-40:]],
         }
 
     def _setup_hedge_guard(self) -> None:
@@ -745,6 +741,8 @@ class LiveRunner:
         self._tasks: list[asyncio.Task] = []
         self._lane_lock = asyncio.Lock()
         self._rolling = False
+        self._network_after: datetime | None = None  # the next time the knowledge network may grow on its own
+        self._growing = False
         # Set by the 24/7 service (see service.py).
         self.supervised = os.environ.get("TOPSTEP_BOT_SUPERVISED") == "1"
         self.quiet_start = os.environ.get("TOPSTEP_BOT_QUIET_START") == "1"
@@ -904,7 +902,16 @@ class LiveRunner:
             self._discard(lane)
             raise
         self.lanes[lane.symbol] = lane
+        self._scale_guards()
         return lane
+
+    def _scale_guards(self) -> None:
+        """The order guard's daily entry limit is a safety net per market: with several markets the account's
+        shared count gets one allowance per market (still far below anything like high-frequency trading)."""
+        from topstep_bot.risk.guards import DEFAULT_MAX_ENTRIES_PER_DAY
+
+        for core in self.cores():
+            core.orders.guard.max_entries_per_day = DEFAULT_MAX_ENTRIES_PER_DAY * max(1, len(self.lanes))
 
     def _discard(self, lane: Lane) -> None:
         """Forget a market's broker view and its place in the account book."""
@@ -1119,6 +1126,7 @@ class LiveRunner:
         for ln in self.lanes.values():
             if ln.core:
                 ln.core.keeps_records = ln is keeper
+        self._scale_guards()
 
     def _save_markets(self, source: str) -> None:
         """Remember today's markets, so a restart today trades the same ones."""
@@ -1134,17 +1142,19 @@ class LiveRunner:
 
     def markets_view(self) -> dict:
         from topstep_bot import market_pick as mp
-        from topstep_bot.instruments import SPECS
+        from topstep_bot.instruments import CLASSES, SPECS
         from topstep_bot.risk.topstep import product_limit
 
         plan = PLANS[self.cfg.account.plan]
         total = self.book.total() if self.book else None
+        available = [s for s in SPECS if product_limit(s, plan) != 0 and s not in self.lanes
+                     and not any(mp.same_product(s, x) for x in self.lanes)]
         return {
             "focus": self.lane.symbol if self.lane else None,
             "max": MAX_MARKETS,
             "lanes": [ln.summary() for ln in self.lanes.values()],
-            "available": [s for s in SPECS if product_limit(s, plan) != 0 and s not in self.lanes
-                          and not any(mp.same_product(s, x) for x in self.lanes)],
+            "available": available,
+            "names": {s: [SPECS[s].description, CLASSES.get(SPECS[s].asset_class, SPECS[s].asset_class)] for s in available},
             "exposure": None if total is None else {
                 "open_pnl": round(total.open_pnl, 2), "at_risk": round(total.at_risk, 2),
                 "minis": round(total.minis, 2), "contracts": total.contracts,
@@ -1387,6 +1397,7 @@ class LiveRunner:
             await asyncio.sleep(LEARN_CHECK_SECONDS)
             for lane in list(self.lanes.values()):
                 await lane.learn_step(self.now())
+            await self._grow_step(self.now())
 
     # ------------------------------------------------------------- learning
 
@@ -1396,6 +1407,54 @@ class LiveRunner:
         if len(messages) == 1:
             return messages[0]
         return "\n".join(f"{s}: {m}" for s, m in zip(self.lanes, messages, strict=False))
+
+    async def _grow_step(self, now: datetime) -> None:
+        """Once a day, outside the entry window and while every market is flat: learn a few related markets from
+        the price history saved on this PC, so the knowledge network keeps growing (knowledge_network.py)."""
+        p = self.cfg.probability
+        if not (p.enabled and p.network and p.grow_network and p.grow_per_day) or self._growing:
+            return
+        if self._network_after and now < self._network_after:
+            return
+        lanes = list(self.lanes.values())
+        if not lanes or any(ln.core is None or not ln.core.orders.is_flat or ln._training
+                            or ln.core.schedule.entry_block_reason(now) is None for ln in lanes):
+            return  # trading never waits on it
+        self._network_after = now + timedelta(hours=2)  # if it fails: try again later
+        try:
+            await self.grow_network("daily")
+        except Exception as exc:  # noqa: BLE001 - keep trading; the network is a bonus
+            log.warning("Could not grow the knowledge network: %s", exc)
+            return
+        from topstep_bot.knowledge_network import STALE
+
+        self._network_after = now + STALE
+
+    async def grow_network(self, source: str, limit: int | None = None) -> str:
+        """Learn related markets from the saved price history now (nothing is traded)."""
+        from topstep_bot import knowledge_network
+
+        if self._growing:
+            raise RuntimeError("The bot is already learning related markets")
+        self._growing = True
+        try:
+            learned = await knowledge_network.grow(self.cfg, list(self.lanes), self.now(), limit=limit,
+                                                   progress=lambda s: (self._beat(), log.info("Knowledge network: learning %s", s)))
+        finally:
+            self._growing = False
+        for core in self.cores():
+            core.probability.refresh_network(force=True)
+        if not learned:
+            text = ("No related market to learn right now: each one either has fresh knowledge already or too little "
+                    f"saved history (at least {knowledge_network.MIN_DAYS} trading days). Download history on the "
+                    "Knowledge tab (Simulations) to give it more.")
+        else:
+            text = ("Knowledge network: learned " + ", ".join(
+                f"{x['symbol']} ({x['observations']:,} outcomes over {x['days']} days)" for x in learned)
+                + f" from saved history ({source}). Nothing was traded; these now inform related markets' odds.")
+        if self.core:
+            self.core.event("info", text, "learn")
+        return text
 
     async def learn(self, source: str) -> str:
         """Replay the long-run memory of the focused market (the one shown on the dashboard)."""

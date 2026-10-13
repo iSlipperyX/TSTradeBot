@@ -505,7 +505,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         else:
             console.print(f"[dim]Long-run memory {t['symbol']}: {t['observations']:,} signal outcomes from {t['days']} days "
                           f"({t['from']} to {t['to']}).[/]")
-    console.print(f"[dim]Saved in {cfg.data_path / 'simlab'} (report.json, runs.csv). The dashboard's Simulations tab shows it.[/]")
+    console.print(f"[dim]Saved in {cfg.data_path / 'simlab'} (report.json, runs.csv). The dashboard's Knowledge tab (Simulations) shows it.[/]")
     return 0
 
 
@@ -522,7 +522,7 @@ def cmd_network(args: argparse.Namespace) -> int:
     symbols = [s.strip() for s in args.symbols.split(",")] if args.symbols else [current_symbol(cfg)]
     focus = list(dict.fromkeys(r for sym in symbols for r in network.focus_for(sym)))
     console.print(network.text(picture, focus), markup=False, highlight=False)
-    console.print(f"[dim]Saved in {network.path_for(cfg)}. The dashboard's Market tab shows it.[/]")
+    console.print(f"[dim]Saved in {network.path_for(cfg)}. The dashboard's Knowledge tab (Market data) shows it.[/]")
     return 0
 
 

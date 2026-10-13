@@ -24,6 +24,9 @@ HELP = """I'm the bot's central intelligence. I answer from its own records. Try
 • which decision rule are you using?  • what are my rules?
 • what did the simulations find?  • what has the coach learned?
 • how are the markets moving together?  • is gold stressed?
+• which markets are you trading?  • what are the odds on ORB?
+• where does your knowledge come from?  • what is the consistency target?
+• explain max_conviction  • how does the knowledge network grow?
 I can explain and report, but I can't place trades or change settings - use the dashboard for that.
 In Telegram, send /help for the bot's commands."""
 
@@ -33,6 +36,9 @@ DAY = re.compile(r"\b(20\d\d-\d\d-\d\d)\b")
 
 def _has(q: str, *words: str) -> bool:
     return any(re.search(rf"\b{w}", q) for w in words)
+
+
+CURRENT = ("doing", "today", r"now\b", "my rules", "last trade", r"next\b", "position")  # about right now, not how it works
 
 
 NAME_SKIP = {"mini", "micro", "futures", "index", "year", "note", "bond", "dollar", "short", "tons", "ultra",
@@ -71,6 +77,10 @@ async def answer(question: str, fetch: Fetch) -> str:
         data = await fetch(name, a or {})
         return data.get("text") or data.get("error") or "No answer."
 
+    # "how do I ...", "can the bot ...": how the bot works, from its guide (not what it is doing right now)
+    if not time and _has(q, "how do i", "how can i", r"how to\b", r"can i\b", r"can (the bot|it|you)\b", "is it possible",
+                         r"how does .* work", "what happens (if|when)") and not _has(q, "why", *CURRENT):
+        return await text("explain", {"topic": question})
     if _has(q, "skip", "pass", "didn.?t (you )?(trade|take)", "did not (trade|take)", "no trades?", "not trad", "why not"):
         if time:
             return await text("explain_decision", args)
@@ -87,6 +97,12 @@ async def answer(question: str, fetch: Fetch) -> str:
     asks_why = _has(q, "why", "explain", "reason", "how did you decide", "what made you")
     if asks_why and (time or _has(q, "last", "latest", "trade", "entry", "position", r"that\b", r"this\b", r"it\b")):
         return await text("explain_decision", args)
+    if _has(q, "which markets", "what markets", "how many markets", r"markets? (are|is) (you|it|the bot) trad",
+            r"trad\w* (several|multiple|many|more|other) markets", r"(add|drop|switch|remove) (a |the )?market"):
+        return await text("markets")
+    if _has(q, "probab", "odds", "chance", r"p\(win", "expected value", r"ev\b", "calibrat", "kelly", "how likely",
+            "win rate", "how sure"):
+        return await text("probability", {"strategy": strategy} if strategy else {})
     if _has(q, "coach"):
         return await text("coach")
     if _has(q, "simulat", "opportunit", "combines? pass", "pass rate", "playbook"):
@@ -110,11 +126,16 @@ async def answer(question: str, fetch: Fetch) -> str:
         return await text("trades")
     if _has(q, "status", "doing", "p&l", "pnl", "balance", "position", "running", "how am i", "how are we"):
         return await text("status")
+    if _has(q, "source", "come from", "where do you learn", "knowledge network", "related markets", "what feeds"):
+        return await text("sources")
     if _has(q, "know", "knowledge", "brain", "memory", "what works", "best strateg"):
         return await text("knowledge")
     if _has(q, "network", "correlat", "move together", "moving together", "moves with", "stressed", "risk appetite", "risk.on", "risk.off",
             "all markets", "across markets", "jump"):
         return await text("network", {"symbol": sym} if (sym := _symbol(question)) else {})
+    if _has(q, "what is", "what's", "what does", "how does", "how do i", "how to", "meaning", "explain",
+            r"what do .* mean", "what are .* for") and not _has(q, *CURRENT):
+        return await text("explain", {"topic": question})
     if _has(q, "market", "news", "headline", "level"):
         return await text("market")
     if _has(q, "rule", "limit", "risk", "topstep", "drawdown", "mll", "consistency"):

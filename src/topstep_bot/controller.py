@@ -61,7 +61,9 @@ BACKOFF = (10, 30, 60, 120, 300)
 HEALTHY_AFTER = 600  # seconds of uptime that reset the crash backoff
 STOP_TIMEOUT = 45  # seconds to wait for a graceful stop (it flattens first)
 ACTION_TIMEOUT = 8  # seconds to wait for the bot to answer a request
-SLOW_ACTIONS = {"train": 600, "learn": 3600, "add_market": 900, "switch_market": 900}  # a new market warms up and trains  # training replays weeks of history; learning backfills and replays up to a year
+# Training replays weeks of history; learning backfills and replays up to a year; a new market warms up and
+# trains; growing the knowledge network trains a few related markets.
+SLOW_ACTIONS = {"train": 600, "learn": 3600, "add_market": 900, "switch_market": 900, "grow_network": 1800}
 STATE_FILE = "controller.json"
 MAIN = "main"  # the account name when config.yaml has no 'accounts' list
 ALL = "all"
@@ -508,6 +510,23 @@ class ProxyActions:
     async def switch_market(self, symbol: str, source: str, account: str | None = None) -> str:
         return await self.ctl.switch_market(symbol, source, account)
 
+    async def markets_text(self, account: str | None = None) -> str:
+        return await self._text("markets_text", account)
+
+    async def _market(self, name: str, symbol: str, source: str, account: str | None) -> str:
+        bot = self._one(account)
+        if not bot.running or bot.state != "running":
+            raise RuntimeError(f"{bot.who} isn't running: start it first (/startbot).")
+        answer = await bot.action(name, {"symbol": symbol, "source": source})
+        return self._tag(bot, str(answer.get("message") or answer.get("text") or "Done.") if isinstance(answer, dict)
+                         else str(answer))
+
+    async def add_market(self, symbol: str, source: str, account: str | None = None) -> str:
+        return await self._market("add_market", symbol, source, account)
+
+    async def remove_market(self, symbol: str, source: str, account: str | None = None) -> str:
+        return await self._market("remove_market", symbol, source, account)
+
     async def research_text(self, account: str | None = None) -> str:
         if self.ctl.research is None:
             return "Research is turned off (research.enabled: false)."
@@ -534,7 +553,7 @@ class ProxyActions:
         text = coach.coach.status_text()
         if coach.coach.running:
             text += f"\nA session is running now: {coach.coach.stage or 'working'}."
-        return text + "\nStart a session or approve proposals on the dashboard's AI Coach tab."
+        return text + "\nStart a session or approve proposals on the dashboard's Ask tab (Deep review)."
 
     async def train(self, source: str, account: str | None = None) -> str:
         bot = self._one(account)
@@ -673,7 +692,7 @@ class Controller:
                 ("POST", "/api/markets", lambda r: self.lab.markets(r.json())),
                 ("POST", "/api/network", self._network),
                 ("POST", "/api/market/switch", lambda r: self.switch_market(str(r.json().get("symbol", "")), source(r),
-                                                                           r.json().get("account"))),
+                                                                           r.json().get("account"), r.json().get("from"))),
                 ("POST", "/api/coach/state", lambda r: self.coach.state()),
                 ("POST", "/api/coach/key", lambda r: self.coach.save_key(r.json())),
                 ("POST", "/api/coach/key/remove", lambda r: self.coach.remove_key()),
@@ -792,7 +811,10 @@ class Controller:
 
     def page(self, token: str, view: str = "pc") -> str:
         """The dashboard page for a viewer: on this PC, or on the phone through Telegram."""
-        return self._page.replace("__TOKEN__", token).replace("__VIEW__", view)
+        from topstep_bot import __version__
+
+        version = "v" + ".".join(__version__.split(".")[:2])
+        return self._page.replace("__TOKEN__", token).replace("__VIEW__", view).replace("__VERSION__", version)
 
     def _index(self, _: Request):
         return html_response(self.page(self.token))
@@ -986,9 +1008,10 @@ class Controller:
 
     # ---------------------------------------------------------------- today's market
 
-    async def switch_market(self, symbol: str, source: str, account: str | None = None) -> str:
-        """Trade another market for the rest of today (trade ticket, Simulations tab, Telegram /switch), or go
-        back to the usual one (``symbol`` empty or USUAL).
+    async def switch_market(self, symbol: str, source: str, account: str | None = None, old: str | None = None) -> str:
+        """Trade another market for the rest of today (trade ticket, markets strip, Knowledge > Simulations, Telegram /switch), or go
+        back to the usual one (``symbol`` empty or USUAL). ``old``: which of the running bot's markets to replace
+        (default: the one shown on the dashboard).
 
         A running bot switches at once, without a restart (live.py): the new market starts, and the old one is
         dropped as soon as it is flat (it takes no new trades meanwhile). Every risk rule and Topstep guard applies
@@ -1017,7 +1040,7 @@ class Controller:
                 raise ValueError(f"Unknown market '{symbol}'. Markets: {', '.join(SPECS)}")
             if product_limit(symbol, PLANS[acfg.account.plan]) == 0:
                 raise ValueError(f"Topstep doesn't allow {symbol} on a {acfg.account.plan} account right now.")
-            if symbol == current:
+            if symbol == current and not old:
                 return f"{bot.who} already trades {symbol}."
         followers = [b for b in self.bots.values() if self.multi and any(
             p.name == b.account and p.follow == bot.account for p in self.cfg.accounts)]
@@ -1029,7 +1052,8 @@ class Controller:
                 if back:
                     mp.clear_today(bcfg)
                 target = mp.current_symbol(bcfg) if back else symbol  # back: the usual market (or its pick)
-                answer = await b.action("switch_market", {"symbol": target, "source": source})
+                answer = await b.action("switch_market", {"symbol": target, "source": source,
+                                                          **({"from": old} if old and b is bot else {})})
                 text = str(answer.get("message") or answer.get("text") or "") if isinstance(answer, dict) else str(answer)
                 b._event("info", f"{b.who}: {text.splitlines()[0] if text else 'market switched'} - requested by {source}")
                 lines.append(f"{b.who + ': ' if self.multi else ''}{text}")

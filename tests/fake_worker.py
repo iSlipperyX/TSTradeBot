@@ -55,7 +55,7 @@ async def main() -> int:
         if name == "status_text":
             return {"text": f"fake bot {ACCOUNT} in {MODE} mode"}
         if name == "switch_market":  # like the real bot: switches live, the old market finishes its open trade
-            text = f"Now trading {payload.get('symbol')}."
+            text = f"Now trading {payload.get('symbol')}" + (f" instead of {payload['from']}" if payload.get("from") else "") + "."
             if position:
                 text += " MNQ takes no new trades and is dropped as soon as its open trade is closed."
             return text

@@ -261,25 +261,30 @@ class ProbabilityModel:
 
 # ------------------------------------------------------------------------------ the knowledge network
 
-def network_paths(cfg: BotConfig, symbol: str) -> list[Path]:
-    """The knowledge bases of every other market in this market's asset class (this account's, then every
-    account's), at the same bar size."""
-    from topstep_bot.instruments import SPECS, class_of
-
-    cls = class_of(symbol)
-    tf = cfg.instrument.timeframe_minutes
-    others = [s for s, spec in SPECS.items() if spec.asset_class == cls and s != symbol.upper()]
+def knowledge_folders(cfg: BotConfig) -> list[Path]:
+    """Where knowledge bases live: this account's folder first, then every other account's, then the data folder."""
     folders = [cfg.account_dir]
     accounts = cfg.data_path / "accounts"
     if accounts.is_dir():
         folders += [p for p in sorted(accounts.iterdir()) if p.is_dir() and p != cfg.account_dir]
     if cfg.account_dir != cfg.data_path:
         folders.append(cfg.data_path)
+    return folders
+
+
+def network_paths(cfg: BotConfig, symbol: str) -> list[Path]:
+    """The knowledge bases of every other market in this market's asset class (this account's, then every
+    account's), at the same bar size: one per market."""
+    from topstep_bot.instruments import SPECS, class_of
+
+    cls = class_of(symbol)
+    tf = cfg.instrument.timeframe_minutes
+    others = [s for s, spec in SPECS.items() if spec.asset_class == cls and s != symbol.upper()]
     out, seen = [], set()
-    for folder in folders:
+    for folder in knowledge_folders(cfg):
         for s in others:
             path = folder / f"knowledge_{s}_{tf}m.json"
-            if path.exists() and s not in seen:  # one knowledge base per market is enough
+            if s not in seen and path.exists():  # one knowledge base per market is enough
                 seen.add(s)
                 out.append(path)
     return out
@@ -368,6 +373,40 @@ class Calculator:
         if model is None:
             return None
         return model.estimate(strategy, side, slot or self.core.slot(when), regime or self.core.regime.value)
+
+
+# ------------------------------------------------------------------------------ the outlook
+
+def outlook(calc_or_model: Calculator | ProbabilityModel, strategies: Iterable[str], *, slot: str | None = None,
+            regime: str | None = None) -> list[dict[str, Any]]:
+    """Every strategy and side as the calculator sees it now (or all day, without a slot), best expected value first."""
+    rows = []
+    for name in strategies:
+        if name in NOT_STRATEGIES:
+            continue
+        for side in ("LONG", "SHORT"):
+            if isinstance(calc_or_model, Calculator):
+                est = calc_or_model.estimate(name, side, slot, regime)
+            else:  # without a live market: the whole day (no time-of-day or mood cell matches "-")
+                est = calc_or_model.estimate(name, side, slot or "-", regime or "-")
+            if est is not None:
+                rows.append({"strategy": name, "side": side, **est.to_dict(), "text": est.text()})
+    rows.sort(key=lambda r: -r["ev_r"])
+    return rows
+
+
+def outlook_text(rows: list[dict[str, Any]], titles: dict[str, str], *, where: str, top: int = 8) -> str:
+    if not rows:
+        return "The probability calculator has nothing to go on yet: it needs the knowledge base (trained or watched signals)."
+    lines = [f"The probability calculator, {where} (after fees and slippage; 80% ranges):"]
+    for r in rows[:top]:
+        sure = "edge" if r["ev_lo"] > 0 else ("losing" if r["ev_hi"] < 0 else "unclear")
+        lines.append(f"• {titles.get(r['strategy'], r['strategy'])} {r['side'].lower()}: P(win) {r['p_win']:.0%} "
+                     f"({r['p_lo']:.0%}-{r['p_hi']:.0%}), {r['ev_r']:+.2f}R a trade, {r['n']} outcomes here"
+                     + (f" + {r['network_n']} on related markets" if r["network_n"] else "") + f" - {sure}")
+    lines.append("Edge: at least 90% sure it makes money after costs. Losing: at least 90% sure it doesn't (the bot "
+                 "skips those). A probability is a long-run frequency, never a promise about the next trade.")
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------------------ how well it predicts

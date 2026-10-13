@@ -11,6 +11,7 @@ Purely informational: nothing here places or blocks a trade.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +23,8 @@ from topstep_bot.strategies.base import Setup, Strategy
 
 if TYPE_CHECKING:
     from topstep_bot.engine import TradingCore
+
+log = logging.getLogger("topstep_bot.setups")
 
 FORMING = 0.5  # share of the conditions met before a setup counts as "forming"
 RESET = 0.3  # ...and below which a forming setup counts as cancelled (a gap, so it doesn't flicker)
@@ -126,11 +129,23 @@ class SetupTracker:
                 "entry": _round(core, st.entry), "entry_ref": _round(core, ref), "entry_is_level": st.entry is not None,
                 "stop": _round(core, st.stop), "target": _round(core, st.target), "note": st.note,
                 "at": st.at.strftime("%H:%M") if st.at else None,
-                "plan": self._plan(st, ref), "blocked": blocked,
+                "plan": self._plan(st, ref), "blocked": blocked, "odds": self._odds(st.strategy, st.side),
             })
         items.sort(key=lambda i: (i["role"] != "bot", -i["progress"], i["title"]))
         return {"items": items, "waiting": waiting, "blocked": blocked, "price": price,
                 "events": list(self.events)}
+
+    def _odds(self, strategy: str, side: str) -> dict[str, Any] | None:
+        """The probability calculator's view of this setup if it fired now (P(win), expected R, how sure)."""
+        try:
+            est = self.core.probability.estimate(strategy, side.upper())
+        except Exception:  # noqa: BLE001 - an estimate is advice: the panel works without it
+            log.debug("No estimate for %s %s", strategy, side, exc_info=True)
+            return None
+        if est is None:
+            return None
+        return {"p_win": round(est.p_win, 3), "ev_r": round(est.ev_r, 3), "p_lo": round(est.p_lo, 3),
+                "p_hi": round(est.p_hi, 3), "n": est.n, "level": est.level}
 
     # ------------------------------------------------------------- history
 

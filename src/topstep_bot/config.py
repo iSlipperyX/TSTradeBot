@@ -491,6 +491,11 @@ class ProbabilityConfig(_Section):
         default=True,
         description="Learn from related markets too: the knowledge bases of the other markets of the same asset class "
                     "inform a signal (at a fraction of the weight of this market's own outcomes).")
+    grow_network: bool = Field(
+        default=True,
+        description="Outside trading hours, while flat, learn related markets the account doesn't trade from the price "
+                    "history already saved on this PC, so the knowledge network keeps growing (nothing is traded).")
+    grow_per_day: int = Field(default=3, ge=0, le=20, description="Related markets learned per day at most (0 = none).")
 
 
 class CoachConfig(_Section):
@@ -864,6 +869,15 @@ class BotConfig(_Section):
     @property
     def journal_path(self) -> Path:
         return self.journal_path_for(self.mode)
+
+    def for_market(self, symbol: str) -> BotConfig:
+        """These settings for another market of the account (paths such as the knowledge base follow the symbol)."""
+        if symbol.upper() == self.instrument.symbol:
+            return self
+        other = self.model_copy(deep=True)
+        other.instrument.symbol, other.instrument.contract_id = symbol.upper(), None
+        other.instrument.auto_pick, other.instrument.markets = False, []
+        return other
 
     @property
     def knowledge_path(self) -> Path:

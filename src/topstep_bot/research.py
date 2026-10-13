@@ -11,7 +11,7 @@ The controller (one process, whatever the number of accounts) keeps a small rese
                record of what was said about a market builds up next to the trade journal.
   daily        ten years of daily prices for every market (Yahoo Finance). Gives today's
                volatility a long-term context ("today's range is in the top 10% of the last decade")
-               on the Market tab.
+               on the Knowledge tab (Market data).
   rules watch  Topstep's help-center pages for the rules the bot enforces. When one changes, you
                get an alert (dashboard + Telegram) to review it - rules are never changed silently.
   your sources any extra RSS feeds or pages you list under ``research.sources``.

@@ -6,7 +6,7 @@ Built from the bars the bot already receives (no extra data subscription):
     and how much of it today has used up
   * where price sits relative to those levels
 together with the instrument profile (market_knowledge.py), today's relevant calendar events and
-recent headlines (news.py). This is the "market brief" on the dashboard's Market tab and in
+recent headlines (news.py). This is the "market brief" on the dashboard's Knowledge tab (Market data) and in
 Telegram /brief.
 
 Every finished session is also appended to ``market_journal.jsonl`` (range, gap, events, the

@@ -17,7 +17,7 @@ from topstep_bot.live import Controls, LiveRunner
 
 # The market one request names (several markets at once): per request, so requests running side by side never mix.
 _PINNED: ContextVar[TradingCore | None] = ContextVar("pinned_market", default=None)
-MARKET_ACTIONS = ("markets", "add_market", "remove_market", "switch_market", "focus_market")
+MARKET_ACTIONS = ("markets", "add_market", "remove_market", "switch_market", "focus_market", "grow_network")
 
 
 class BotActions:
@@ -294,8 +294,6 @@ class BotActions:
             self._facts = (self.core, Facts(self.core.cfg, core=self.core, actions=self))
         return {"data": self._facts[1].call(name, args if isinstance(args, dict) else {})}
 
-    # ------------------------------------------------------------------ single entry point
-
     # ------------------------------------------------------------------ markets (several at once)
 
     def _desk(self) -> LiveRunner:
@@ -314,6 +312,8 @@ class BotActions:
             return await desk.remove_market(symbol, source, flatten=bool(payload.get("flatten")))
         if name == "switch_market":
             return await desk.switch_market(payload.get("from") or None, symbol, source)
+        if name == "grow_network":
+            return await desk.grow_network(source)
         return desk.set_focus(symbol)
 
     def markets_text(self) -> str:

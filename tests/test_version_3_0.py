@@ -380,9 +380,9 @@ def test_the_setup_tab_turns_on_make_money_every_day(tmp_path):
 
 # ------------------------------------------------------------------------------ the release
 
-def test_version_3_0_is_the_first_release():
-    assert __version__ == "3.0.0"
-    assert 'version = "3.0.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+def test_version_3_0_was_the_first_release():
+    assert int(__version__.split(".")[0]) >= 3
+    assert f'version = "{__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## 3.0.0" in changelog and "no bot" in changelog.lower()
     release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
@@ -395,7 +395,7 @@ def test_the_dashboard_shows_the_new_panels_once():
     assert sorted({i for i in ids if ids.count(i) > 1}) == []
     for needed in ("aggpanel", "agg-bar", "agg-txt", "agg-lines", "net-panel", "net-table", "net-board", "su-dgoal"):
         assert needed in ids
-    assert 'data-goal="profit"' in html and "v3.0" in html
+    assert 'data-goal="profit"' in html and "__VERSION__" in html  # the controller writes the version in
 
 
 def test_telegram_has_a_network_command():

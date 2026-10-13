@@ -59,6 +59,7 @@ def build_core(
     fees = fees_for(cfg, contract)
     risk = RiskManager(cfg.risk, cfg.account, plan, contract, schedule, tracker, fees, cfg.funded, cfg.aggressive,
                        book=book)
+    risk.edge_sizing = cfg.probability.enabled and cfg.probability.sizing  # the dashboard shows the strongest size too
     params = dict(cfg.strategy.params)
     if cfg.aggressive.enabled and cfg.strategy.name == "adaptive":  # more chances a day, each still judged and risk-checked
         params.setdefault("trades_multiple", cfg.aggressive.trades_multiple)

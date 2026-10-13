@@ -54,8 +54,8 @@ UTC = timezone.utc
 
 FLATTEN_RETRY = timedelta(seconds=5)
 QUOTE_FRESH = timedelta(seconds=5)  # older bid/offer quotes aren't trusted for pricing entries
-MIN_CEILING_TICKS = 4
-CHART_BARS = 120  # bars kept for the trade chart (10 hours of 5-minute bars)  # a trade with less room than this before the consistency line isn't worth its costs
+MIN_CEILING_TICKS = 4  # a trade with less room than this before the consistency line isn't worth its costs
+CHART_BARS = 120  # bars kept for the trade chart (10 hours of 5-minute bars)
 
 
 @dataclass
@@ -155,6 +155,7 @@ class TradingCore:
         self.keeps_records = True
         self.closing: str | None = None  # this market is being dropped: no new entries (live.py)
         self.chart_bars: deque[Bar] = deque(maxlen=CHART_BARS)  # recent bars for the dashboard's trade chart
+        self.forming: list | None = None  # the bar still forming from live prices: [start, open, high, low, close]
         from topstep_bot.probability import Calculator
 
         self.probability = Calculator(self)  # P(win) and expected value of every signal (probability.py)
@@ -341,6 +342,8 @@ class TradingCore:
         self.last_bar = bar
         if not self.chart_bars or bar.ts > self.chart_bars[-1].ts:
             self.chart_bars.append(bar)
+        if self.forming is not None and self.forming[0] <= bar.ts:
+            self.forming = None  # the closed bar replaces what was forming
         self.atr.update(bar.high, bar.low, bar.close)
         rth = self.schedule.is_rth(bar.ts, self.strategy.rth_open, self.strategy.rth_close)
         self.regime.update(bar.high, bar.low, bar.close, rth=rth)
@@ -478,6 +481,7 @@ class TradingCore:
                                         limit_price=plan.limit, planned_risk=plan.planned_risk)
         if trade is not None:
             trade.context = self.market_snapshot(entry_ref, ctx.bar_close)
+            trade.odds = est.to_dict() if est is not None else None
         if self.recommender:
             self.recommender.record_active(sig, ctx, entry_ref, plan, "taken" if trade else "skipped",
                                            "" if trade else "order could not be placed", tag=trade.tag if trade else None)
@@ -669,6 +673,7 @@ class TradingCore:
     async def on_price(self, ts: datetime, price: float) -> None:
         self.last_price = price
         self.orders.last_price = price
+        self._form_bar(ts, price)
         if self.orders.is_flat:
             return
         if self.orders.trade is not None:
@@ -678,6 +683,43 @@ class TradingCore:
         reason = self.risk.check_open_risk(self.balance, open_pnl)
         if reason:
             await self._flatten(reason, ts, kind="risk")
+
+    def _form_bar(self, ts: datetime, price: float) -> None:
+        """Live prices build the bar that is still open, so the chart moves between bar closes."""
+        minutes = self.cfg.instrument.timeframe_minutes
+        start = ts.replace(second=0, microsecond=0) - timedelta(minutes=ts.minute % minutes) if minutes <= 60 else None
+        if start is None or (self.last_bar is not None and start <= self.last_bar.ts):
+            return
+        f = self.forming
+        if f is None or f[0] != start:
+            self.forming = [start, price, price, price, price]
+        else:
+            f[2], f[3], f[4] = max(f[2], price), min(f[3], price), price
+
+    def chart(self) -> dict:
+        """The dashboard's trade chart: recent candles, the bar forming now, the open trade's levels and today's fills."""
+        rnd = self.contract.round_price
+
+        def candle(ts: datetime, o: float, h: float, lo: float, c: float) -> list:
+            return [int(ts.timestamp()), rnd(o), rnd(h), rnd(lo), rnd(c)]
+
+        out: dict = {"tf": self.cfg.instrument.timeframe_minutes, "tz": str(self.schedule.tz),
+                     "symbol": self.contract.name, "decimals": self.contract.price_decimals,
+                     "bars": [candle(b.ts, b.open, b.high, b.low, b.close) for b in self.chart_bars],
+                     "forming": candle(*self.forming) if self.forming else None, "price": self.last_price,
+                     "trade": None, "fills": []}
+        t = self.orders.trade
+        if t is not None:
+            out["trade"] = {"side": t.side.label, "entry": t.entry_price, "stop": t.stop_price, "target": t.target_price,
+                            "initial_stop": t.initial_stop, "size": t.filled_size or t.size, "state": t.state.value,
+                            "opened": int(t.opened_at.timestamp()) if t.opened_at else None, "strategy": t.strategy}
+        first = self.chart_bars[0].ts if self.chart_bars else None
+        for c in self.closed_trades[-20:]:
+            if c.opened_at is None or c.closed_at is None or (first is not None and c.closed_at < first):
+                continue
+            out["fills"].append({"side": c.side.label, "in": int(c.opened_at.timestamp()), "entry": c.entry_price,
+                                 "out": int(c.closed_at.timestamp()), "exit": c.exit_price, "pnl": round(c.net_pnl, 2)})
+        return out
 
     def observe_extremes(self, bar: Bar) -> float:
         """Backtests: worst intrabar equity for the open position (Topstep checks the MLL in real time)."""
@@ -817,6 +859,7 @@ class TradingCore:
         if t.entry_price is not None and price is not None and t.filled_size:
             d["open_pnl"] = round(self.orders.open_pnl(price), 2)
             d["r_now"] = round((price - t.entry_price) * t.side.sign / t.risk_points, 2) if t.risk_points else None
+        d["odds"] = t.odds  # the probability calculator's view when it was taken
         d["breakeven_ok"] = (t.entry_price is not None and t.stop_order_id is not None and price is not None
                              and (t.stop_price - t.entry_price) * t.side.sign < 0
                              and (price - t.entry_price) * t.side.sign >= self.contract.price_offset(2))
@@ -862,6 +905,7 @@ class TradingCore:
             "profit_target": progress.profit_target if progress else None,
             "total_profit": round(self.balance - start, 2),
             "trade": self._trade_view(trade) if trade else None,
+            "chart": self.chart(),
             "trades_today": [{**t.to_dict(), "time": self.schedule.local(t.closed_at).strftime("%H:%M")}
                              for t in reversed(self.closed_trades)
                              if t.closed_at and self.schedule.trading_day(t.closed_at) == self.current_day][:20],

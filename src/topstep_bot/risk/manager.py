@@ -72,6 +72,7 @@ class RiskManager:
         self.cfg = cfg
         self.funded = funded_cfg or FundedConfig()
         self.aggressive = aggressive_cfg or AggressiveConfig()
+        self.edge_sizing = False  # the probability calculator sizes aggressive trades by their edge (factory.py)
         self.account_cfg = account
         self.plan = plan
         self.stage = account.stage
@@ -429,6 +430,9 @@ class RiskManager:
                 "realized_today": round(self.realized_today, 2),
                 "locked_in": None if self.locked_floor() is None else round(self.locked_floor(), 2),
                 "lock_in_from": round(self.aggressive.lock_in_at * self.aggressive_goal, 2),
+                # a large, well-measured edge may risk this much (probability.sizing); a thin one less than next_trade_risk
+                "strong_trade_risk": round(self.trade_risk(balance, self.aggressive.max_conviction), 2)
+                if self.edge_sizing else None,
             },
             "risk_scale": self.risk_scale,
             "paused": self.paused,

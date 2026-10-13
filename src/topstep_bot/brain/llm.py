@@ -1,6 +1,6 @@
 """Optional AI answers: a Claude model reads the bot's records through the same lookups (facts.py).
 
-Off unless you turn it on (brain.ai) and save a Claude API key (Setup or AI Coach tab: the coach
+Off unless you turn it on (brain.ai) and save a Claude API key (Setup tab or Ask > Deep review: the coach
 uses the same key). The model gets no trading tools - only the read-only lookups - and is told to
 answer from what they return and nothing else. Each question costs a little on your Claude API
 account and counts toward the coach's monthly budget (coach.monthly_budget_usd). If the AI can't be

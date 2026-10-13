@@ -20,6 +20,7 @@ from topstep_bot.live import Controls, LiveRunner
 from topstep_bot.market_pick import lane_symbols, same_product
 from topstep_bot.models import OrderSide
 from topstep_bot.risk.book import AccountBook
+from topstep_bot.risk.guards import DEFAULT_MAX_ENTRIES_PER_DAY
 from topstep_bot.risk.topstep import PLANS, LossLimitTracker
 
 from .conftest import ct, offline_contract, run
@@ -328,6 +329,8 @@ def test_markets_are_added_dropped_and_switched_without_a_restart(tmp_path):
             text = await runner.add_market("MES", "test")
             assert "Now trading MES" in text and list(runner.lanes) == ["MNQ", "MES"]
             assert runner.lanes["MES"].core.last_bar is not None  # warmed up like the first market
+            guards = {c.orders.guard.max_entries_per_day for c in runner.cores()}
+            assert guards == {2 * DEFAULT_MAX_ENTRIES_PER_DAY}  # the shared safety limit: one allowance per market
             for bad, why in (("NQ", "same product"), ("MES", "already trades"), ("XYZ", "Unknown market")):
                 try:
                     await runner.add_market(bad, "test")
@@ -351,6 +354,7 @@ def test_markets_are_added_dropped_and_switched_without_a_restart(tmp_path):
             from topstep_bot import market_pick as mp
 
             assert mp.load_today(runner.cfg)["markets"] == ["MGC"]  # a restart today keeps it
+            assert runner.core.orders.guard.max_entries_per_day == DEFAULT_MAX_ENTRIES_PER_DAY
             try:
                 await runner.remove_market("MGC", "test")
             except ValueError as exc:
