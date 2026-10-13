@@ -153,7 +153,11 @@ class TradingCore:
         # market keeping the account's records writes the day's result (``keeps_records``).
         self.day_roller: Callable[[datetime], Awaitable[None]] | None = None
         self.keeps_records = True
+        self.closing: str | None = None  # this market is being dropped: no new entries (live.py)
         self.chart_bars: deque[Bar] = deque(maxlen=CHART_BARS)  # recent bars for the dashboard's trade chart
+        from topstep_bot.probability import Calculator
+
+        self.probability = Calculator(self)  # P(win) and expected value of every signal (probability.py)
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
@@ -442,7 +446,14 @@ class TradingCore:
                 await self.orders.exit(f"reversal signal: {sig.reason}")
             return
         now = ctx.bar_close
+        est = self.estimate_signal(sig, now)
         reason = f"bot halted ({self.halted})" if self.halted else self.risk.entry_block_reason(now, self.balance)
+        if reason is None and self.closing:
+            reason = self.closing
+        if reason is None and est is not None and self.cfg.probability.veto and self.knowledge is not None \
+                and est.confident_loser(self.knowledge.min_samples):
+            reason = (f"the probability calculator is at least 90% sure it loses after costs "
+                      f"(P(win) {est.p_win:.0%}, expected {est.ev_r:+.2f}R, range up to {est.ev_hi:+.2f}R)")
         if reason:
             self._note_skip(f"Skipped {side.label} signal: {reason}")
             if self.recommender:
@@ -490,8 +501,7 @@ class TradingCore:
             return f"stop is {c.ticks(distance):.0f} ticks away (max {self.cfg.risk.max_stop_ticks})"
         max_slip = self.cfg.execution.max_entry_slippage_ticks
         worst_entry = entry_ref + side.sign * c.price_offset(max_slip or 0)
-        # Aggressive mode sizes signals the knowledge base hasn't proven yet smaller (adaptive marks them).
-        conviction = self.cfg.aggressive.unproven_risk if sig.meta.get("level") == "unproven" else 1.0
+        conviction = self.conviction(sig)
         # Risk holds even at the worst fill; near scheduled news the size is capped below Topstep's max.
         size = self.risk.position_size(worst_entry, stop, self.balance, now=self.clock(), conviction=conviction)
         if size < 1:
@@ -512,6 +522,32 @@ class TradingCore:
             limit = self.entry_limit(side, worst_entry, entry_ref)
         planned = size * self.risk.risk_per_contract(worst_entry, stop)
         return TradePlan(side, entry_ref, stop, target, size, limit, planned)
+
+    def estimate_signal(self, sig: Signal, when: datetime):
+        """The probability calculator's view of a signal (kept in ``sig.meta['estimate']``), or None."""
+        if "estimate" in sig.meta:
+            return sig.meta["estimate"]
+        est = None
+        if sig.side is not None:
+            try:
+                est = self.probability.estimate(sig.meta.get("strategy") or self.strategy.name, sig.side.label,
+                                                sig.meta.get("slot"), sig.meta.get("regime"), when=when)
+            except Exception:  # noqa: BLE001 - an estimate is advice: trading goes on without it
+                log.exception("Probability estimate failed")
+        sig.meta["estimate"] = est
+        return est
+
+    def conviction(self, sig: Signal) -> float:
+        """How big this signal's trade is, as a share of the usual risk (aggressive mode only; see trade_risk).
+
+        With the probability calculator's sizing on: a quarter of the Kelly fraction of its P(win) and payoff. Without
+        it: full size, or ``unproven_risk`` for signals the knowledge base hasn't proven (adaptive marks them)."""
+        a = self.cfg.aggressive
+        est = sig.meta.get("estimate")
+        if a.enabled and self.cfg.probability.sizing and est is not None and est.n_eff >= (
+                self.knowledge.min_samples if self.knowledge else 8):
+            return est.conviction(a.max_conviction)
+        return a.unproven_risk if sig.meta.get("level") == "unproven" else 1.0
 
     def cap_reward(self, side: OrderSide, entry_ref: float, stop: float, target: float | None, size: int,
                    room: float) -> tuple[int, float | None] | str:

@@ -307,12 +307,12 @@ def test_aggressive_mode_sets_a_daily_goal_under_the_line(mnq):
 def test_aggressive_risk_presses_with_profit_and_backs_off_when_unproven_or_stressed(mnq):
     rm = aggressive_core(mnq).risk
     assert rm.trade_risk(50_000) == 200 and rm.trade_risk(50_000, conviction=0.5) == 100
-    rm.record_trade(400, T0)  # house money: a quarter of today's realized profit
-    assert rm.trade_risk(50_400) == 300
+    rm.record_trade(400, T0)  # house money: 35% of today's realized profit
+    assert rm.trade_risk(50_400) == pytest.approx(340)
     rm.record_trade(2_000, T0)
-    assert rm.trade_risk(52_400) == 400  # never past twice the risk per trade
+    assert rm.trade_risk(52_400) == 500  # never past 2.5 times the risk per trade
     rm.stressed = True
-    assert rm.trade_risk(52_400) == 200
+    assert rm.trade_risk(52_400) == 250
     rm.stressed = False
     rm.tracker.floor = 52_400 - 900  # $900 above the MLL, $650 after the default $250 buffer
     assert rm.trade_risk(52_400) == pytest.approx(0.25 * (900 - rm.cfg.mll_buffer))

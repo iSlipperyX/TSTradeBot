@@ -161,20 +161,30 @@ class RiskManager:
     def trade_risk(self, balance: float, conviction: float = 1.0) -> float:
         """Dollars the next trade may lose at its stop (before Topstep's and the daily limits are applied).
 
-        Aggressive mode: ``conviction`` < 1 for signals the knowledge base hasn't proven; part of today's
+        Aggressive mode: ``conviction`` scales the risk (below 1 for signals the knowledge base hasn't proven or the
+        probability calculator rates thin, up to ``max_conviction`` for a large, well-measured edge); part of today's
         realized profit is added (house money), up to ``max_risk_multiple``; a stressed market halves it;
         and it never exceeds ``cushion_share`` of the room above the Maximum Loss Limit."""
         base = self.cfg.risk_per_trade * self.risk_scale
         a = self.aggressive
         if not a.enabled:
             return base
-        risk = base * min(1.0, max(0.0, conviction)) + a.house_money * max(0.0, self.realized_today)
+        risk = base * min(a.max_conviction, max(0.0, conviction)) + a.house_money * max(0.0, self.realized_today)
         risk = min(risk, a.max_risk_multiple * base)
         if self.stressed:
             risk *= a.stressed_risk
         others = self.others()
         room = self.tracker.room(balance + others.open_pnl) - others.at_risk - self.cfg.mll_buffer
         return max(0.0, min(risk, a.cushion_share * room))
+
+    @property
+    def max_trades_today(self) -> int:
+        """The account's trade allowance today: with several markets in aggressive mode, each market brings its own
+        ``max_trades_per_day`` (aggressive.trades_per_market). Every loss limit still counts the whole account."""
+        markets = len(self.book.lanes) if self.book.shared else 1
+        if self.aggressive.enabled and self.aggressive.trades_per_market and markets > 1:
+            return self.cfg.max_trades_per_day * markets
+        return self.cfg.max_trades_per_day
 
     @property
     def topstep_dll(self) -> float | None:
@@ -329,8 +339,8 @@ class RiskManager:
         session_reason = self.schedule.entry_block_reason(now)
         if session_reason:
             return session_reason
-        if self.trades_today >= self.cfg.max_trades_per_day and not manual:
-            return f"max trades per day ({self.cfg.max_trades_per_day}) reached"
+        if self.trades_today >= self.max_trades_today and not manual:
+            return f"max trades per day ({self.max_trades_today}) reached"
         if self.consecutive_losses >= self.cfg.max_consecutive_losses:
             return f"{self.consecutive_losses} consecutive losses - done for the day"
         if self.last_loss_at and now - self.last_loss_at < timedelta(minutes=self.cfg.cooldown_minutes_after_loss):
@@ -386,7 +396,7 @@ class RiskManager:
             "day": self.day.isoformat() if self.day else None,
             "day_pnl": round(self.day_pnl(balance, open_pnl), 2),
             "trades_today": self.trades_today,
-            "max_trades": self.cfg.max_trades_per_day,
+            "max_trades": self.max_trades_today,
             "wins_today": self.wins_today,
             "mll_size": self.plan.max_loss_limit,
             "consecutive_losses": self.consecutive_losses,

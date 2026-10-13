@@ -1063,6 +1063,8 @@ class LiveRunner:
             if not others:
                 raise ValueError(f"{lane.symbol} is the only market left: add or switch to another one first.")
             lane.closing = f"dropped by {source}"
+            if lane.core:
+                lane.core.closing = f"{lane.symbol} is being dropped ({lane.closing})"
             if lane.core and not lane.core.orders.is_flat:
                 if flatten:
                     await lane.core._flatten(f"market dropped by {source}", self.now())

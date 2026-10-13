@@ -438,17 +438,25 @@ class AggressiveConfig(_Section):
         description="Profit to aim for each day: trading stops for the day once it is reached. Default: 45% of the plan's "
                     "profit target (under the Combine's 55% consistency line), never above an XFA payout path's daily cap.")
     trades_multiple: int = Field(
-        default=2, ge=1, le=3,
+        default=3, ge=1, le=4,
         description="With the adaptive strategy: each strategy may trade this many times its own daily count (ORB's one "
                     "breakout a day becomes two). Every one is still judged by the knowledge base and every risk rule.")
     unproven_risk: float = Field(
         default=0.5, gt=0, le=1,
         description="Share of the risk per trade used for signals the knowledge base hasn't proven yet (1 = full size).")
     house_money: float = Field(
-        default=0.25, ge=0, le=0.5,
+        default=0.35, ge=0, le=0.5,
         description="Share of today's realized profit added to the next trade's risk (0 = never press).")
     max_risk_multiple: float = Field(
-        default=2.0, ge=1, le=3, description="Risk per trade never grows past this multiple of risk.risk_per_trade.")
+        default=2.5, ge=1, le=3, description="Risk per trade never grows past this multiple of risk.risk_per_trade.")
+    max_conviction: float = Field(
+        default=1.5, ge=1, le=2,
+        description="With the probability calculator's sizing: a signal with a large, well-measured edge may risk up to "
+                    "this multiple of the usual risk (still within max_risk_multiple and every hard limit).")
+    trades_per_market: bool = Field(
+        default=True,
+        description="Trading several markets: each market gets risk.max_trades_per_day of its own (the account's total "
+                    "is that times the number of markets). Every loss limit still counts the whole account.")
     cushion_share: float = Field(
         default=0.25, gt=0, le=0.5,
         description="One trade never risks more than this share of the room left above the Maximum Loss Limit (after "
@@ -466,6 +474,23 @@ class AggressiveConfig(_Section):
                     "in the top 10% of its last decade).")
     flatten_before_news: bool = Field(
         default=True, description="Close an open trade just before a scheduled high-impact release instead of holding through it.")
+
+
+class ProbabilityConfig(_Section):
+    """The probability calculator (probability.py): P(win), payoff and expected value of every signal."""
+
+    enabled: bool = Field(default=True, description="Work out P(win) and the expected value of every signal (shown and recorded).")
+    veto: bool = Field(
+        default=True,
+        description="Skip a signal the calculator is at least 90% sure loses money after costs (only with enough evidence).")
+    sizing: bool = Field(
+        default=True,
+        description="Aggressive mode: size each trade by a quarter of the Kelly fraction (instead of a fixed share for "
+                    "unproven signals), within aggressive.max_conviction and every hard limit.")
+    network: bool = Field(
+        default=True,
+        description="Learn from related markets too: the knowledge bases of the other markets of the same asset class "
+                    "inform a signal (at a fraction of the weight of this market's own outcomes).")
 
 
 class CoachConfig(_Section):
@@ -680,6 +705,7 @@ class BotConfig(_Section):
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     first_trade: FirstTradeConfig = Field(default_factory=FirstTradeConfig)
     aggressive: AggressiveConfig = Field(default_factory=AggressiveConfig)
+    probability: ProbabilityConfig = Field(default_factory=ProbabilityConfig)
     brain: BrainConfig = Field(default_factory=BrainConfig)
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     funded: FundedConfig = Field(default_factory=FundedConfig)

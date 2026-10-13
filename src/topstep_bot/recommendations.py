@@ -66,6 +66,8 @@ class Recommendation:
     mae_r: float | None = None  # furthest it went against it so far, in R
     bars: int = 0  # bars followed
     facts: dict = field(default_factory=dict)  # a real trade's TradingCore.trade_facts, once it closes
+    p_win: float | None = None  # the probability calculator's view when it was given (probability.py)
+    ev_r: float | None = None
 
     def __post_init__(self) -> None:
         if self.initial_stop is None:
@@ -225,6 +227,8 @@ class RecommendationBook:
             reason=sig.reason, status="idea", note=note, slot=core.slot(close_time), regime=core.regime.value,
             context=core.market_snapshot(entry, close_time),
         )
+        sig.meta.setdefault("strategy", strat.name)
+        self._stamp(rec, core.estimate_signal(sig, close_time))
         self._store(rec, new=True)
 
     def record_active(
@@ -250,9 +254,15 @@ class RecommendationBook:
             slot=sig.meta.get("slot") or self.core.slot(ctx.bar_close), regime=sig.meta.get("regime") or self.core.regime.value,
             context=self.core.market_snapshot(entry_ref, ctx.bar_close),
         )
+        self._stamp(rec, self.core.estimate_signal(sig, ctx.bar_close))
         self._store(rec, new=True)
         if self.core.reasoner is not None and not self.quiet:
             self.core.reasoner.on_signal(sig, ctx, entry_ref, plan, status, note, tag)
+
+    @staticmethod
+    def _stamp(rec: Recommendation, est) -> None:
+        if est is not None:
+            rec.p_win, rec.ev_r = round(est.p_win, 3), round(est.ev_r, 3)
 
     def trade_closed(self, t: ManagedTrade) -> None:
         """A real trade finished: give its recommendation the actual result."""
@@ -346,6 +356,7 @@ class RecommendationBook:
             regime=rec.regime or "calm", r=rec.outcome_r, usd=rec.outcome_usd,
             source="shadow" if rec.hypothetical else "real", why=why, **facts,
             news=bool(calendar.on_day(day, self.core.schedule.tz)) if calendar is not None else None,
+            p_win=rec.p_win, ev_r=rec.ev_r,
         ), save=not self.quiet)
 
     def _idea_cost_r(self, rec: Recommendation) -> float | None:
@@ -416,6 +427,8 @@ class RecommendationBook:
             "outcome_usd": rec.outcome_usd,
             "outcome_r": rec.outcome_r,
             "hypothetical": rec.hypothetical,
+            "p_win": rec.p_win,
+            "ev_r": rec.ev_r,
         }
 
     def snapshot(self, limit: int = 25) -> dict[str, Any]:
