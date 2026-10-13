@@ -156,14 +156,17 @@ def load_today(cfg: BotConfig, now: datetime | None = None) -> dict | None:
 
     if (now or datetime.now(UTC)) >= until or data.get("symbol") not in SPECS:
         return None
+    data["markets"] = [m for m in data.get("markets") or [data["symbol"]] if m in SPECS] or [data["symbol"]]
     return data
 
 
-def set_today(cfg: BotConfig, symbol: str, source: str, now: datetime | None = None) -> dict:
+def set_today(cfg: BotConfig, symbol: str, source: str, now: datetime | None = None,
+              markets: list[str] | None = None) -> dict:
+    """Trade ``symbol`` (and, trading several at once, all of ``markets``) for the rest of the trading day."""
     now = now or datetime.now(UTC)
     day, until = _switch_day(cfg, now)
     data = {"symbol": symbol.upper(), "day": day, "until": until.isoformat(), "at": now.isoformat(timespec="minutes"),
-            "source": source}
+            "source": source, "markets": [m.upper() for m in (markets or [symbol])]}
     path = today_path(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=1), encoding="utf-8")
@@ -175,6 +178,34 @@ def clear_today(cfg: BotConfig) -> bool:
     existed = path.exists()
     path.unlink(missing_ok=True)
     return existed
+
+
+def same_product(a: str, b: str) -> bool:
+    """MNQ and NQ are one product: trading both at once would only double the same bet."""
+    from topstep_bot.market_knowledge import product_for
+
+    pa, pb = product_for(a), product_for(b)
+    return a.upper() == b.upper() or (pa is not None and pb is not None and pa.root == pb.root)
+
+
+def lane_symbols(cfg: BotConfig, primary: str, pick: Pick | None = None) -> list[str]:
+    """Every market the account trades at once: ``primary`` first, then instrument.markets, then (auto_pick with
+    max_markets above 1) the next best markets that showed an edge on held-back days. Never two of one product."""
+    from topstep_bot.config import MAX_MARKETS
+
+    wanted = list(cfg.instrument.markets)
+    limit = MAX_MARKETS
+    if pick is not None and cfg.instrument.auto_pick and cfg.instrument.max_markets > 1:
+        ranked = sorted((c for c in pick.candidates if c.eligible), key=lambda c: -(c.r_per_day or 0))
+        wanted += [c.symbol for c in ranked]
+        limit = min(MAX_MARKETS, max(cfg.instrument.max_markets, 1 + len(cfg.instrument.markets)))
+    out = [primary.upper()]
+    for symbol in wanted:
+        if len(out) >= limit:
+            break
+        if not any(same_product(symbol, s) for s in out):
+            out.append(symbol.upper())
+    return out
 
 
 def fingerprint(cfg: BotConfig) -> str:

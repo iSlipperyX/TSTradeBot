@@ -249,7 +249,7 @@ def test_picking_among_many_markets_also_asks_for_money_on_the_earlier_days(tmp_
 
 # ------------------------------------------------------------------------------ the controller
 
-def test_switching_the_market_restarts_the_bot_on_it(tmp_path, monkeypatch):
+def test_switching_the_market_happens_without_a_restart(tmp_path, monkeypatch):
     from .test_controller import scenario, until
 
     async def body(ctl, http):
@@ -263,20 +263,17 @@ def test_switching_the_market_restarts_the_bot_on_it(tmp_path, monkeypatch):
         assert bad["ok"] is False and "Unknown market" in bad["message"]
         pid = ctl.bot.proc.pid
         r = (await http.post("/api/market/switch", json={"symbol": "6E"})).json()
-        assert r["ok"] and "6E" in r["message"] and "restarting" in r["message"]
-        await until(lambda: ctl.bot.state == "running" and ctl.bot.proc.pid != pid)
+        assert r["ok"] and "Now trading 6E" in r["message"] and "restarting" not in r["message"]
+        assert ctl.bot.state == "running" and ctl.bot.proc.pid == pid  # no restart
         cfg = ctl.account_cfg(ctl.bot.account)
-        assert mp.load_today(cfg)["symbol"] == "6E" and mp.current_symbol(cfg) == "6E"
-        assert (await http.post("/api/markets", json={})).json()["current"] == "6E"
-        again = (await http.post("/api/market/switch", json={"symbol": "6E"})).json()
-        assert "already trades 6E" in again["message"]
+        mp.set_today(cfg, "6E", "test")  # what the running bot saves (the fake one doesn't)
         back = (await http.post("/api/market/switch", json={"symbol": "usual"})).json()
-        assert back["ok"] and "usual market (MNQ)" in back["message"] and mp.load_today(cfg) is None
-        await until(lambda: ctl.bot.state == "running")
+        assert back["ok"] and "Now trading MNQ" in back["message"] and mp.load_today(cfg) is None
+        assert ctl.bot.proc.pid == pid
     scenario(tmp_path, body)
 
 
-def test_no_switch_with_an_open_trade(tmp_path, monkeypatch):
+def test_a_switch_with_an_open_trade_lets_that_trade_finish(tmp_path, monkeypatch):
     from .test_controller import scenario, until
 
     monkeypatch.setenv("FAKE_POSITION", "1")
@@ -285,8 +282,7 @@ def test_no_switch_with_an_open_trade(tmp_path, monkeypatch):
         await ctl.bot.start("test")
         await until(lambda: ctl.bot.state == "running")
         r = (await http.post("/api/market/switch", json={"symbol": "MES"})).json()
-        assert r["ok"] is False and "Close it first" in r["message"]
-        assert mp.load_today(ctl.account_cfg(ctl.bot.account)) is None
+        assert r["ok"] and "dropped as soon as its open trade is closed" in r["message"]
     scenario(tmp_path, body)
 
 

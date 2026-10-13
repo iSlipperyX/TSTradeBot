@@ -54,7 +54,10 @@ COMMANDS = [
     ("research", "What the bot has gathered from the internet"),
     ("network", "Market network: how every market is moving together, stress, jump risk"),
     ("lab", "Simulation Lab: every market and strategy as fresh Combines, plus opportunities"),
-    ("switch", "Trade another market for the rest of today, e.g. /switch MES (or /switch usual)"),
+    ("markets", "The markets the bot trades now (it can trade several at once)"),
+    ("add", "Trade another market alongside the others, e.g. /add MES"),
+    ("drop", "Stop trading a market, e.g. /drop MES (an open trade finishes first)"),
+    ("switch", "Trade another market instead, no restart, e.g. /switch MES (or /switch usual)"),
     ("coach", "AI coach: latest lessons, proposals and spending"),
     ("rules", "Topstep rules the bot knows and follows"),
     ("knowledge", "What the bot has learned: which strategy works when"),
@@ -72,7 +75,7 @@ DANGEROUS = {"flatten", "stop", "restart", "startbot"}
 CONTROL = {"pause", "resume", *DANGEROUS}  # may target one account or all
 # One account at a time. /rules, /update and /dashboard aren't about one account's bot.
 PER_ACCOUNT = {"ideas", "trades", "settings", "knowledge", "train", "log", "brief", "next", "learn", "market", "funded",
-               "switch"}
+               "switch", "markets", "add", "drop"}
 CONFIRM_SECONDS = 60
 MAX_TEXT = 4000
 
@@ -377,6 +380,9 @@ class TelegramController:
         if action == "switch":
             symbol, account = payload
             return await self._do("switch_market", symbol, source, account=account)
+        if action in ("add", "drop"):
+            symbol, account = payload
+            return await self._do("add_market" if action == "add" else "remove_market", symbol, source, account=account)
         return await self._execute(action, source, payload)
 
     async def _ask(self, question: str, action: str, payload=None, yes: str | None = None) -> None:
@@ -544,14 +550,27 @@ class TelegramController:
             if not hasattr(self.actions, "switch_market"):
                 raise RuntimeError("/switch is only available when the controller is running")
             if not args:
-                await self.send("Usage: /switch <market>, e.g. /switch MES, or /switch usual to go back. The bot must be "
-                                "flat; it restarts on that market for the rest of today (until 15:10 CT).")
+                await self.send("Usage: /switch <market>, e.g. /switch MES, or /switch usual to go back. The bot switches "
+                                "at once, without a restart; an open trade on the old market finishes first.")
                 return
             symbol = args[0].upper()
             back = symbol in ("USUAL", "BACK")
             question = ("Go back to the usual market" if back else f"Trade {symbol} for the rest of today") + f"{where}? " \
-                + "The bot restarts on it (about half a minute); it must have no open trade."
+                + "No restart: an open trade on the old market keeps its stop and target and finishes first."
             await self._ask(question, "switch", ("" if back else symbol, target), yes="Yes, switch")
+        elif command == "markets":
+            await self.send(await self._do("markets_text", account=target))
+        elif command in ("add", "drop"):
+            if not hasattr(self.actions, "add_market"):
+                raise RuntimeError(f"/{command} is only available when the controller is running")
+            if not args:
+                await self.send(f"Usage: /{command} <market>, e.g. /{command} MES. /markets shows what the bot trades.")
+                return
+            symbol = args[0].upper()
+            question = (f"Trade {symbol} alongside the other market(s){where}? Every Topstep limit counts all of them "
+                        "together." if command == "add" else
+                        f"Stop trading {symbol}{where}? An open trade there keeps its stop and target and finishes first.")
+            await self._ask(question, command, (symbol, target), yes="Yes, add it" if command == "add" else "Yes, drop it")
         elif command == "reset":
             await self._ask(f"Undo every setting changed from the dashboard/Telegram{where} and go back to config.yaml?",
                             "reset", target, yes="Yes, reset")

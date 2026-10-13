@@ -307,12 +307,12 @@ def test_aggressive_mode_sets_a_daily_goal_under_the_line(mnq):
 def test_aggressive_risk_presses_with_profit_and_backs_off_when_unproven_or_stressed(mnq):
     rm = aggressive_core(mnq).risk
     assert rm.trade_risk(50_000) == 200 and rm.trade_risk(50_000, conviction=0.5) == 100
-    rm.record_trade(400, T0)  # house money: a quarter of today's realized profit
-    assert rm.trade_risk(50_400) == 300
+    rm.record_trade(400, T0)  # house money: 35% of today's realized profit
+    assert rm.trade_risk(50_400) == pytest.approx(340)
     rm.record_trade(2_000, T0)
-    assert rm.trade_risk(52_400) == 400  # never past twice the risk per trade
+    assert rm.trade_risk(52_400) == 500  # never past 2.5 times the risk per trade
     rm.stressed = True
-    assert rm.trade_risk(52_400) == 200
+    assert rm.trade_risk(52_400) == 250
     rm.stressed = False
     rm.tracker.floor = 52_400 - 900  # $900 above the MLL, $650 after the default $250 buffer
     assert rm.trade_risk(52_400) == pytest.approx(0.25 * (900 - rm.cfg.mll_buffer))
@@ -380,9 +380,9 @@ def test_the_setup_tab_turns_on_make_money_every_day(tmp_path):
 
 # ------------------------------------------------------------------------------ the release
 
-def test_version_3_0_is_the_first_release():
-    assert __version__ == "3.0.0"
-    assert 'version = "3.0.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+def test_version_3_0_was_the_first_release():
+    assert int(__version__.split(".")[0]) >= 3
+    assert f'version = "{__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## 3.0.0" in changelog and "no bot" in changelog.lower()
     release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
@@ -395,7 +395,7 @@ def test_the_dashboard_shows_the_new_panels_once():
     assert sorted({i for i in ids if ids.count(i) > 1}) == []
     for needed in ("aggpanel", "agg-bar", "agg-txt", "agg-lines", "net-panel", "net-table", "net-board", "su-dgoal"):
         assert needed in ids
-    assert 'data-goal="profit"' in html and "v3.0" in html
+    assert 'data-goal="profit"' in html and "__VERSION__" in html  # the controller writes the version in
 
 
 def test_telegram_has_a_network_command():

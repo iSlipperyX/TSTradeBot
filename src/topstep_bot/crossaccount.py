@@ -51,7 +51,7 @@ class PositionBook:
     """This account's view of what every account holds (see the module docstring)."""
 
     def __init__(self, folder: Path, account: str, mode: str, symbol: str, scope: str = "correlated",
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, lane: str | None = None):
         self.folder = Path(folder)
         self.account = account
         self.mode = mode
@@ -60,7 +60,10 @@ class PositionBook:
         self.key = market_key(symbol, scope)
         self.clock = clock
         self.folder.mkdir(parents=True, exist_ok=True)
-        self._file = self.folder / f"{account}.json"
+        # With several markets in one account, each market (lane) keeps its own file: the guard then also stops
+        # this account from holding opposite sides of related markets at once.
+        self.lane = lane
+        self._file = self.folder / (f"{account}.json" if lane is None else f"{account}~{lane}.json")
         self._lock = self.folder / ".lock"
         self._side: int | None = None  # unknown until the first sync, which rewrites any file left from before
         self._claimed_at = 0.0
@@ -91,6 +94,9 @@ class PositionBook:
         for o in self.others():
             if o.get("side") == -side and market_key(o.get("symbol", ""), self.scope) == self.key:
                 held = "long" if o["side"] > 0 else "short"
+                if o.get("account") == self.account:
+                    return (f"this account is already {held} {o.get('symbol')}: the opposite side of a related market "
+                            "at the same time would be a hedge, so the bot doesn't")
                 return (f"account {o.get('account')} is {held} {o.get('symbol')} - opposite positions across accounts "
                         "count as hedging, which Topstep prohibits")
         return None

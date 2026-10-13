@@ -20,7 +20,7 @@ leads the energy complex. This module reads everything the bot already collects 
 
 It is saved to ``data/network.json`` (the controller refreshes it every hour; ``topstep-bot
 network`` builds it on demand) and read by every account's bot. It shows on the dashboard's
-Market tab, in Telegram (/network), to the Ask answers and to the AI coach.
+Knowledge tab (Market data), in Telegram (/network), to the Ask answers and to the AI coach.
 
 What it may change: only protection. Jump risk makes trades smaller; in the Daily profit mode a
 stressed market halves the risk per trade. Nothing here makes the bot trade bigger or more often,
@@ -461,7 +461,7 @@ def focus_for(symbol: str | None) -> list[str]:
 def text(picture: dict[str, Any] | None, focus: list[str] | None = None) -> str:
     """The network in plain words (Telegram /network, the Ask answers, the coach)."""
     if not picture:
-        return ("No market network yet. It builds from the daily price history the bot downloads (Simulations tab > "
+        return ("No market network yet. It builds from the daily price history the bot downloads (Knowledge tab > Simulations > "
                 "Download history, or wait for the background refresh), then refreshes every hour.")
     b = picture["board"]
     built = picture.get("built", "")[:16].replace("T", " ")

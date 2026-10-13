@@ -128,7 +128,7 @@ def test_runner_ramp_up_counts_days_with_trades(mnq, tmp_path):
 
     cfg = BotConfig.model_validate({"mode": "live", "data_dir": str(tmp_path), "risk": {"ramp_up_days": 2}})
     runner = LiveRunner(cfg, Secrets(username="u", api_key="k"), Controls())
-    runner.core = build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=runner.now, account_label="ACC")
+    runner.attach(build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=runner.now, account_label="ACC"))
     runner._apply_ramp_up()
     assert runner.core.risk.risk_scale == 0.5  # brand-new account
     _journal_trade(runner.journal, mnq, date(2020, 1, 2))
@@ -146,7 +146,7 @@ def test_runner_ramp_up_counts_days_with_trades(mnq, tmp_path):
 def test_daily_restart_only_when_supervised_and_flat(mnq, tmp_path):
     cfg = BotConfig.model_validate({"data_dir": str(tmp_path)})
     runner = LiveRunner(cfg, Secrets(username="u", api_key="k"), Controls())
-    runner.core = build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=runner.now, account_label="ACC")
+    runner.attach(build_core(cfg, mnq, PaperBroker(mnq, 50_000), clock=runner.now, account_label="ACC"))
     runner.started_at = ct(2026, 3, 3, 9, 0)
     after = ct(2026, 3, 3, 16, 6)
     runner._maybe_daily_restart(after)

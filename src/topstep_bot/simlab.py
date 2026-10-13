@@ -590,7 +590,7 @@ async def run_lab(cfg: BotConfig, *, starts: int = DEFAULT_STARTS, symbols: list
         if b := load_history(cfg, s):
             bars[s] = b
     if not bars:
-        raise ValueError("No price history on this PC yet. Download it first: the Simulations tab's 'Download every "
+        raise ValueError("No price history on this PC yet. Download it first: Knowledge tab > Simulations, 'Download every "
                          "market' button, or topstep-bot markets --download.")
     strats = strategies or lab_strategies(cfg)
     unknown = [s for s in strats if s not in lab_strategies(cfg)]
@@ -769,7 +769,7 @@ def report_view(report: dict[str, Any] | None, runs: int = 0) -> dict[str, Any] 
 def report_text(report: dict[str, Any] | None, top: int = 6) -> str:
     """A short plain-text version (Telegram, the console, and the AI coach)."""
     if not report:
-        return "No simulations yet. Run them on the dashboard's Simulations tab or with: topstep-bot simulate"
+        return "No simulations yet. Run them on the dashboard (Knowledge tab > Simulations) or with: topstep-bot simulate"
     t = report["totals"]
     lines = [f"Simulation Lab ({report['generated'][:16].replace('T', ' ')} UTC): {t['simulations']} live-like Combines "
              f"on {len(report['markets'])} markets - {t['passed']} passed, {t['failed']} failed, {t['open']} still open "

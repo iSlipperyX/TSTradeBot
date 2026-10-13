@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -29,6 +29,7 @@ from topstep_bot.market_context import MarketContext
 from topstep_bot.models import Account, Bar, Contract, OrderSide, Signal
 from topstep_bot.notify import Notifier
 from topstep_bot.policy import Judge
+from topstep_bot.risk.book import Exposure, mini_units
 from topstep_bot.risk.manager import RiskManager
 from topstep_bot.risk.topstep import LossLimitTracker
 from topstep_bot.sessions import SessionSchedule
@@ -54,6 +55,7 @@ UTC = timezone.utc
 FLATTEN_RETRY = timedelta(seconds=5)
 QUOTE_FRESH = timedelta(seconds=5)  # older bid/offer quotes aren't trusted for pricing entries
 MIN_CEILING_TICKS = 4  # a trade with less room than this before the consistency line isn't worth its costs
+CHART_BARS = 120  # bars kept for the trade chart (10 hours of 5-minute bars)
 
 
 @dataclass
@@ -147,6 +149,16 @@ class TradingCore:
         self.market_pick: dict | None = None  # why this market, when the bot picked it (market_pick.py)
         self.market_today: dict | None = None  # a market you switched to for the rest of the day
         self.news_archive = None  # training only: past calendars from the research library (labels news days)
+        # Several markets in one account (live.py): the desk rolls every market's day together, and only the
+        # market keeping the account's records writes the day's result (``keeps_records``).
+        self.day_roller: Callable[[datetime], Awaitable[None]] | None = None
+        self.keeps_records = True
+        self.closing: str | None = None  # this market is being dropped: no new entries (live.py)
+        self.chart_bars: deque[Bar] = deque(maxlen=CHART_BARS)  # recent bars for the dashboard's trade chart
+        self.forming: list | None = None  # the bar still forming from live prices: [start, open, high, low, close]
+        from topstep_bot.probability import Calculator
+
+        self.probability = Calculator(self)  # P(win) and expected value of every signal (probability.py)
 
         orders.on_trade_closed = self._on_trade_closed
         orders.on_event = self._on_order_event
@@ -266,8 +278,8 @@ class TradingCore:
                                f"cut to {self.cfg.aggressive.stressed_risk:.0%} today")
 
     async def end_day(self) -> None:
-        if self.current_day is None:
-            return
+        if self.current_day is None or not self.keeps_records:
+            return  # another market of this account records the day (one record per account and day)
         floor = self.tracker.end_of_day(self.balance)
         rec = DayRecord(
             self.current_day, self.risk.day_start_balance, self.balance, self._day_min_equity, self.risk.trades_today
@@ -292,6 +304,12 @@ class TradingCore:
             )
 
     async def roll_day_if_needed(self, ts: datetime) -> None:
+        if self.day_roller is not None:  # several markets: the desk rolls them all at once, records first
+            await self.day_roller(ts)
+            return
+        await self.roll_own_day(ts)
+
+    async def roll_own_day(self, ts: datetime) -> None:
         day = self.schedule.trading_day(ts)
         if day == self.current_day:
             return
@@ -322,6 +340,10 @@ class TradingCore:
     def observe_bar(self, bar: Bar) -> None:
         """Update the bot's own indicators (ATR, regime) with a closed bar."""
         self.last_bar = bar
+        if not self.chart_bars or bar.ts > self.chart_bars[-1].ts:
+            self.chart_bars.append(bar)
+        if self.forming is not None and self.forming[0] <= bar.ts:
+            self.forming = None  # the closed bar replaces what was forming
         self.atr.update(bar.high, bar.low, bar.close)
         rth = self.schedule.is_rth(bar.ts, self.strategy.rth_open, self.strategy.rth_close)
         self.regime.update(bar.high, bar.low, bar.close, rth=rth)
@@ -427,7 +449,14 @@ class TradingCore:
                 await self.orders.exit(f"reversal signal: {sig.reason}")
             return
         now = ctx.bar_close
+        est = self.estimate_signal(sig, now)
         reason = f"bot halted ({self.halted})" if self.halted else self.risk.entry_block_reason(now, self.balance)
+        if reason is None and self.closing:
+            reason = self.closing
+        if reason is None and est is not None and self.cfg.probability.veto and self.knowledge is not None \
+                and est.confident_loser(self.knowledge.min_samples):
+            reason = (f"the probability calculator is at least 90% sure it loses after costs "
+                      f"(P(win) {est.p_win:.0%}, expected {est.ev_r:+.2f}R, range up to {est.ev_hi:+.2f}R)")
         if reason:
             self._note_skip(f"Skipped {side.label} signal: {reason}")
             if self.recommender:
@@ -452,6 +481,7 @@ class TradingCore:
                                         limit_price=plan.limit, planned_risk=plan.planned_risk)
         if trade is not None:
             trade.context = self.market_snapshot(entry_ref, ctx.bar_close)
+            trade.odds = est.to_dict() if est is not None else None
         if self.recommender:
             self.recommender.record_active(sig, ctx, entry_ref, plan, "taken" if trade else "skipped",
                                            "" if trade else "order could not be placed", tag=trade.tag if trade else None)
@@ -475,8 +505,7 @@ class TradingCore:
             return f"stop is {c.ticks(distance):.0f} ticks away (max {self.cfg.risk.max_stop_ticks})"
         max_slip = self.cfg.execution.max_entry_slippage_ticks
         worst_entry = entry_ref + side.sign * c.price_offset(max_slip or 0)
-        # Aggressive mode sizes signals the knowledge base hasn't proven yet smaller (adaptive marks them).
-        conviction = self.cfg.aggressive.unproven_risk if sig.meta.get("level") == "unproven" else 1.0
+        conviction = self.conviction(sig)
         # Risk holds even at the worst fill; near scheduled news the size is capped below Topstep's max.
         size = self.risk.position_size(worst_entry, stop, self.balance, now=self.clock(), conviction=conviction)
         if size < 1:
@@ -497,6 +526,32 @@ class TradingCore:
             limit = self.entry_limit(side, worst_entry, entry_ref)
         planned = size * self.risk.risk_per_contract(worst_entry, stop)
         return TradePlan(side, entry_ref, stop, target, size, limit, planned)
+
+    def estimate_signal(self, sig: Signal, when: datetime):
+        """The probability calculator's view of a signal (kept in ``sig.meta['estimate']``), or None."""
+        if "estimate" in sig.meta:
+            return sig.meta["estimate"]
+        est = None
+        if sig.side is not None:
+            try:
+                est = self.probability.estimate(sig.meta.get("strategy") or self.strategy.name, sig.side.label,
+                                                sig.meta.get("slot"), sig.meta.get("regime"), when=when)
+            except Exception:  # noqa: BLE001 - an estimate is advice: trading goes on without it
+                log.exception("Probability estimate failed")
+        sig.meta["estimate"] = est
+        return est
+
+    def conviction(self, sig: Signal) -> float:
+        """How big this signal's trade is, as a share of the usual risk (aggressive mode only; see trade_risk).
+
+        With the probability calculator's sizing on: a quarter of the Kelly fraction of its P(win) and payoff. Without
+        it: full size, or ``unproven_risk`` for signals the knowledge base hasn't proven (adaptive marks them)."""
+        a = self.cfg.aggressive
+        est = sig.meta.get("estimate")
+        if a.enabled and self.cfg.probability.sizing and est is not None and est.n_eff >= (
+                self.knowledge.min_samples if self.knowledge else 8):
+            return est.conviction(a.max_conviction)
+        return a.unproven_risk if sig.meta.get("level") == "unproven" else 1.0
 
     def cap_reward(self, side: OrderSide, entry_ref: float, stop: float, target: float | None, size: int,
                    room: float) -> tuple[int, float | None] | str:
@@ -593,9 +648,32 @@ class TradingCore:
 
     # ------------------------------------------------------------------ prices
 
+    def exposure(self) -> Exposure:
+        """What this market has on right now, for the account book (risk/book.py): open P&L, what it could
+        still lose if its stop filled late, what it could still make at its target, and its size."""
+        c, t, pos = self.contract, self.orders.trade, self.orders.position
+        if t is None and pos == 0:
+            return Exposure(symbol=c.name)
+        price = self.last_price if self.last_price is not None else (t.ref_price if t else None)
+        per_contract_extra = (self.cfg.risk.slippage_ticks + self.risk.jump_ticks) * c.tick_value + self.orders.fees_round_turn
+        if t is None:  # a position the bot doesn't manage (yet): assume the widest stop it would ever use
+            size = abs(pos)
+            at_risk = size * (self.cfg.risk.max_stop_ticks * c.tick_value + per_contract_extra)
+            return Exposure(self.orders.open_pnl(), at_risk, 0.0, mini_units(size, c.is_micro), size, c.name)
+        size = max(t.size if t.state == TradeState.PENDING else 0, abs(pos), t.filled_size)
+        sign = t.side.sign
+        ref = price if price is not None else t.stop_price
+        loss_points = max(0.0, (ref - t.stop_price) * sign)
+        at_risk = size * (loss_points * c.point_value + per_contract_extra)
+        upside = 0.0
+        if t.target_price is not None:
+            upside = size * max(0.0, (t.target_price - ref) * sign) * c.point_value
+        return Exposure(self.orders.open_pnl(), at_risk, upside, mini_units(size, c.is_micro), size, c.name)
+
     async def on_price(self, ts: datetime, price: float) -> None:
         self.last_price = price
         self.orders.last_price = price
+        self._form_bar(ts, price)
         if self.orders.is_flat:
             return
         if self.orders.trade is not None:
@@ -605,6 +683,43 @@ class TradingCore:
         reason = self.risk.check_open_risk(self.balance, open_pnl)
         if reason:
             await self._flatten(reason, ts, kind="risk")
+
+    def _form_bar(self, ts: datetime, price: float) -> None:
+        """Live prices build the bar that is still open, so the chart moves between bar closes."""
+        minutes = self.cfg.instrument.timeframe_minutes
+        start = ts.replace(second=0, microsecond=0) - timedelta(minutes=ts.minute % minutes) if minutes <= 60 else None
+        if start is None or (self.last_bar is not None and start <= self.last_bar.ts):
+            return
+        f = self.forming
+        if f is None or f[0] != start:
+            self.forming = [start, price, price, price, price]
+        else:
+            f[2], f[3], f[4] = max(f[2], price), min(f[3], price), price
+
+    def chart(self) -> dict:
+        """The dashboard's trade chart: recent candles, the bar forming now, the open trade's levels and today's fills."""
+        rnd = self.contract.round_price
+
+        def candle(ts: datetime, o: float, h: float, lo: float, c: float) -> list:
+            return [int(ts.timestamp()), rnd(o), rnd(h), rnd(lo), rnd(c)]
+
+        out: dict = {"tf": self.cfg.instrument.timeframe_minutes, "tz": str(self.schedule.tz),
+                     "symbol": self.contract.name, "decimals": self.contract.price_decimals,
+                     "bars": [candle(b.ts, b.open, b.high, b.low, b.close) for b in self.chart_bars],
+                     "forming": candle(*self.forming) if self.forming else None, "price": self.last_price,
+                     "trade": None, "fills": []}
+        t = self.orders.trade
+        if t is not None:
+            out["trade"] = {"side": t.side.label, "entry": t.entry_price, "stop": t.stop_price, "target": t.target_price,
+                            "initial_stop": t.initial_stop, "size": t.filled_size or t.size, "state": t.state.value,
+                            "opened": int(t.opened_at.timestamp()) if t.opened_at else None, "strategy": t.strategy}
+        first = self.chart_bars[0].ts if self.chart_bars else None
+        for c in self.closed_trades[-20:]:
+            if c.opened_at is None or c.closed_at is None or (first is not None and c.closed_at < first):
+                continue
+            out["fills"].append({"side": c.side.label, "in": int(c.opened_at.timestamp()), "entry": c.entry_price,
+                                 "out": int(c.closed_at.timestamp()), "exit": c.exit_price, "pnl": round(c.net_pnl, 2)})
+        return out
 
     def observe_extremes(self, bar: Bar) -> float:
         """Backtests: worst intrabar equity for the open position (Topstep checks the MLL in real time)."""
@@ -744,6 +859,7 @@ class TradingCore:
         if t.entry_price is not None and price is not None and t.filled_size:
             d["open_pnl"] = round(self.orders.open_pnl(price), 2)
             d["r_now"] = round((price - t.entry_price) * t.side.sign / t.risk_points, 2) if t.risk_points else None
+        d["odds"] = t.odds  # the probability calculator's view when it was taken
         d["breakeven_ok"] = (t.entry_price is not None and t.stop_order_id is not None and price is not None
                              and (t.stop_price - t.entry_price) * t.side.sign < 0
                              and (price - t.entry_price) * t.side.sign >= self.contract.price_offset(2))
@@ -789,6 +905,7 @@ class TradingCore:
             "profit_target": progress.profit_target if progress else None,
             "total_profit": round(self.balance - start, 2),
             "trade": self._trade_view(trade) if trade else None,
+            "chart": self.chart(),
             "trades_today": [{**t.to_dict(), "time": self.schedule.local(t.closed_at).strftime("%H:%M")}
                              for t in reversed(self.closed_trades)
                              if t.closed_at and self.schedule.trading_day(t.closed_at) == self.current_day][:20],

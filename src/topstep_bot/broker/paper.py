@@ -35,6 +35,22 @@ from topstep_bot.models import (
 UTC = timezone.utc
 
 
+class PaperWallet:
+    """One simulated account's cash, shared by the paper brokers of every market it trades.
+
+    Each market has its own PaperBroker (its own orders, position and fills); every fill's P&L and
+    fees land in this one balance, and every broker sharing it reports the new balance."""
+
+    def __init__(self, balance: float):
+        self.balance = float(balance)
+        self.brokers: list[PaperBroker] = []
+
+    def changed(self, source: PaperBroker) -> None:
+        for broker in self.brokers:
+            if broker is not source:
+                broker._queue("account", Account(broker.account_id, broker.account_name, self.balance, simulated=True))
+
+
 class PaperBroker(Broker):
     name = "paper"
 
@@ -48,11 +64,14 @@ class PaperBroker(Broker):
         account_id: int = 1,
         account_name: str = "PAPER",
         live: bool = False,
+        wallet: PaperWallet | None = None,
     ):
         super().__init__(account_id)
         self.contract = contract
         self.account_name = account_name
-        self.balance = float(starting_balance)
+        # Several markets of one paper account share a wallet (one balance); a market of its own has its own.
+        self.wallet = wallet if wallet is not None else PaperWallet(starting_balance)
+        self.wallet.brokers.append(self)
         self.slippage = slippage_ticks * contract.tick_size
         self.fee_per_side = fees_round_turn / 2.0
         self.live = live  # live paper: market orders fill immediately at the current quote
@@ -70,6 +89,14 @@ class PaperBroker(Broker):
         self._close_only: set[int] = set()
         self._events: deque[tuple[str, object]] = deque()
         self._draining = False
+
+    @property
+    def balance(self) -> float:
+        return self.wallet.balance
+
+    @balance.setter
+    def balance(self, value: float) -> None:
+        self.wallet.balance = float(value)
 
     # ------------------------------------------------------------- event queue
 
@@ -274,6 +301,7 @@ class PaperBroker(Broker):
         self._queue("fill", fill)
         self._queue("position", Position(self.account_id, self.contract.id, self.position, self.avg_price))
         self._queue("account", Account(self.account_id, self.account_name, self.balance, simulated=True))
+        self.wallet.changed(self)
 
     async def on_bar(self, bar: Bar) -> None:
         """Backtest step: fill orders against one bar's open/high/low/close.

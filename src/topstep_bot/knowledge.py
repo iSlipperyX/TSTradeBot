@@ -170,6 +170,8 @@ class Observation:
     slip_out: float | None = None  # real fills: exit slippage in ticks
     basis: str | None = None  # first trades: the setup or evidence it followed, e.g. "orb_momentum long setup"
     news: bool | None = None  # the day had a market-moving report for this instrument (None = unknown)
+    p_win: float | None = None  # the probability calculator's P(win) for it, made before it happened (probability.py)
+    ev_r: float | None = None  # ... and its expected net R
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Observation:
@@ -188,7 +190,7 @@ class Observation:
 
 
 _OBS_FIELDS = frozenset(f.name for f in fields(Observation))
-_OPTIONAL = frozenset({"ctx", "mfe_r", "mae_r", "bars", "cost_r", "slip_in", "slip_out", "basis", "news"})
+_OPTIONAL = frozenset({"ctx", "mfe_r", "mae_r", "bars", "cost_r", "slip_in", "slip_out", "basis", "news", "p_win", "ev_r"})
 
 
 @dataclass
@@ -728,6 +730,7 @@ async def train_from_bars(
     core.balance = balance0
     collector = KnowledgeBase(None, half_life_days=kb.half_life_days, min_samples=kb.min_samples, source="train")
     core.knowledge = collector
+    core.probability.daily_only = True  # each replayed day is predicted from the days before it only
     core.news_archive = news_archive
     book = RecommendationBook(core, strategies, quiet=True)
     core.recommender = book

@@ -293,6 +293,7 @@ th.now, td.now { background:var(--accent-soft) !important; }
 .setup dl { font-size:12.5px; }
 .setup .why { color:var(--muted); font-size:11.5px; margin-top:6px; }
 .setup .blk { color:var(--warn); font-size:12px; margin-top:6px; }
+.setup .setodds { margin-top:6px; }
 .setupnote { margin:0 0 12px; padding:9px 12px; border-radius:var(--r); background:var(--warnbg); color:var(--text); font-size:12.5px; border-left:3px solid var(--warn); }
 .evkind { font:600 10px/1.6 var(--font-label); padding:0 6px; border-radius:3px; border:1px solid var(--border2); white-space:nowrap;
   text-transform:uppercase; letter-spacing:.06em; }
@@ -505,6 +506,68 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
   .sfield input[type=text], .sfield input[type=password], .sfield input[type=number], .sfield input:not([type]), .sfield select { width:100%; }
   .pagehead { margin-top:16px; }
 }
+/* ---------- markets strip: every market the account trades, switch / add / drop without a restart ---------- */
+.mstrip { margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; align-items:stretch; }
+.mchips { display:contents; }
+.mchip { position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:12px; row-gap:1px; align-items:center;
+  min-width:200px; padding:8px 26px 8px 12px; border-radius:var(--r); border:1px solid var(--border); background:var(--surface); cursor:pointer; }
+.mchip:hover { border-color:var(--border2); }
+.mchip.on { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
+.mchip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.mchip .sym { display:flex; align-items:center; gap:6px; font:600 14px/1.2 var(--font-num); min-width:0; }
+.mchip .sym small { font:500 11px var(--font-ui); color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mchip .ln { grid-column:1; font:12px/1.35 var(--font-num); color:var(--text2); white-space:nowrap; }
+.mchip svg { grid-column:2; grid-row:1 / span 3; width:64px; height:28px; }
+.mchip svg path { fill:none; stroke-width:1.4; }
+.mchip .mx { position:absolute; top:4px; right:4px; border:0; background:none; padding:0 5px; color:var(--muted); font-size:15px; line-height:1.2; }
+.mchip .mx:hover:not(:disabled) { color:var(--neg); background:none; }
+.mchip .tagx { font:600 9.5px/1.6 var(--font-label); padding:0 5px; border-radius:3px; text-transform:uppercase; letter-spacing:.05em;
+  background:var(--warnbg); color:var(--warn); }
+.madd { display:flex; align-items:center; gap:6px; padding:6px 8px; border:1px dashed var(--border2); border-radius:var(--r); }
+.madd select { font-size:12.5px; padding:5px 6px; max-width:190px; }
+.mtotal { margin-left:auto; align-self:center; font:12px/1.4 var(--font-num); color:var(--text2); text-align:right; }
+@media (max-width:560px) { .mchip { min-width:0; flex:1 1 100%; } .madd { flex:1 1 100%; } .madd select { flex:1; max-width:none; } .mtotal { flex-basis:100%; text-align:left; margin-left:0; } }
+
+/* ---------- pages inside a tab (Trade, Ask, Knowledge) ---------- */
+.subtabs { display:flex; gap:2px; margin:16px 0 0; border-bottom:1px solid var(--border); overflow-x:auto; scrollbar-width:none; }
+.subtabs button { border:0; border-radius:0; background:none; padding:9px 14px 8px; font:600 12px/1.2 var(--font-label); color:var(--text2);
+  text-transform:uppercase; letter-spacing:.07em; border-bottom:2px solid transparent; margin-bottom:-1px; white-space:nowrap; }
+.subtabs button:hover:not(:disabled) { background:none; color:var(--text); border-color:transparent; border-bottom-color:var(--border2); }
+.subtabs button.on { color:var(--accent); border-bottom-color:var(--accent); }
+.subtabs:not([hidden]) ~ .tab .pagehead { margin-top:16px; }
+
+/* ---------- the trade chart ---------- */
+.chartbox { position:relative; height:270px; margin:0 0 8px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface2); overflow:hidden; }
+.chartbox.small { height:230px; }
+.chartbox canvas { width:100%; height:100%; display:block; touch-action:pan-y; }
+.charttip { position:absolute; top:8px; left:8px; pointer-events:none; font:11.5px/1.45 var(--font-num); background:var(--surface); color:var(--text);
+  border:1px solid var(--border2); border-radius:4px; padding:5px 8px; white-space:nowrap; box-shadow:0 2px 10px rgba(0,0,0,.12); }
+.chartlegend { display:flex; gap:4px 14px; flex-wrap:wrap; font-size:12px; color:var(--text2); margin:0 0 12px; min-height:16px; }
+.chartlegend span { white-space:nowrap; }
+.chartlegend i { display:inline-block; width:14px; height:0; border-top:2px solid; vertical-align:middle; margin-right:5px; }
+.chartlegend i.dash { border-top-style:dashed; }
+@media (max-width:560px) { .chartbox { height:230px; } .chartbox.small { height:200px; } }
+
+/* ---------- knowledge: sources, the probability calculator, the network ---------- */
+.sources { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); }
+.src { text-align:left; font-weight:400; display:flex; flex-direction:column; gap:2px; padding:12px 14px; border-radius:var(--r); background:var(--surface);
+  border:1px solid var(--border); min-width:0; }
+button.src:hover:not(:disabled) { border-color:var(--accent); background:var(--surface); }
+.src .big { font:500 22px/1.25 var(--font-num); font-variant-numeric:tabular-nums; margin-top:2px; }
+.src .d { font-size:12px; color:var(--muted); line-height:1.4; }
+.src .go { font-size:12px; color:var(--accent); margin-top:4px; }
+.pbar { position:relative; display:inline-block; width:110px; height:8px; background:var(--track); border-radius:2px; vertical-align:middle; margin-right:8px; }
+.pbar .rng { position:absolute; top:0; bottom:0; background:var(--accent); opacity:.3; border-radius:2px; }
+.pbar .pt { position:absolute; top:-2px; width:2px; height:12px; margin-left:-1px; background:var(--accent); }
+.pbar .half { position:absolute; left:50%; top:-3px; bottom:-3px; border-left:1px dashed var(--border2); }
+.odds { display:inline-flex; gap:4px 8px; flex-wrap:wrap; align-items:baseline; font:12px/1.5 var(--font-num); color:var(--text2); }
+.odds b { color:var(--text); font-weight:600; }
+.calsvg { width:100%; max-width:360px; height:auto; display:block; margin:4px 0 6px; }
+.calsvg .grid line { stroke:var(--border); stroke-width:1; }
+.calsvg .diag { stroke:var(--border2); stroke-dasharray:4 3; stroke-width:1.2; }
+.calsvg text { font:10.5px var(--font-num); fill:var(--muted); }
+.calsvg circle { fill:var(--accent); fill-opacity:.75; stroke:var(--surface); stroke-width:1; }
+
 /* ask: the central intelligence */
 .chat { display:flex; flex-direction:column; gap:10px; max-height:520px; overflow:auto; padding:2px 2px 6px; }
 .chat .q, .chat .a { padding:9px 12px; border-radius:var(--r); max-width:92%; white-space:pre-wrap; overflow-wrap:anywhere; font-size:13.5px; }
@@ -530,19 +593,15 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
 <aside class="rail">
   <div class="brandbox">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="#1d2636"/><path d="M7 21l6-6 4 4 8-9" stroke="#7ea4f2" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand">Topstep Bot<small>Futures console · v3.0</small></div>
+    <div class="brand">Topstep Bot<small>Futures console · __VERSION__</small></div>
   </div>
   <nav class="tabs" aria-label="Sections">
     <div class="grp">Trading</div>
     <button data-tab="overview" class="on"><svg viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="5.5" height="5.5"/><rect x="9" y="1.5" width="5.5" height="5.5"/><rect x="1.5" y="9" width="5.5" height="5.5"/><rect x="9" y="9" width="5.5" height="5.5"/></svg>Overview</button>
-    <button data-tab="trade"><svg viewBox="0 0 16 16"><path d="M2 11l4-4 3 3 5-6"/><path d="M10 4h4v4"/></svg>Trade</button>
-    <button data-tab="ideas"><svg viewBox="0 0 16 16"><path d="M8 1.5a4.5 4.5 0 0 0-2.5 8.2V12h5V9.7A4.5 4.5 0 0 0 8 1.5z"/><path d="M6 14.5h4"/></svg>Ideas <span class="count" id="ideacount" hidden></span></button>
-    <button data-tab="market"><svg viewBox="0 0 16 16"><path d="M4 2v12M4 5h-1.5v5H4M12 3v11M12 6h-1.5v4H12M8 1v13M8 4H6.5v7H8"/></svg>Market</button>
+    <button data-tab="trade"><svg viewBox="0 0 16 16"><path d="M2 11l4-4 3 3 5-6"/><path d="M10 4h4v4"/></svg>Trade <span class="count" id="ideacount" hidden title="Live ideas you can take"></span></button>
     <div class="grp">Learning</div>
-    <button data-tab="ask"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M6.2 6.2a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.4"/><path d="M8 11.6v.1"/></svg>Ask</button>
-    <button data-tab="knowledge"><svg viewBox="0 0 16 16"><path d="M2 3.5h4.5a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 0-1.5-1.5H2zM14 3.5H9.5A1.5 1.5 0 0 0 8 5v8.5a1.5 1.5 0 0 1 1.5-1.5H14z"/></svg>Knowledge</button>
-    <button data-tab="lab"><svg viewBox="0 0 16 16"><path d="M6 1.5v4.2L2.2 12.6A1.3 1.3 0 0 0 3.3 14.5h9.4a1.3 1.3 0 0 0 1.1-1.9L10 5.7V1.5M5 1.5h6M4.2 10h7.6"/></svg>Simulations <span class="count" id="labflag" hidden>run</span></button>
-    <button data-tab="coach"><svg viewBox="0 0 16 16"><path d="M2.5 3h11v7.5H8L4.5 13v-2.5h-2z"/><path d="M5.5 6.5h5"/></svg>AI Coach <span class="count" id="coachcount" hidden></span></button>
+    <button data-tab="ask"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M6.2 6.2a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.4"/><path d="M8 11.6v.1"/></svg>Ask <span class="count" id="coachcount" hidden title="A deep review is running or has proposals waiting"></span></button>
+    <button data-tab="knowledge"><svg viewBox="0 0 16 16"><path d="M2 3.5h4.5a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 0-1.5-1.5H2zM14 3.5H9.5A1.5 1.5 0 0 0 8 5v8.5a1.5 1.5 0 0 1 1.5-1.5H14z"/></svg>Knowledge <span class="count" id="labflag" hidden title="Simulations are running">run</span></button>
     <div class="grp">System</div>
     <button data-tab="settings"><svg viewBox="0 0 16 16"><path d="M2 4h7M12 4h2M2 12h2M7 12h7M2 8h3M8 8h6"/><circle cx="10.5" cy="4" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/><circle cx="6.5" cy="8" r="1.5"/></svg>Settings</button>
     <button data-tab="setup"><svg viewBox="0 0 16 16"><circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/></svg>Setup <span class="count" id="setupflag" hidden>!</span></button>
@@ -585,6 +644,12 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
   <div class="clock" id="clock" aria-label="Market clock"></div>
   <div class="banner" id="banner" hidden></div>
   <div class="banner ok" id="updbanner" hidden></div>
+  <div class="mstrip" id="mstrip" hidden aria-label="Markets this account trades">
+    <div class="mchips" id="mchips"></div>
+    <div class="madd" id="madd"></div>
+    <div class="mtotal" id="mtotal"></div>
+  </div>
+  <nav class="subtabs" id="subtabs" hidden aria-label="Pages"></nav>
 
   <!-- OVERVIEW -->
   <section class="tab on" id="tab-overview">
@@ -598,7 +663,11 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
     <div class="grid main-side gap-top">
       <div class="stack">
         <div class="panel">
-          <div class="head"><h2>Current trade</h2><span class="spacer"></span><button class="small" id="newtrade">New manual trade</button></div>
+          <div class="head"><h2>Current trade</h2><span class="meta" id="chart-sym"></span><span class="spacer"></span>
+            <button class="small" id="newtrade">New manual trade</button></div>
+          <div class="chartbox"><canvas id="chart" role="img" aria-label="Price chart with the open trade's entry, stop and target"></canvas>
+            <div class="charttip" id="chart-tip" hidden></div></div>
+          <div class="chartlegend" id="chart-legend"></div>
           <div id="trade"></div>
           <h3>Strategy</h3>
           <dl id="strategy"></dl>
@@ -672,24 +741,25 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
     </div>
   </section>
 
-  <!-- ASK: the central intelligence -->
-  <!-- ASK (the central intelligence) -->
-  <section class="tab" id="tab-ask">
-    <div class="pagehead"><div><h1>Ask the bot</h1><p>Why it took or skipped each trade, what it learned, and which decision rule it trusts.</p></div></div>
+  <!-- ASK (the central intelligence): ask anything, and a deep review by Claude -->
+  <section class="tab" id="tab-ask" data-group="ask" data-label="Ask" data-order="1">
+    <div class="pagehead"><div><h1>Ask</h1><p>Ask about anything in the bot: a trade it took or skipped, the odds, a rule, a setting, a
+      chart, what it learned. Turn on AI answers (Setup tab) and Claude explains it in its own words.</p></div></div>
     <div class="grid two">
       <div class="panel">
         <div class="head"><h2>Ask</h2><span class="spacer"></span><span class="meta" id="ask-mode"></span></div>
         <div class="chat" id="ask-chat" aria-live="polite">
-          <div class="a">Ask me why I took or skipped a trade, what I learned, how a strategy is doing or what's next. I answer from my own records.</div>
+          <div class="a">Ask me anything about the bot: why I took or skipped a trade, the odds of each strategy now, which markets I trade, what a rule or a setting means, what I learned. I answer from my own records and my guide.</div>
         </div>
         <form class="askbar" id="ask-form"><input id="ask-q" maxlength="1000" autocomplete="off" placeholder="e.g. why did you take the last trade?">
           <button class="primary" id="ask-send">Ask</button></form>
         <div class="chips" id="ask-chips">
           <button type="button">Why did you take the last trade?</button><button type="button">Why didn't you trade today?</button>
-          <button type="button">What did you learn?</button><button type="button">When is the next trade?</button>
-          <button type="button">Which decision rule are you using?</button><button type="button">What do you know?</button></div>
-        <p class="hint">Answers come only from the bot's records (decisions, trades, knowledge, the decision lab, the Simulation Lab and
-          the AI coach's lessons). It can't place trades or change settings. Turn on AI answers on the Setup tab for free-form questions.</p>
+          <button type="button">What are the odds on each strategy now?</button><button type="button">Which markets are you trading?</button>
+          <button type="button">Where does your knowledge come from?</button><button type="button">What is the consistency target?</button>
+          <button type="button">What did you learn?</button><button type="button">When is the next trade?</button></div>
+        <p class="hint">Answers come only from the bot's own records and its guide: decisions, trades, the probability calculator, the
+          knowledge network, simulations, the settings and Topstep's rules. It can't place trades or change settings.</p>
       </div>
       <div class="panel">
         <div class="head"><h2>Decisions</h2><span class="spacer"></span>
@@ -712,7 +782,7 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
   </section>
 
   <!-- TRADE (manual trade ticket) -->
-  <section class="tab" id="tab-trade">
+  <section class="tab" id="tab-trade" data-group="trade" data-label="Ticket" data-order="1">
     <div class="pagehead"><div><h1>Trade ticket</h1><p>Place your own trade with the bot's stop, sizing and Topstep checks.</p></div></div>
     <div class="grid ticketgrid">
       <div class="stack">
@@ -721,8 +791,9 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
             <div class="field" id="tk-mkt-row" style="margin:0 0 12px"><label for="tk-market">Market</label>
               <div class="ctl"><select id="tk-market" class="picker" aria-describedby="tk-markethelp"></select>
                 <button class="small primary" id="tk-switch" hidden>Switch</button>
+                <button class="small" id="tk-add" hidden>Add alongside</button>
                 <button class="small" id="tk-usual" hidden>Back to usual market</button></div>
-              <div class="help" id="tk-markethelp">Any market Topstep permits. Switching restarts the bot on it for the rest of today.</div></div>
+              <div class="help" id="tk-markethelp">Any market Topstep permits. The bot switches at once, without a restart.</div></div>
           <div id="tk-off" class="empty" hidden></div>
           <div id="tk-body">
             <div class="sidepick">
@@ -763,16 +834,24 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
           <p class="hint">The checks the bot runs before its own trades: Topstep's limits, your loss limits, the trading window, news and the order guard.</p>
         </div>
       </div>
+      <div class="stack">
+      <div class="panel">
+        <div class="head"><h2>Chart</h2><span class="meta" id="tk-chart-sym"></span></div>
+        <div class="chartbox small"><canvas id="tk-chart" role="img" aria-label="Price chart with the ticket's stop and target"></canvas>
+          <div class="charttip" id="tk-chart-tip" hidden></div></div>
+        <div class="chartlegend" id="tk-chart-legend"></div>
+      </div>
       <div class="panel">
         <h2>What the bot knows</h2>
         <div id="kn-body"><div class="empty">Pick Buy or Sell to see what the knowledge base says about it right now.</div></div>
         <p class="hint">Evidence from past signals and trades, not a forecast. Your manual trades are added to the knowledge base when they close.</p>
       </div>
+      </div>
     </div>
   </section>
 
   <!-- IDEAS -->
-  <section class="tab" id="tab-ideas">
+  <section class="tab" id="tab-ideas" data-group="trade" data-label="Ideas" data-order="2">
     <div class="pagehead"><div><h1>Ideas</h1><p>Signals from every strategy, and how today's ideas turned out.</p></div></div>
     <div class="panel">
       <h2>Recommended right now</h2>
@@ -792,8 +871,9 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
   </section>
 
   <!-- MARKET -->
-  <section class="tab" id="tab-market">
-    <div class="pagehead"><div><h1>Market</h1><p>Today's range, key levels, scheduled reports and headlines.</p></div></div>
+  <section class="tab" id="tab-market" data-group="knowledge" data-label="Market data" data-order="4">
+    <div class="pagehead"><div><h1>Market data</h1><p>Real market data: today's range, key levels, scheduled reports, headlines, and how
+      every market moves together.</p></div></div>
     <div class="panel" id="mk-pick-panel" style="margin-bottom:14px" hidden>
       <h2>Why this market</h2><div id="mk-pick"></div>
       <p class="hint">Market set to Auto: at each start the bot replays recent history for every candidate and scores only days it held back from
@@ -828,22 +908,58 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
     </div>
   </section>
 
-  <!-- KNOWLEDGE -->
-  <section class="tab" id="tab-knowledge">
-    <div class="pagehead"><div><h1>Knowledge</h1><p>What each strategy's signals have been worth, by time of day and volatility.</p></div></div>
-    <div class="panel brief">
-      <div class="head"><h2>What the bot knows</h2><span class="spacer"></span><span class="meta" id="brief-meta"></span></div>
-      <div id="brief"><div class="empty">Start the bot to hear what it knows.</div></div>
-      <div class="memline" id="mem-line" hidden>
-        <div class="grow"><b>Long-run memory.</b> <span id="mem-text"></span>
-          <div class="track" id="mem-track" hidden><div class="fill" id="mem-bar"></div></div></div>
-        <button class="small" id="learn" title="Download the history the bot is still missing and replay all of it through every strategy">Learn from history now</button>
-      </div>
-      <p class="hint">The long-run memory keeps every price bar the bot sees and, once a day outside trading hours, replays all of them
-        through every strategy. It feeds these reports and the decision lab (Ask tab). Under the evidence rule it also backs up the recent
-        knowledge base below when the bot decides a trade; every risk rule applies either way.</p>
+  <!-- KNOWLEDGE: everything the bot knows in one place -->
+  <section class="tab" id="tab-knowledge" data-group="knowledge" data-label="Overview" data-order="1">
+    <div class="pagehead"><div><h1>Knowledge</h1><p>Everything the bot knows in one place: its real trades, the signals it watched live,
+      real market history, simulations and related markets, and what that makes the odds of each trade.</p></div>
+      <span class="spacer"></span><span class="meta" id="kh-meta"></span></div>
+    <div class="sources" id="kh-sources"><div class="empty">Loading…</div></div>
+    <div class="panel gap-top" id="prob-panel">
+      <div class="head"><h2>Probability calculator</h2><span class="spacer"></span><span class="meta" id="prob-where"></span></div>
+      <div class="tablewrap"><table id="prob-table"><thead><tr><th>Strategy</th><th>Side</th><th>P(win)</th><th class="num">Win / loss</th>
+        <th class="num">Expected</th><th class="num">Outcomes</th><th>Verdict</th></tr></thead><tbody></tbody></table></div>
+      <p class="hint">Each signal's chance of ending in profit, its average win and loss in R and its expected value after fees and slippage,
+        pooled from this market at this time of day and market mood, the long-run memory and related markets. The bar shows an 80% range.
+        The bot skips a signal it is at least 90% sure loses; in the Make money every day goal it sizes each trade by a quarter of the
+        Kelly fraction, inside every limit. A probability is a long-run frequency, never a promise about the next trade.</p>
     </div>
-    <div class="panel gap-top">
+    <div class="grid main-side gap-top">
+      <div class="panel brief">
+        <div class="head"><h2>What the bot knows</h2><span class="spacer"></span><span class="meta" id="brief-meta"></span></div>
+        <div id="brief"><div class="empty">Start the bot to hear what it knows.</div></div>
+        <div class="memline" id="mem-line" hidden>
+          <div class="grow"><b>Long-run memory.</b> <span id="mem-text"></span>
+            <div class="track" id="mem-track" hidden><div class="fill" id="mem-bar"></div></div></div>
+          <button class="small" id="learn" title="Download the history the bot is still missing and replay all of it through every strategy">Learn from history now</button>
+        </div>
+        <p class="hint">The long-run memory keeps every price bar the bot sees and, once a day outside trading hours, replays all of them
+          through every strategy. It feeds these reports, the probability calculator and the decision lab (Ask tab). Under the evidence rule it
+          also backs up the recent knowledge base (What works) when the bot decides a trade; every risk rule applies either way.</p>
+      </div>
+      <div class="panel" id="cal-panel">
+        <h2>How well it predicts</h2>
+        <div id="cal-body"><div class="empty">Loading…</div></div>
+        <p class="hint">Every prediction is saved with its outcome. When it said 60%, about 60% should have won: bars close to the line mean
+          its numbers can be trusted. Skill above 0 means it beats always guessing the average win rate. Training replays are scored
+          day by day using only the days before, like live.</p>
+      </div>
+    </div>
+    <div class="panel gap-top" id="kn-net-panel">
+      <div class="head"><h2>Knowledge network</h2><span class="spacer"></span>
+        <button class="small" id="kn-grow" title="Learn related markets from the price history saved on this PC (nothing is traded)">Learn related markets now</button></div>
+      <p class="meta" id="kn-net-sum" style="margin:0 0 10px"></p>
+      <div class="tablewrap"><table id="kn-net"><thead><tr><th>Market</th><th class="num">Outcomes</th><th class="num">Days</th><th class="num">Won</th>
+        <th class="num">Avg R</th><th>How it was learned</th><th>Updated</th></tr></thead><tbody></tbody></table></div>
+      <p class="hint">Every market keeps its own knowledge base. Related markets of the same asset class inform each other's odds at 30% of
+        the weight, and only until a market has enough evidence of its own. The network grows as the bot trades more markets, and each night,
+        while flat, it learns a few related markets from the history saved on this PC (Simulations > Download every market adds more).</p>
+    </div>
+  </section>
+
+  <!-- WHAT WORKS: the knowledge base in detail -->
+  <section class="tab" id="tab-works" data-group="knowledge" data-label="What works" data-order="2">
+    <div class="pagehead"><div><h1>What works</h1><p>What each strategy's signals have been worth, by time of day and volatility.</p></div></div>
+    <div class="panel">
       <div class="head"><h2>What works when</h2><span class="spacer"></span><button class="small" id="train">Retrain now</button></div>
       <div id="kb-meta" class="meta" style="margin:0 0 12px"></div>
       <div class="tablewrap"><table id="kb-table"><thead></thead><tbody></tbody></table></div>
@@ -876,8 +992,8 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
   </section>
 
   <!-- SIMULATION LAB -->
-  <section class="tab" id="tab-lab">
-    <div class="pagehead"><div><h1>Simulation Lab</h1>
+  <section class="tab" id="tab-lab" data-group="knowledge" data-label="Simulations" data-order="3">
+    <div class="pagehead"><div><h1>Simulations</h1>
       <p>The bot's real trading code, replayed through history as fresh Topstep Combines started on many different days.</p></div>
       <span class="spacer"></span>
       <div class="row">
@@ -966,8 +1082,8 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
   </section>
 
   <!-- AI COACH -->
-  <section class="tab" id="tab-coach">
-    <div class="pagehead"><div><h1>AI Coach</h1>
+  <section class="tab" id="tab-coach" data-group="ask" data-label="Deep review" data-order="2">
+    <div class="pagehead"><div><h1>Deep review</h1>
       <p>Claude reviews the bot's evidence, runs its own simulations, records lessons and proposes changes. You approve every change.</p></div></div>
     <div class="grid main-side">
       <div class="stack">
@@ -1224,6 +1340,10 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
       <h2 class="steptitle"><span class="stepnum">3</span>What to trade</h2>
       <div class="sfield"><label for="su-symbol">Market</label>
         <div class="ctl"><select id="su-symbol"></select></div><div class="help" id="su-symbol-help"></div></div>
+      <div class="sfield"><label for="su-count">Markets at once</label>
+        <div class="ctl"><select id="su-count"></select></div><div class="help" id="su-count-help"></div></div>
+      <div class="sfield" id="su-also-row" hidden><label>Also trade</label>
+        <div class="ctl" id="su-also"></div><div class="help" id="su-also-help"></div></div>
       <div class="sfield"><label for="su-strategy">Strategy</label>
         <div class="ctl"><select id="su-strategy"></select></div><div class="help" id="su-strategy-help"></div></div>
     </div>
@@ -1286,11 +1406,11 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
       <h2 class="steptitle">AI answers <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
       <p class="hint" style="margin-top:2px">The Ask tab and Telegram answer from the bot's records by themselves. With a Claude API key, a Claude
         model writes the answers instead and can take any question. It reads the same records through read-only lookups and can't trade or
-        change settings. The AI coach uses the same key, and both count toward the coach's monthly budget (AI Coach tab).</p>
+        change settings. The AI coach uses the same key, and both count toward the coach's monthly budget (Ask > Deep review).</p>
       <div class="sfield"><label for="su-ai-key">Claude API key</label>
         <div class="ctl"><input type="password" id="su-ai-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
           <button class="small primary" id="su-ai-save">Check and save</button><button class="small" id="su-ai-remove" hidden>Remove</button></div>
-        <div class="help">From platform.claude.com &gt; API keys. Checked with Anthropic, then saved in the .env file on this PC. Saving it here or on the AI Coach tab is the same.</div></div>
+        <div class="help">From platform.claude.com &gt; API keys. Checked with Anthropic, then saved in the .env file on this PC. Saving it here or on Ask > Deep review is the same.</div></div>
       <div class="sfield"><span class="lbl">Use AI answers</span>
         <div class="ctl"><label class="checkline"><input type="checkbox" id="su-ai-on"><span>Let the AI answer questions (the built-in answers stay as the fallback)</span></label></div></div>
       <div class="sfield"><label for="su-ai-model">Model</label>
@@ -1444,25 +1564,48 @@ function applyTheme(t) { if (t === "light" || t === "dark") document.documentEle
   else delete document.documentElement.dataset.theme;
   document.querySelectorAll("[data-theme-set]").forEach(b => b.classList.toggle("on", b.dataset.themeSet === (t === "light" || t === "dark" ? t : ""))); }
 applyTheme(store.get("tsb-theme"));
-document.querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { store.set("tsb-theme", b.dataset.themeSet); applyTheme(b.dataset.themeSet); });
+document.querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { store.set("tsb-theme", b.dataset.themeSet); applyTheme(b.dataset.themeSet); redrawCharts(); });
 
-// ---- tabs (the open tab is kept in the address, so a reload stays put)
+// ---- tabs (the open tab is kept in the address, so a reload stays put). Trade, Ask and Knowledge hold several pages:
+// the rail opens the page last seen in that tab, and a row of page buttons switches between them.
 const tabOpen = name => !!$("tab-" + name)?.classList.contains("on");
+const OLD_TABS = {market: "market", coach: "coach", ideas: "ideas", lab: "lab"};  // pages that used to be tabs keep their links
+const LAST_PAGE = {};
+const groupOf = name => ($("tab-" + name) && $("tab-" + name).dataset.group) || name;
+function renderSubtabs(group, name) {
+  const nav = $("subtabs");
+  const pages = [...document.querySelectorAll(`section.tab[data-group="${group}"]`)].sort((a, b) => a.dataset.order - b.dataset.order);
+  nav.hidden = pages.length < 2;
+  if (nav.hidden) { nav.innerHTML = nav.dataset.html = ""; return; }
+  const badge = {ideas: $("ideacount"), lab: $("labflag"), coach: $("coachcount")};
+  const html = pages.map(x => { const id = x.id.slice(4), b = badge[id];
+    return `<button data-page="${id}" class="${id === name ? "on" : ""}" aria-current="${id === name ? "page" : "false"}">${esc(x.dataset.label)}${
+      b && !b.hidden ? ` <span class="tag auto">${esc(b.textContent)}</span>` : ""}</button>`; }).join("");
+  if (nav.dataset.html === html) return;
+  nav.innerHTML = nav.dataset.html = html;
+  nav.querySelectorAll("[data-page]").forEach(b => b.onclick = () => { showTab(b.dataset.page); store.set("tsb-tab", b.dataset.page); });
+}
 function showTab(name) {
-  if (!$("tab-" + name) || (PHONE && name === "setup")) name = "overview";  // keys and accounts are set up on the PC only
-  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x.dataset.tab === name));
+  if (!$("tab-" + name) || (PHONE && name === "setup")) name = OLD_TABS[name] || "overview";  // keys and accounts are set up on the PC only
+  const group = groupOf(name);
+  LAST_PAGE[group] = name;
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x.dataset.tab === group));
   document.querySelectorAll("section.tab").forEach(x => x.classList.toggle("on", x.id === "tab-" + name));
+  renderSubtabs(group, name);
+  if (S) shown("markets", () => renderMarketsStrip(S.bot));
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (name === "logs") loadLogs();
-  if (name === "trade") { loadTicket(); loadMarkets(false); }
+  if (name === "overview" && S && S.bot) shown("chart", () => renderChart(S.bot));
+  if (name === "trade") { loadTicket(); loadMarkets(false); if (S && S.bot) shown("ticket chart", () => renderTicketChart(S.bot)); }
   if (name === "market") loadNetwork();
-  if (name === "knowledge") { loadInsights(true); loadBrief(true); }
+  if (name === "knowledge") { loadHub(true); loadBrief(true); }
+  if (name === "works") loadInsights(true);
   if (name === "ask") loadAsk();
   if (name === "setup") loadSetup(false);
   if (name === "lab") { loadLab(true); loadMarkets(false); }
   if (name === "coach") loadCoach(true);
 }
-document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(LAST_PAGE[b.dataset.tab] || b.dataset.tab));
 const openTab = showTab;
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 
@@ -1667,7 +1810,8 @@ function renderTrade(b) {
     <dl><dt>Entry</dt><dd>${t.entry_price != null ? px(t.entry_price) : "pending"}</dd><dt>Stop</dt><dd>${px(t.stop_price)}</dd>
     <dt>Target</dt><dd>${t.target_price != null ? px(t.target_price) : "none (stop, trailing or 15:10 CT)"}</dd>
     ${t.planned_risk != null ? `<dt>Risk</dt><dd>${money0(t.planned_risk)}</dd>` : ""}
-    <dt>Why</dt><dd style="white-space:normal">${esc(t.reason)}</dd></dl>
+    <dt>Why</dt><dd style="white-space:normal">${esc(t.reason)}</dd>
+    ${t.odds ? `<dt>Odds</dt><dd style="white-space:normal">${oddsHtml(t.odds, "when it was taken")}</dd>` : ""}</dl>
     <div class="row" style="margin-top:10px">
       <button class="small" id="tr-close">Close trade</button>
       <button class="small" id="tr-be" ${t.breakeven_ok ? "" : "disabled"} title="Move the stop to the entry price (once price is at least 2 ticks beyond it)">Stop to breakeven</button>
@@ -1716,6 +1860,352 @@ function renderOverview(b) {
     <td class="num ${t.net_pnl < 0 ? "neg" : t.net_pnl > 0 ? "pos" : ""}">${money(t.net_pnl)}</td><td class="num">${t.r != null ? signed(t.r) : "–"}</td>
     <td class="note">${esc(t.exit_reason)}</td></tr>`).join("") || `<tr><td colspan="9" class="empty">No closed trades yet today.</td></tr>`;
   $("activity").innerHTML = (b.events || []).map(e => `<div class="lvl-${esc(e.level)}"><time>${esc(e.ts.slice(11, 19))}</time><span>${esc(e.message)}</span></div>`).join("") || `<div class="empty">Nothing yet.</div>`;
+}
+
+// ---- the probability calculator's odds, wherever a trade or a setup is shown
+const pct = v => v == null ? "–" : Math.round(100 * v) + "%";
+function pbar(o) {
+  const lo = Math.max(0, Math.min(1, o.p_lo ?? o.p_win)), hi = Math.max(lo, Math.min(1, o.p_hi ?? o.p_win));
+  return `<span class="pbar" title="P(win) ${pct(o.p_win)}, 80% range ${pct(o.p_lo)} to ${pct(o.p_hi)}"><span class="half"></span>`
+    + `<span class="rng" style="left:${100 * lo}%;width:${100 * (hi - lo)}%"></span><span class="pt" style="left:${100 * o.p_win}%"></span></span>`;
+}
+function oddsHtml(o, when) {
+  if (!o) return "";
+  return `<span class="odds">${pbar(o)}<span><b>${pct(o.p_win)}</b> to win (${pct(o.p_lo)}–${pct(o.p_hi)})</span>`
+    + `<span><b class="${o.ev_r < 0 ? "neg" : o.ev_r > 0 ? "pos" : ""}">${signed(o.ev_r)}R</b> expected</span>`
+    + `<span class="muted">${o.n ? plural(o.n, "outcome") : "related markets only"}${when ? " · " + esc(when) : ""}</span></span>`;
+}
+
+// ---- the trade chart (Overview, trade ticket): recent candles in Chicago time, the bar forming now, the open
+// trade's entry, stop and target (and the ticket's proposal), and today's closed trades as markers
+const CHARTS = {};
+const CT_FMT = {};
+function ctTime(epoch, tz) {
+  const f = CT_FMT[tz] ||= new Intl.DateTimeFormat("en-US", {timeZone: tz || "America/Chicago", weekday: "short",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23"});
+  const p = {};
+  for (const x of f.formatToParts(new Date(epoch * 1000))) p[x.type] = x.value;
+  const hh = String(+p.hour % 24).padStart(2, "0");
+  return {mins: (+p.hour % 24) * 60 + +p.minute, hm: `${hh}:${p.minute}`, day: p.weekday};
+}
+function niceStep(span, count) {
+  const raw = span / Math.max(1, count), pow = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / pow;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * pow;
+}
+// levels: [{price, color (a CSS variable), label, dash, from (epoch: drawn from there on)}]
+// zones: [{a, b, color, from}] shaded between two prices (no ``from``: a band at the right edge)
+function drawChart(id, chart, levels = [], zones = []) {
+  const canvas = $(id), box = canvas.parentElement, tip = $(id + "-tip");
+  const st = CHARTS[id] = Object.assign(CHARTS[id] || {}, {chart, levels, zones});
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return;  // on a page that isn't shown: drawn when it opens
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  }
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const col = name => css(name) || "#888";
+  const numFont = css("--font-num") || "monospace";
+  const bars = chart ? [...chart.bars, ...(chart.forming ? [chart.forming] : [])] : [];
+  if (!bars.length) {
+    st.layout = null; tip.hidden = true;
+    g.fillStyle = col("--muted"); g.font = `13px ${css("--font-ui") || "sans-serif"}`; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText(chart ? "Waiting for the first price bars…" : "Start the bot to see the chart.", w / 2, h / 2);
+    return;
+  }
+  const dec = chart.decimals ?? 2;
+  const fmt = v => Number(v).toLocaleString(undefined, {minimumFractionDigits: dec, maximumFractionDigits: dec});
+  g.font = `11px ${numFont}`;
+  const widest = Math.max(...bars.map(b => b[2]), ...levels.map(l => l.price ?? 0));
+  const axisW = Math.ceil(g.measureText(fmt(widest)).width) + 16;
+  const left = 2, right = w - axisW, top = 10, bottom = h - 22;
+  const slot = Math.max(4, Math.min(16, (right - left) / bars.length));
+  const n = Math.min(bars.length, Math.floor((right - left) / slot));
+  const shown = bars.slice(-n), start = right - n * slot;
+  const xAt = i => start + (i + 0.5) * slot;
+  const tfSec = (chart.tf || 5) * 60;
+  const xOf = epoch => {  // the bar a moment falls in (before the first bar shown: the left edge)
+    if (epoch == null || epoch < shown[0][0]) return start;
+    for (let i = shown.length - 1; i >= 0; i--) if (shown[i][0] <= epoch) return xAt(i);
+    return start;
+  };
+  let lo = Math.min(...shown.map(b => b[3])), hi = Math.max(...shown.map(b => b[2]));
+  for (const l of levels) if (l.price != null) { lo = Math.min(lo, l.price); hi = Math.max(hi, l.price); }
+  if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.07; lo -= pad; hi += pad;
+  const y = p => top + (hi - p) / (hi - lo) * (bottom - top);
+
+  // price grid and axis
+  const grid = col("--border"), muted = col("--muted");
+  const step = niceStep(hi - lo, Math.max(2, Math.floor((bottom - top) / 44)));
+  g.lineWidth = 1; g.textAlign = "left"; g.textBaseline = "middle";
+  const marks = [...levels.map(l => l.price), chart.price ?? bars[bars.length - 1][4]].filter(p => p != null).map(y);
+  for (let k = Math.ceil(lo / step); k * step <= hi; k++) {
+    const p = k * step, yy = Math.round(y(p)) + 0.5;
+    g.strokeStyle = grid; g.beginPath(); g.moveTo(left, yy); g.lineTo(right, yy); g.stroke();
+    if (!marks.some(m => Math.abs(m - yy) < 12)) { g.fillStyle = muted; g.fillText(fmt(p), right + 8, yy); }
+  }
+  // time axis: a label every so often, and a dashed line where the market was closed (the daily break, weekends)
+  const every = [15, 30, 60, 120, 180, 240, 360, 720].find(m => m / (chart.tf || 5) * slot >= 70) || 1440;
+  g.textAlign = "center"; g.textBaseline = "alphabetic";
+  let lastLabel = -1e9;
+  shown.forEach((b, i) => {
+    const t = ctTime(b[0], chart.tz), x0 = Math.round(start + i * slot) + 0.5;
+    const gap = i > 0 && b[0] - shown[i - 1][0] > tfSec * 3;
+    if (gap) {
+      g.strokeStyle = col("--border2"); g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(x0, top); g.lineTo(x0, bottom); g.stroke(); g.setLineDash([]);
+    }
+    if ((gap || t.mins % every === 0) && x0 - lastLabel > 64 && x0 > left + 20 && x0 < right - 20) {
+      g.fillStyle = muted; g.fillText(gap ? `${t.day} ${t.hm}` : t.hm, x0, h - 6); lastLabel = x0;
+    }
+  });
+
+  // risk and reward zones of the trade
+  for (const z of zones) {
+    if (z.a == null || z.b == null) continue;
+    const x0 = z.from != null ? xOf(z.from) - slot / 2 : Math.max(left, right - Math.min(90, (right - left) * 0.22));
+    g.fillStyle = col(z.color); g.globalAlpha = 0.09;
+    g.fillRect(x0, Math.min(y(z.a), y(z.b)), right - x0, Math.abs(y(z.a) - y(z.b)));
+    g.globalAlpha = 1;
+  }
+  // candles (the one still forming is drawn lighter)
+  const up = col("--pos"), down = col("--neg");
+  const bw = Math.max(1, Math.min(slot * 0.68, slot - 1.5));
+  shown.forEach((b, i) => {
+    const [, o, hh, ll, c] = b, cx = Math.round(xAt(i)) + 0.5;
+    g.strokeStyle = g.fillStyle = c >= o ? up : down;
+    g.globalAlpha = chart.forming && i === shown.length - 1 ? 0.5 : 1;
+    g.beginPath(); g.moveTo(cx, Math.round(y(hh))); g.lineTo(cx, Math.round(y(ll))); g.stroke();
+    const yt = y(Math.max(o, c)), yb = y(Math.min(o, c));
+    g.fillRect(Math.round(cx - bw / 2), Math.round(yt), Math.round(bw), Math.max(1, Math.round(yb - yt)));
+  });
+  g.globalAlpha = 1;
+
+  // today's closed trades: a triangle where each went in, a dot where it came out
+  const tri = (x, yy, upward, color) => {
+    g.fillStyle = color; g.beginPath();
+    if (upward) { g.moveTo(x, yy); g.lineTo(x - 5, yy + 8); g.lineTo(x + 5, yy + 8); }
+    else { g.moveTo(x, yy); g.lineTo(x - 5, yy - 8); g.lineTo(x + 5, yy - 8); }
+    g.closePath(); g.fill();
+  };
+  for (const f of chart.fills || []) {
+    if (f.out < shown[0][0]) continue;
+    const x1 = xOf(f.in), x2 = xOf(f.out), y1 = y(f.entry), y2 = y(f.exit), color = col(f.pnl < 0 ? "--neg" : "--pos");
+    g.strokeStyle = color; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); g.setLineDash([]);
+    tri(x1, f.side === "LONG" ? y1 + 3 : y1 - 3, f.side === "LONG", col(f.side === "LONG" ? "--buy" : "--sell"));
+    g.fillStyle = color; g.beginPath(); g.arc(x2, y2, 3.5, 0, 2 * Math.PI); g.fill();
+  }
+  const t = chart.trade;
+  if (t && t.entry != null && t.opened != null) {
+    tri(xOf(t.opened), t.side === "LONG" ? y(t.entry) + 3 : y(t.entry) - 3, t.side === "LONG", col(t.side === "LONG" ? "--buy" : "--sell"));
+  }
+
+  // levels, with their price on the axis (tags nudged apart so none hides another)
+  const tags = [], names = [];
+  for (const l of levels) {
+    if (l.price == null) continue;
+    const yy = Math.round(y(l.price)) + 0.5, c = col(l.color);
+    g.strokeStyle = c; g.lineWidth = 1.5; g.setLineDash(l.dash ? [6, 4] : []);
+    g.beginPath(); g.moveTo(left, yy); g.lineTo(right, yy); g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+    tags.push({y: yy, text: fmt(l.price), color: c});
+    if (l.label) names.push({y: yy, text: l.label, color: c});
+  }
+  const last = chart.price ?? shown[shown.length - 1][4];
+  if (last != null) {
+    const yy = Math.round(y(last)) + 0.5, prev = shown.length > 1 ? shown[shown.length - 2][4] : last;
+    g.strokeStyle = muted; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(left, yy); g.lineTo(right, yy); g.stroke(); g.setLineDash([]);
+    tags.push({y: yy, text: fmt(last), color: last >= prev ? up : down, last: true});
+  }
+  tags.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < tags.length; i++) if (tags[i].y - tags[i - 1].y < 15) tags[i].y = tags[i - 1].y + 15;
+  const over = tags.length ? tags[tags.length - 1].y - (bottom + 4) : 0;
+  if (over > 0) for (const tg of tags) tg.y -= over;
+  g.textAlign = "left"; g.textBaseline = "middle"; g.font = `600 11px ${numFont}`;
+  for (const tg of tags) {
+    g.fillStyle = tg.color; g.fillRect(right + 1, tg.y - 7.5, axisW - 2, 15);
+    g.fillStyle = col("--surface"); g.fillText(tg.text, right + 7, tg.y + 0.5);
+  }
+  // each level's name at the left edge, above its line (nudged apart like the tags)
+  names.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < names.length; i++) if (names[i].y - names[i - 1].y < 14) names[i].y = names[i - 1].y + 14;
+  g.font = `600 10.5px ${css("--font-ui") || "sans-serif"}`;
+  for (const nm of names) {
+    const tw = g.measureText(nm.text).width + 8, ny = Math.max(top + 6, nm.y - 7);
+    g.fillStyle = col("--surface2"); g.globalAlpha = 0.9; g.fillRect(left + 4, ny - 6.5, tw, 13); g.globalAlpha = 1;
+    g.fillStyle = nm.color; g.fillText(nm.text, left + 8, ny + 0.5);
+  }
+
+  // hover: a crosshair on the bar under the pointer and its prices
+  st.layout = {n: shown.length, slot, start, right};
+  const i = st.hover;
+  if (i == null || !shown[i]) { tip.hidden = true; return; }
+  const b = shown[i], x0 = Math.round(xAt(i)) + 0.5, tm = ctTime(b[0], chart.tz);
+  g.strokeStyle = muted; g.setLineDash([2, 2]); g.beginPath(); g.moveTo(x0, top); g.lineTo(x0, bottom); g.stroke(); g.setLineDash([]);
+  const change = b[4] - b[1];
+  tip.innerHTML = `${esc(tm.day)} ${esc(tm.hm)} CT${chart.forming && i === shown.length - 1 ? " · forming" : ""}<br>`
+    + `O ${fmt(b[1])} &nbsp;H ${fmt(b[2])}<br>L ${fmt(b[3])} &nbsp;C ${fmt(b[4])} <span class="${change < 0 ? "neg" : change > 0 ? "pos" : ""}">${change >= 0 ? "+" : ""}${fmt(change)}</span>`;
+  tip.hidden = false;
+  const onLeft = x0 > (right - left) / 2;
+  tip.style.left = onLeft ? "8px" : ""; tip.style.right = onLeft ? "" : `${axisW + 8}px`;
+}
+function wireChart(id) {
+  const c = $(id);
+  const hover = e => {
+    const st = CHARTS[id], L = st && st.layout; if (!L) return;
+    const x = e.clientX - c.getBoundingClientRect().left, i = Math.floor((x - L.start) / L.slot);
+    const at = x <= L.right && i >= 0 && i < L.n ? i : null;
+    if (at !== st.hover) { st.hover = at; drawChart(id, st.chart, st.levels, st.zones); }
+  };
+  c.addEventListener("pointermove", hover); c.addEventListener("pointerdown", hover);
+  c.addEventListener("pointerleave", () => { const st = CHARTS[id]; if (st && st.hover != null) { st.hover = null; drawChart(id, st.chart, st.levels, st.zones); } });
+}
+function redrawCharts() { for (const [id, st] of Object.entries(CHARTS)) drawChart(id, st.chart, st.levels, st.zones); }
+["chart", "tk-chart"].forEach(wireChart);
+let chartResize;
+window.addEventListener("resize", () => { clearTimeout(chartResize); chartResize = setTimeout(redrawCharts, 120); });
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redrawCharts); } catch (e) { /* old browser: redrawn on the next refresh */ }
+
+function tradeLevels(t) {
+  if (!t) return {levels: [], zones: []};
+  const levels = [], from = t.opened;
+  if (t.entry != null) levels.push({price: t.entry, color: "--accent", label: `${t.side === "LONG" ? "Bought" : "Sold"} ${t.size}`, from});
+  if (t.initial_stop != null && t.stop != null && Math.abs(t.initial_stop - t.stop) > 1e-9)
+    levels.push({price: t.initial_stop, color: "--muted", label: "First stop", dash: true, from});
+  if (t.stop != null) levels.push({price: t.stop, color: "--crit", label: "Stop", from});
+  if (t.target != null) levels.push({price: t.target, color: "--good", label: "Target", from});
+  const zones = t.entry == null ? [] : [{a: t.entry, b: t.stop, color: "--crit", from}, {a: t.entry, b: t.target, color: "--good", from}];
+  return {levels, zones};
+}
+const legendItem = (color, text, dash) => `<span><i class="${dash ? "dash" : ""}" style="border-color:var(${color})"></i>${esc(text)}</span>`;
+function chartMeta(c) { return c ? `${c.symbol} · ${c.tf}-minute bars · Chicago time` : ""; }
+function renderChart(b) {
+  const c = b && b.chart, t = c && c.trade, {levels, zones} = tradeLevels(t);
+  $("chart-sym").textContent = chartMeta(c);
+  drawChart("chart", c, levels, zones);
+  const parts = [];
+  if (t) {
+    parts.push(legendItem("--accent", `Entry ${t.entry != null ? px(t.entry) : "pending"}`));
+    if (t.stop != null) parts.push(legendItem("--crit", `Stop ${px(t.stop)}`));
+    if (t.target != null) parts.push(legendItem("--good", `Target ${px(t.target)}`));
+    if (levels.some(l => l.label === "First stop")) parts.push(legendItem("--muted", `First stop ${px(t.initial_stop)}`, true));
+  } else if (c) parts.push(`<span class="muted">No open trade.</span>`);
+  if (c && (c.fills || []).length) parts.push(`<span class="muted">▲▼ where today's trades went in, ● where they came out</span>`);
+  $("chart-legend").innerHTML = parts.join("");
+}
+function renderTicketChart(b) {
+  const c = b && b.chart, d = T.data, p = d && d.plan, proposal = !!(d && T.side && c);
+  const {levels, zones} = proposal ? {levels: [], zones: []} : tradeLevels(c && c.trade);
+  $("tk-chart-sym").textContent = chartMeta(c);
+  const parts = [];
+  if (proposal) {
+    const stop = p ? p.stop : d.suggested.stop, target = T.noTarget ? null : p ? p.target : d.suggested.target;
+    levels.push({price: d.price, color: "--text2", label: d.side === "LONG" ? "Buy here" : "Sell here", dash: true});
+    if (stop != null) levels.push({price: stop, color: "--crit", label: "Your stop", dash: true});
+    if (target != null) levels.push({price: target, color: "--good", label: "Your target", dash: true});
+    zones.push({a: d.price, b: stop, color: "--crit"}, {a: d.price, b: target, color: "--good"});
+    parts.push(legendItem("--text2", `${d.side === "LONG" ? "Buy" : "Sell"} ~${px(d.price)}`, true));
+    if (stop != null) parts.push(legendItem("--crit", `Stop ${px(stop)}${p ? ` (${money0(p.risk_usd)} risk)` : ""}`, true));
+    if (target != null) parts.push(legendItem("--good", `Target ${px(target)}${p && p.rr != null ? ` (${p.rr}R)` : ""}`, true));
+  } else if (c) parts.push(`<span class="muted">Pick Buy or Sell: the ticket's stop and target appear here.</span>`);
+  if (c && c.trade && !proposal) parts.push(`<span class="muted">Solid lines: the open trade</span>`);
+  drawChart("tk-chart", c, levels, zones);
+  $("tk-chart-legend").innerHTML = parts.join("");
+}
+
+// ---- markets strip: every market this account trades at once. Click one to show it (every page follows it),
+// × stops trading it, and any market Topstep permits can be added, all without a restart (live.py)
+const STRIP_GROUPS = new Set(["overview", "trade", "knowledge"]);
+let STRIP_ADD = null;
+function sparkPath(vals, w, h) {
+  if (!vals || vals.length < 2) return "";
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  return vals.map((v, i) => `${i ? "L" : "M"}${(i / (vals.length - 1) * w).toFixed(1)},${(h - 2 - (v - lo) / span * (h - 4)).toFixed(1)}`).join("");
+}
+function renderMarketsStrip(b) {
+  const m = b && b.markets, box = $("mstrip"), page = document.querySelector("section.tab.on");
+  box.hidden = !m || !(m.lanes || []).length || !page || !STRIP_GROUPS.has(groupOf(page.id.slice(4)));
+  if (box.hidden) return;
+  const many = m.lanes.filter(l => !l.closing).length > 1;
+  const cls = v => v < 0 ? "neg" : v > 0 ? "pos" : "";
+  $("mchips").innerHTML = m.lanes.map(l => {
+    if (!l.ready) return `<div class="mchip"><span class="sym">${esc(l.symbol)}<small>starting…</small></span>
+      <span class="ln">Loading its history</span><span class="ln">&nbsp;</span></div>`;
+    const pos = l.position ? `${l.position > 0 ? "Long" : "Short"} ${Math.abs(l.position)} · <span class="${cls(l.open_pnl)}">${money(l.open_pnl)}</span>`
+      : l.trade ? "Order working" : "Flat";
+    const spark = l.spark || [], rising = spark.length > 1 && spark[spark.length - 1] >= spark[0];
+    const flag = l.closing ? `<span class="tagx" title="${esc(l.closing)}">closing</span>` : l.halted ? `<span class="tagx">halted</span>` : "";
+    return `<div class="mchip${l.symbol === m.focus ? " on" : ""}" role="button" tabindex="0" data-focus="${esc(l.symbol)}"
+        aria-pressed="${l.symbol === m.focus}" title="${esc(l.description || l.symbol)}${l.symbol === m.focus ? " (shown)" : ": click to show it"}">
+      <span class="sym">${esc(l.symbol)}<small>${esc(l.strategy || "")}</small>${flag}</span>
+      <svg viewBox="0 0 64 28" aria-hidden="true"><path d="${sparkPath(spark, 64, 28)}" stroke="${css(rising ? "--pos" : "--neg")}"/></svg>
+      <span class="ln">${pos}${l.last_price != null ? ` · ${Number(l.last_price).toLocaleString()}` : ""}</span>
+      <span class="ln">${plural(l.trades_today || 0, "trade")} today · <span class="${cls(l.realized_today)}">${money0(l.realized_today)}</span></span>
+      ${many && !l.closing ? `<button class="mx" data-drop="${esc(l.symbol)}" title="Stop trading ${esc(l.symbol)}" aria-label="Stop trading ${esc(l.symbol)}">×</button>` : ""}
+    </div>`; }).join("");
+  $("mchips").querySelectorAll("[data-focus]").forEach(c => {
+    const go = () => { if (c.dataset.focus !== m.focus) focusMarket(c.dataset.focus); };
+    c.onclick = go;
+    c.onkeydown = e => { if (e.target === c && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(); } };
+  });
+  $("mchips").querySelectorAll("[data-drop]").forEach(x => x.onclick = e => {
+    e.stopPropagation(); dropMarket(m.lanes.find(l => l.symbol === x.dataset.drop)); });
+  // adding: rebuilt only when the choice changes, so an open list isn't reset by the refresh
+  const full = m.lanes.length >= m.max, key = full ? "full" : (m.available || []).join(",");
+  $("madd").hidden = full;
+  if (key !== STRIP_ADD) {
+    STRIP_ADD = key;
+    const groups = {};
+    for (const s of m.available || []) { const [name, group] = (m.names || {})[s] || [s, "Other"]; (groups[group] ||= []).push([s, name]); }
+    $("madd").innerHTML = full ? "" : `<select id="m-add-sel" aria-label="Add a market"><option value="">Add a market…</option>${
+      Object.entries(groups).map(([g, ms]) => `<optgroup label="${esc(g)}">${ms.map(([s, name]) => `<option value="${esc(s)}">${esc(s)} - ${esc(name)}</option>`).join("")}</optgroup>`).join("")
+      }</select><button class="small" id="m-add" disabled>Add</button>`;
+    if (!full) {
+      $("m-add-sel").onchange = () => { $("m-add").disabled = !$("m-add-sel").value; };
+      $("m-add").onclick = () => addMarket($("m-add-sel").value);
+    }
+  }
+  const e = m.exposure;
+  $("mtotal").innerHTML = e && m.lanes.length > 1 ? `All ${m.lanes.length} markets: open <b class="${cls(e.open_pnl)}">${money(e.open_pnl)}</b><br>
+    <span title="What the open trades would lose together if every stop filled with the usual slippage">${money0(e.at_risk)} at risk</span> · ${e.minis} mini units`
+    : `<span class="muted">Up to ${m.max} markets at once</span>`;
+}
+function marketChanged() {
+  briefAt = 0; insKey = null; HUB_AT = 0; clearTicket();
+  delete tk("market").dataset.touched; MK = null;
+  for (const st of Object.values(CHARTS)) st.hover = null;
+}
+async function focusMarket(symbol) {
+  const d = await post("action/focus_market", {symbol});
+  if (d.ok === false) { toast(d.message, true); return; }
+  marketChanged(); await refresh();
+  if (tabOpen("knowledge")) { loadHub(true); loadBrief(true); }
+  if (tabOpen("works")) loadInsights(true);
+  if (tabOpen("trade")) loadMarkets(true);
+}
+async function dropMarket(l) {
+  if (!l) return;
+  const open = l.position || l.trade;
+  const text = open ? `${l.symbol} has an open trade.\n\nStop trading ${l.symbol}${on()}? It takes no new trades and goes as soon as `
+      + `that trade is closed; its stop and target stay in place. To close it now, show ${l.symbol} and use Close trade.`
+    : `Stop trading ${l.symbol}${on()}?\n\nIt goes at once; the other markets keep trading. You can add it again at any time.`;
+  if (!await ask(text)) return;
+  const d = await run("action/remove_market", {symbol: l.symbol});
+  if (d && d.ok !== false) { STRIP_ADD = null; if (S && S.bot && S.bot.markets && S.bot.markets.focus === l.symbol) marketChanged(); }
+}
+async function addMarket(symbol) {
+  const mv = S && S.bot && S.bot.markets;
+  if (!symbol || !mv) return;
+  const now = mv.lanes.map(l => l.symbol).join(", ");
+  if (!await ask(`Trade ${symbol} alongside ${now}${on()}?\n\nIt starts at once, without a restart: the bot loads its history, `
+    + `learns it and trades it with its own strategy. All markets share this account's loss limits, the day's trade count `
+    + `and Topstep's size limit, and no two of them hold opposite positions in related markets.`)) return;
+  toast(`Adding ${symbol}: loading its history and learning it first…`);
+  if ($("m-add")) $("m-add").disabled = true;
+  const d = await run("action/add_market", {symbol});
+  STRIP_ADD = null;
+  if (d && d.ok !== false) loadMarkets(true);
 }
 
 // ---- first trade after starting (first_trade.py): countdown and what it would take
@@ -1790,6 +2280,7 @@ function renderSetups(b) {
       <ul class="conds">${i.conditions.map(c => `<li class="${c.met ? "met" : ""}">${esc(c.text)}</li>`).join("")}</ul>
       <dl><dt>Entry</dt><dd>${entry}</dd><dt>Stop</dt><dd>${i.stop != null ? px(p.stop ?? i.stop) : "set when it fires"}</dd>
         <dt>Target</dt><dd>${(p.target ?? i.target) != null ? px(p.target ?? i.target) : "trail / session end"}</dd><dt>Size</dt><dd>${size}</dd></dl>
+      ${i.odds ? `<div class="setodds">${oddsHtml(i.odds, "if it fired now")}</div>` : ""}
       ${skip ? `<div class="blk">The bot would skip it: ${esc(skip)}</div>` : ""}
       ${i.note ? `<div class="why">${esc(i.note)}</div>` : ""}
       ${i.stop != null && !skip && !(b.manual_block) ? `<div class="row" style="margin-top:8px"><button class="small" data-setup="${esc(i.key)}"
@@ -1832,6 +2323,7 @@ function pickSide(side) {
 function clearTicket() {
   T.side = null; T.data = null; T.noTarget = false; ["stop","target","size","note"].forEach(id => tk(id).value = "");
   tk("buy").classList.remove("on"); tk("sell").classList.remove("on"); renderTicketShell();
+  if (tabOpen("trade")) shown("ticket chart", () => renderTicketChart(S && S.bot));
 }
 tk("buy").onclick = () => pickSide("long");
 tk("sell").onclick = () => pickSide("short");
@@ -1853,8 +2345,8 @@ tk("sizehalf").onclick = () => { const p = T.data && T.data.plan; if (p) { tk("s
 tk("size1").onclick = () => { tk("size").value = 1; scheduleTicket(0); };
 tk("place").onclick = placeTrade;
 
-// ---- the market for today (trade ticket, Simulations tab): any market Topstep permits. Switching restarts
-// the bot on it until 15:10 CT; its own strategy trades it too, with every risk rule (controller.switch_market).
+// ---- markets (trade ticket, Knowledge > Simulations): any market Topstep permits. A running bot switches or adds one at once,
+// without a restart (live.py): its own strategy trades it too, with every risk rule. A stopped bot starts on it.
 let MK = null, mkAt = 0, mkBusy = false;
 async function loadMarkets(force) {
   if (mkBusy || (!force && MK && MK.account === accName() && Date.now() - mkAt < 60000)) return;
@@ -1864,35 +2356,53 @@ async function loadMarkets(force) {
     if (d.ok !== false) { MK = d; MK.account = accName(); mkAt = Date.now(); renderMarketPick(); if (LAB) shown("simulations", renderLab); }
   } finally { mkBusy = false; }
 }
+const runningMarkets = () => (S && S.bot && S.bot.markets) || null;
 function renderMarketPick() {
   if (!MK) return;
-  const sel = tk("market"), keep = sel.dataset.touched ? sel.value : MK.current, groups = {};
+  const mv = runningMarkets(), lanes = mv ? mv.lanes.map(l => l.symbol) : [];
+  const current = (mv && mv.focus) || MK.current;
+  const sel = tk("market"), keep = sel.dataset.touched ? sel.value : current, groups = {};
   MK.markets.forEach(m => (groups[m.class_label] = groups[m.class_label] || []).push(m));
   sel.innerHTML = Object.entries(groups).map(([g, ms]) => `<optgroup label="${esc(g)}">${ms.map(m =>
     `<option value="${esc(m.symbol)}"${m.symbol === keep ? " selected" : ""}${m.allowed ? "" : " disabled"}>${esc(m.symbol)} - ${esc(m.description)}`
-    + `${m.symbol === MK.current ? " (now)" : ""}${m.allowed ? "" : " (not on this plan)"}</option>`).join("")}</optgroup>`).join("");
-  const chosen = sel.value, m = MK.markets.find(x => x.symbol === chosen), other = chosen && chosen !== MK.current;
-  tk("switch").hidden = !other; tk("switch").textContent = `Trade ${chosen} today`;
+    + `${m.symbol === current ? " (shown)" : lanes.includes(m.symbol) ? " (trading)" : ""}${m.allowed ? "" : " (not on this plan)"}</option>`).join("")}</optgroup>`).join("");
+  const chosen = sel.value, m = MK.markets.find(x => x.symbol === chosen);
+  const trading = lanes.includes(chosen) && chosen !== current, other = chosen && chosen !== current && !trading;
+  tk("switch").hidden = !(other || trading);
+  tk("switch").textContent = trading ? `Show ${chosen}` : mv ? `Switch to ${chosen}` : `Trade ${chosen} today`;
+  tk("add").hidden = !other || !mv || lanes.length >= mv.max;
+  tk("add").textContent = `Add ${chosen} alongside`;
   tk("usual").hidden = !MK.today;
-  tk("markethelp").textContent = other && m ? `${m.description}: ${money(m.tick_value)} per tick, busiest ${m.hours}${m.early_close ? ` (the market closes at ${m.early_close} CT; the bot is out 5 minutes before)` : ""}. `
-      + `Switching restarts the bot on ${chosen} for the rest of today, and its own strategy trades it too. It needs no open trade.`
-    : MK.today ? `Trading ${MK.current} today (switched by ${MK.today.source}). At 15:10 CT the bot goes back to ${MK.usual}.`
-    : `Trading ${MK.current}. Pick another market to trade it for the rest of today.`;
+  const about = m ? `${m.description}: ${money(m.tick_value)} per tick, busiest ${m.hours}${m.early_close ? ` (the market closes at ${m.early_close} CT; the bot is out 5 minutes before)` : ""}. ` : "";
+  tk("markethelp").textContent = trading ? `${chosen} is already trading alongside ${current}: show it to trade it from this ticket.`
+    : other && mv ? about + `Switch trades it instead of ${current}; Add alongside trades both. Either happens at once, without a restart, `
+      + "and its own strategy trades it too, with every risk rule and Topstep check."
+    : other ? about + `The bot starts on ${chosen} for the rest of today when you start it.`
+    : lanes.length > 1 ? `Trading ${lanes.join(", ")} at once; this ticket trades ${current}. Pick another market on the strip above.`
+    : MK.today ? `Trading ${current} today (switched by ${MK.today.source}). At 15:10 CT the bot goes back to ${MK.usual}.`
+    : `Trading ${current}. Pick another market to switch to it or trade it alongside, without a restart.`;
 }
 async function switchMarket(symbol) {
-  const back = symbol === "usual";
-  const text = back ? `Go back to the usual market${on()}?\n\nThe bot restarts on it (about half a minute). It must have no open trade.`
-    : `Trade ${symbol} for the rest of today${on()}?\n\nThe bot restarts on ${symbol} (about half a minute) and its own strategy trades it too, `
-      + "with every risk rule and Topstep check. It must have no open trade. At 15:10 CT it goes back to its usual market.";
+  const back = symbol === "usual", mv = runningMarkets(), focus = mv && mv.focus;
+  if (!back && mv && mv.lanes.some(l => l.symbol === symbol)) { await focusMarket(symbol); return; }
+  const text = back ? `Go back to the usual market${on()}?\n\n` + (mv ? "It switches at once, without a restart. A market with an open "
+      + "trade keeps its stop and target and goes once that trade is closed." : "The bot starts on it when you start it.")
+    : mv ? `Trade ${symbol} instead of ${focus} for the rest of today${on()}?\n\nIt switches at once, without a restart: the bot loads `
+      + `${symbol}'s history and its own strategy trades it, with every risk rule and Topstep check. If ${focus} has an open trade, `
+      + "it keeps its stop and target and goes once that trade is closed. At 15:10 CT the bot goes back to its usual market."
+    : `Trade ${symbol} for the rest of today${on()}?\n\nThe bot starts on ${symbol} when you start it, with every risk rule and `
+      + "Topstep check. At 15:10 CT it goes back to its usual market.";
   if (!await ask(text)) return;
-  const d = await post("market/switch", {symbol});
-  toast(d.message || "Switching", d.ok === false);
-  delete tk("market").dataset.touched;
-  if (d.ok !== false) clearTicket();
+  if (mv) toast(back ? "Switching back…" : `Switching to ${symbol}: loading its history first…`);
+  const d = await post("market/switch", {symbol, ...(focus && !back ? {from: focus} : {})});
+  toast(d.message || "Switched", d.ok === false);
+  if (d.ok !== false) marketChanged();
+  STRIP_ADD = null;
   setTimeout(() => loadMarkets(true), 1500); refresh();
 }
 tk("market").onchange = () => { tk("market").dataset.touched = "1"; renderMarketPick(); };
 tk("switch").onclick = () => switchMarket(tk("market").value);
+tk("add").onclick = async () => { const sym = tk("market").value; await addMarket(sym); delete tk("market").dataset.touched; };
 tk("usual").onclick = () => switchMarket("usual");
 
 function renderTicketShell() {
@@ -1958,6 +2468,7 @@ function renderTicket() {
 
   tk("checks").innerHTML = d.checks.map(c => `<li class="${c.ok === true ? "ok" : c.ok === false ? "bad" : "warn"}">${esc(c.text)}</li>`).join("");
   renderKnowledgePanel(d);
+  shown("ticket chart", () => renderTicketChart(S && S.bot));
 }
 function renderKnowledgePanel(d) {
   const k = d.knowledge, v = k.verdict;
@@ -1966,6 +2477,12 @@ function renderKnowledgePanel(d) {
   html += k.reasons.length ? `<ul class="reasons">${k.reasons.map(r => `<li class="${r.weight > 0 ? "plus" : r.weight < 0 ? "minus" : ""}">${esc(r.text)}</li>`).join("")}</ul>`
     : `<p class="hint">Nothing in the knowledge base points either way for this trade right now.</p>`;
   if (!k.enabled) html += `<p class="hint">The knowledge base is turned off (knowledge.enabled).</p>`;
+  if ((k.odds || []).length) {
+    html += `<h3>Probability calculator: ${d.side === "LONG" ? "longs" : "shorts"} now</h3>` + k.odds.map(o =>
+      `<div class="kbrow" title="80% range ${pct(o.p_lo)}-${pct(o.p_hi)}; expected ${signed(o.ev_lo)} to ${signed(o.ev_hi)}R"><span>${esc(o.title)}</span>
+        <span>${pct(o.p_win)} win · <span class="${o.ev_r < 0 ? "neg" : o.ev_r > 0 ? "pos" : ""}">${signed(o.ev_r)}R</span> · ${o.n}</span></div>`).join("")
+      + `<p class="hint" style="margin-top:6px">Each strategy's chance of a winning ${d.side === "LONG" ? "long" : "short"} here, after costs, from its past signals. Your own trade has no strategy behind it, so treat these as context.</p>`;
+  }
   if (k.strategies.length) {
     html += `<h3>Strategies at ${esc(k.slot)} · ${esc(k.regime)}</h3>` + k.strategies.slice(0, 6).map(s =>
       `<div class="kbrow" title="${esc(s.why)}"><span><span class="kb ${s.allowed ? "ok" : s.level !== "unproven" ? "bad" : "unk"}">${s.allowed ? "on" : s.level !== "unproven" ? "off" : "new"}</span> ${esc(s.title)}</span>
@@ -2030,7 +2547,8 @@ function renderIdeas(b) {
       <div class="t"><span>${esc(r.title)}${r.active ? ' <span class="tag auto">auto</span>' : ""}</span><span class="side-${esc(r.side)}">${esc(r.side)} ${r.size || "–"}</span></div>
       <div class="why">${esc(r.reason)}</div>
       <dl><dt>Entry ~</dt><dd>${px(r.entry)}</dd><dt>Stop</dt><dd>${px(r.stop)}</dd><dt>Target</dt><dd>${r.target != null ? px(r.target) : "trail / session end"}</dd>
-        <dt>Risk</dt><dd>${money0(r.risk_usd)}${r.rr ? ` · R:R ${r.rr}` : ""}</dd>${r.note ? `<dt>Note</dt><dd style="white-space:normal">${esc(r.note)}</dd>` : ""}</dl>
+        <dt>Risk</dt><dd>${money0(r.risk_usd)}${r.rr ? ` · R:R ${r.rr}` : ""}</dd>${r.p_win != null
+          ? `<dt>Odds</dt><dd>${pct(r.p_win)} to win · <span class="${r.ev_r < 0 ? "neg" : "pos"}">${signed(r.ev_r)}R</span> expected</dd>` : ""}${r.note ? `<dt>Note</dt><dd style="white-space:normal">${esc(r.note)}</dd>` : ""}</dl>
       ${r.status === "taken" ? `<span class="tag auto">taken</span>` : canTake
         ? `<div class="row"><button class="small primary" data-take="${esc(r.id)}" data-size="${r.size}" data-sum="${sum(r.size)}">Take ${r.size}</button>${r.size > 1
             ? `<button class="small" data-take="${esc(r.id)}" data-size="${half}" data-sum="${sum(half)}">Take ${half}</button>` : ""}</div>`
@@ -2058,8 +2576,10 @@ function renderAggressive(r) {
   $("aggpanel").hidden = !a;
   if (!a) return;
   meter("agg", Math.max(0, r.day_pnl) / a.goal, `${money(r.day_pnl)} of ${money(a.goal)}`, r.day_pnl >= a.goal ? css("--good") : css("--accent"));
-  const lines = [`Next trade risks up to ${money0(r.next_trade_risk)}` + (r.next_trade_risk > r.risk_per_trade ? " (pressing with today's profit)" : "")
-    + (r.stressed ? " - cut because the market is stressed" : "") + "."];
+  const strong = a.strong_trade_risk != null && a.strong_trade_risk > r.next_trade_risk + 0.5;
+  const lines = [`Next trade risks ${strong ? "about" : "up to"} ${money0(r.next_trade_risk)}` + (r.next_trade_risk > r.risk_per_trade ? " (pressing with today's profit)" : "")
+    + (r.stressed ? " - cut because the market is stressed" : "")
+    + (strong ? `; up to ${money0(a.strong_trade_risk)} when the odds show a large, well-measured edge, less when the edge is thin` : "") + "."];
   lines.push(a.locked_in != null ? `Locked in: ${money0(a.locked_in)} of today's best ${money0(a.best_today)} - new trades can't give it back.`
     : `Profit gets locked in once the day has made ${money0(a.lock_in_from)}.`);
   if (r.profit_ceiling != null) lines.push(`No trade can take the day past ${money0(r.profit_ceiling)} (the consistency line).`);
@@ -2100,7 +2620,7 @@ async function loadNetwork(force) {
   let d;
   try { d = await post("network", {account: accName()}); } catch (e) { $("net-board").textContent = "Couldn't load the market network."; return; }
   const n = d && d.network, body = $("net-table").querySelector("tbody");
-  if (!n) { $("net-board").textContent = "No market network yet: it builds from the daily history the bot downloads (Simulations tab > Download history) and refreshes every hour."; body.innerHTML = ""; return; }
+  if (!n) { $("net-board").textContent = "No market network yet: it builds from the daily history the bot downloads (Knowledge > Simulations > Download every market) and refreshes every hour."; body.innerHTML = ""; return; }
   const b = n.board, pct = x => x == null ? "–" : `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
   $("net-board").textContent = `${b.mood}${b.appetite != null ? ` (appetite ${b.appetite > 0 ? "+" : ""}${b.appetite.toFixed(2)})` : ""}. Equity volatility: ${b.equity_state}. `
     + `${n.coverage.daily} of ${n.coverage.markets} markets with daily history${n.fresh ? "" : " (out of date: the bot uses its safe defaults)"}.`;
@@ -2226,7 +2746,126 @@ $("learn").onclick = async () => {
   $("learn").disabled = true; toast("Learning from history…"); await run("action/learn"); briefAt = 0; loadBrief(true);
 };
 
-// ---- what the bot has learned (insights.py), fetched when the Knowledge tab is open and the base changes
+// ---- Knowledge (overview page): every source of knowledge in one place, the probability calculator's odds now,
+// how well its past predictions held up, and the knowledge network of related markets (brain/facts.py lookups)
+let HUB = null, HUB_AT = 0, hubBusy = false;
+async function loadHub(force) {
+  if (hubBusy || (!force && Date.now() - HUB_AT < 30000)) return;
+  hubBusy = true;
+  try {
+    const [src, prob] = await Promise.all([fact("sources"), fact("probability")]);
+    HUB = {src, prob}; HUB_AT = Date.now();
+  } finally { hubBusy = false; }
+  shown("knowledge", renderHub);
+}
+function renderHub() {
+  if (!HUB) return;
+  const {src, prob} = HUB;
+  $("kh-meta").textContent = src.error ? "" : `${src.symbol || ""} · as of ${new Date(HUB_AT).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}`;
+  renderSources(src);
+  renderOdds(prob);
+  renderCalibration(src.calibration || prob.calibration);
+  renderNetwork(src.network);
+}
+function renderSources(src) {
+  if (src.error) { $("kh-sources").innerHTML = `<div class="empty">${esc(src.error)}</div>`; return; }
+  const k = src.knowledge || {}, c = k.counts || {}, t = k.trained || null, mem = src.memory, sim = src.simulations,
+    net = src.network, cal = src.calibration || {}, n = v => (v || 0).toLocaleString();
+  const card = (page, label, big, detail, go) => `<button class="src" ${page ? `data-page="${esc(page)}"` : "disabled"}>
+      <span class="label">${esc(label)}</span><span class="big">${big}</span><span class="d">${detail}</span>${go ? `<span class="go">${esc(go)} →</span>` : ""}</button>`;
+  const cards = [
+    card("works", "Real trades", n((c.real || 0) + (c.manual || 0)),
+      `${n(c.real)} by the bot, ${n(c.manual)} of yours. Real trades count double.`, "What works"),
+    card("works", "Watched live", n(c.shadow),
+      "Every strategy's signals while the bot ran, followed to their stop, target or the close.", "What works"),
+    card("market", "Real market history", n((c.train || 0) + (mem ? mem.observations : 0)),
+      (t ? `${n(t.days)} recent days replayed (${esc(t.from)} to ${esc(t.to)})` : "Not trained yet")
+      + (mem ? `, plus ${n(mem.observations)} in the long-run memory over ${n(mem.days)} days` : "") + ".", "Market data"),
+    card("lab", "Simulations", sim ? n(sim.combines) : "–",
+      sim ? `Simulated Combines on ${n(sim.markets)} markets: ${n(sim.passed)} passed, ${n(sim.failed)} failed. Best: ${esc(sim.best || "–")}.`
+        : "None yet: run the Simulation Lab to test every strategy on every market.", "Simulations"),
+    card("net", "Related markets", net ? n(net.outcomes) : "–",
+      net ? `Outcomes on ${plural(net.markets.length, "other " + net.asset_class.toLowerCase() + " market")}`
+        + (net.learnable.length ? `; ${net.learnable.length} more it can learn from saved history.` : ".") : "The knowledge network is off.", "Knowledge network"),
+    card("cal", "Predictions scored", n(cal.n),
+      cal.n ? `Skill ${cal.skill != null ? (cal.skill >= 0 ? "+" : "") + (100 * cal.skill).toFixed(1) + "%" : "–"} over always guessing the average win rate.`
+        : "Scored as signals finish: training replays add them too.", "How well it predicts"),
+  ];
+  $("kh-sources").innerHTML = cards.join("");
+  $("kh-sources").querySelectorAll("[data-page]").forEach(b => b.onclick = () => {
+    const p = b.dataset.page;
+    if (p === "net" || p === "cal") { $(p === "net" ? "kn-net-panel" : "cal-panel").scrollIntoView({behavior: "smooth", block: "start"}); return; }
+    showTab(p); store.set("tsb-tab", p);
+  });
+}
+function renderOdds(prob) {
+  const body = $("prob-table").querySelector("tbody");
+  $("prob-where").textContent = prob.where ? prob.where.replace(/^for /, "") : "";
+  if (prob.error || !(prob.rows || []).length) {
+    body.innerHTML = `<tr><td colspan="7" class="empty">${esc(prob.error || "Nothing to go on yet: the calculator needs the knowledge base (trained or watched signals).")}</td></tr>`;
+    return;
+  }
+  body.innerHTML = prob.rows.map(r => {
+    const verdict = r.level === "none" ? ["unk", "no data"] : r.ev_lo > 0 ? ["ok", "edge"] : r.ev_hi < 0 ? ["bad", "losing"] : ["unk", "unclear"];
+    const where = {cell: "this time and mood", slot: "this time of day", side: "all day", network: "related markets", none: "no history"}[r.level] || r.level;
+    return `<tr title="${esc(r.text)}"><td>${esc(r.title || r.strategy)}</td><td class="side-${esc(r.side)}">${esc(r.side)}</td>
+      <td>${pbar(r)}<span class="num">${pct(r.p_win)}</span> <span class="muted">(${pct(r.p_lo)}–${pct(r.p_hi)})</span></td>
+      <td class="num">+${r.win_r.toFixed(2)} / −${r.loss_r.toFixed(2)}</td>
+      <td class="num"><span class="${r.ev_r < 0 ? "neg" : r.ev_r > 0 ? "pos" : ""}">${signed(r.ev_r)}R</span> <span class="muted">(${signed(r.ev_lo)} to ${signed(r.ev_hi)})</span></td>
+      <td class="num">${r.n.toLocaleString()}${r.network_n ? ` <span class="muted">+${r.network_n.toLocaleString()} related</span>` : ""}${
+        r.memory_n ? ` <span class="muted">+${r.memory_n.toLocaleString()} memory</span>` : ""}</td>
+      <td><span class="kb ${verdict[0]}" title="Most specific evidence: ${esc(where)}">${verdict[1]}</span></td></tr>`; }).join("");
+}
+function renderCalibration(cal) {
+  if (!cal || !cal.n) {
+    $("cal-body").innerHTML = `<div class="empty">No scored predictions yet: they build up as signals finish (training replays add them too).</div>`;
+    return;
+  }
+  // a reliability diagram: predicted P(win) across, how often those signals actually won up; the line is perfect
+  const W = 300, H = 232, L = 36, B = 38, T = 8, R = 18, pw = W - L - R, ph = H - T - B;
+  const X = v => L + v * pw, Y = v => T + (1 - v) * ph, big = Math.max(...cal.buckets.map(b => b.n));
+  const ticks = [0, .25, .5, .75, 1];
+  const svg = `<svg class="calsvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Predicted against actual win rate">
+    <g class="grid">${ticks.map(v => `<line x1="${X(v)}" y1="${T}" x2="${X(v)}" y2="${T + ph}"/><line x1="${L}" y1="${Y(v)}" x2="${L + pw}" y2="${Y(v)}"/>`).join("")}</g>
+    <line class="diag" x1="${X(0)}" y1="${Y(0)}" x2="${X(1)}" y2="${Y(1)}"/>
+    ${ticks.map(v => `<text x="${X(v)}" y="${T + ph + 15}" text-anchor="middle">${v * 100}%</text><text x="${L - 6}" y="${Y(v) + 3.5}" text-anchor="end">${v * 100}%</text>`).join("")}
+    <text x="${L + pw / 2}" y="${H - 3}" text-anchor="middle">predicted P(win) → how often it won</text>
+    ${cal.buckets.map(b => `<circle cx="${X(b.predicted)}" cy="${Y(b.actual)}" r="${(3.5 + 7 * Math.sqrt(b.n / big)).toFixed(1)}"><title>Said ${esc(b.band)}: ${b.n} signals, predicted ${pct(b.predicted)}, won ${pct(b.actual)}</title></circle>`).join("")}
+  </svg>`;
+  const skill = cal.skill != null ? `${cal.skill >= 0 ? "+" : ""}${(100 * cal.skill).toFixed(1)}%` : "–";
+  const src = Object.entries(cal.by_source || {}).map(([s, v]) => `${esc({train: "history", shadow: "watched", real: "real", manual: "yours"}[s] || s)}
+    ${pct(v.predicted)} said, ${pct(v.actual)} won (${v.n.toLocaleString()})`).join(" · ");
+  $("cal-body").innerHTML = svg + `<div class="kbrow"><span>Predictions scored</span><span>${cal.n.toLocaleString()}</span></div>
+    <div class="kbrow"><span>Brier score <span class="muted">(lower is better)</span></span><span>${cal.brier.toFixed(3)} vs ${cal.base.toFixed(3)} guessing</span></div>
+    <div class="kbrow"><span>Skill</span><span class="${cal.skill > 0 ? "pos" : cal.skill < 0 ? "neg" : ""}">${skill}</span></div>
+    ${cal.ev_predicted != null ? `<div class="kbrow"><span>Expected vs actual per signal</span><span>${signed(cal.ev_predicted)}R vs ${signed(cal.ev_actual)}R</span></div>` : ""}
+    ${src ? `<p class="meta" style="margin:8px 0 0">${src}</p>` : ""}`;
+}
+function renderNetwork(net) {
+  const body = $("kn-net").querySelector("tbody");
+  $("kn-grow").disabled = !(S && S.bot) || !net || !net.enabled;
+  if (!net) { $("kn-net-sum").textContent = "Not available."; body.innerHTML = ""; return; }
+  if (!net.enabled) { $("kn-net-sum").textContent = "The knowledge network is turned off (probability.network): each market learns only from itself."; body.innerHTML = ""; return; }
+  const own = net.own || {};
+  $("kn-net-sum").textContent = `${net.symbol} (${net.asset_class}): ${(own.n || 0).toLocaleString()} outcomes of its own, `
+    + `${net.outcomes.toLocaleString()} on ${plural(net.markets.length, "related market")}.`
+    + (net.learnable.length ? ` Saved history it can still learn from: ${net.learnable.join(", ")}${net.grows ? " (a few each night)" : ""}.` : "")
+    + (S && S.bot ? "" : " Start the bot to learn related markets.");
+  body.innerHTML = net.markets.map(m => `<tr><td><b>${esc(m.symbol)}</b> <span class="muted">${esc(m.name)}${m.account ? ` · ${esc(m.account)}` : ""}</span>${m.traded ? ` <span class="tag auto">trading</span>` : ""}</td>
+      <td class="num">${m.n.toLocaleString()}</td><td class="num">${m.days}</td><td class="num">${pct(m.win_rate)}</td>
+      <td class="num ${m.avg_r < 0 ? "neg" : m.avg_r > 0 ? "pos" : ""}">${signed(m.avg_r)}</td>
+      <td>${m.grown ? "learned from saved history" : m.sources.real || m.sources.manual ? "traded" : "watched"}</td>
+      <td class="num">${esc((m.updated || "").slice(0, 10))}</td></tr>`).join("")
+    || `<tr><td colspan="7" class="empty">No related market has a knowledge base yet. Trade one alongside this one, or download history
+      (Simulations > Download every market) and press Learn related markets now.</td></tr>`;
+}
+$("kn-grow").onclick = async () => {
+  if (!await ask("Learn related markets from the price history saved on this PC now?\n\nNothing is traded: each market's history is replayed through every strategy, a few markets at a time. The bot keeps trading meanwhile.")) return;
+  $("kn-grow").disabled = true; toast("Learning related markets…");
+  await run("action/grow_network"); HUB_AT = 0; loadHub(true);
+};
+
+// ---- what the bot has learned (insights.py), fetched when the What works page is open and the base changes
 let INS = null, insKey = null, insBusy = false, INS_SCOPE = store.get("tsb-ins-scope") === "longrun" ? "longrun" : "recent";
 function showScope() { document.querySelectorAll("#ins-scope button").forEach(x => x.classList.toggle("on", x.dataset.scope === INS_SCOPE)); }
 document.querySelectorAll("#ins-scope button").forEach(x => x.onclick = () => {
@@ -2452,6 +3091,9 @@ function fillSetup() {
   su("plan").innerHTML = c.plans.map(p => option(p.name, `${p.name} account`, p.name === v.plan)).join("");
   su("stage").innerHTML = c.stages.map(x => option(x.key, x.label, x.key === v.stage)).join("");
   su("symbol").innerHTML = symbolOptions(c.symbols, v.symbol);
+  su("count").innerHTML = Array.from({length: c.max_markets}, (_, i) => option(String(i + 1), i ? `${i + 1} at the same time` : "One",
+    i + 1 === (v.count || 1))).join("");
+  su("also").innerHTML = ""; ALSO = [...(v.markets || [])];
   su("strategy").innerHTML = c.strategies.map(x => option(x.key, x.title, x.key === v.strategy)).join("");
   su("payout").value = v.payout_path; su("dll").checked = v.topstep_dll;
   F.account_id = v.account_id; F.account_name = v.account_name; F.goal = v.goal;
@@ -2589,6 +3231,27 @@ function pickFormAccount(a) {
   renderAccountForm();
 }
 // Market choices: the two automatic picks first, then every market grouped by asset class
+// several markets at once: how many, and (for a set market) which ones trade alongside it
+let ALSO = [];
+function renderAlso(sym, plan) {
+  const c = SU.choices, n = parseInt(su("count").value) || 1, auto = !sym || !sym.class;
+  const trades = parseFloat(su("trades").value) || SU.values.max_trades;
+  su("also-row").hidden = auto || n < 2;
+  su("count-help").textContent = n < 2 ? "One market. While the bot runs you can add more, drop or switch them on the Overview, without a restart."
+    : (auto ? `Each day the bot trades up to ${n} of the best-scoring markets (each must show an edge on days held back from training).`
+      : `The bot trades ${sym.key} and ${n - 1} more at the same time.`)
+      + ` Topstep's limits count them together (one Maximum Loss Limit, one daily loss limit, one size limit); `
+      + (F.goal === "profit" ? `each market gets ${trades} trades a day of its own.` : `the ${trades} trades a day are shared between them.`);
+  if (auto || n < 2) return;
+  const boxes = [...su("also").querySelectorAll("select")];
+  ALSO = boxes.length ? boxes.map(x => x.value) : ALSO;
+  const choices = c.symbols.filter(x => x.class && x.key !== sym.key);
+  su("also").innerHTML = Array.from({length: n - 1}, (_, i) => `<select data-also="${i}" aria-label="Market ${i + 2}">
+    <option value="">Pick a market…</option>${choices.map(x => `<option value="${esc(x.key)}"${x.key === ALSO[i] ? " selected" : ""}${
+      x.blocked.includes(plan.name) ? " disabled" : ""}>${esc(x.key)} - ${esc(x.label)}</option>`).join("")}</select>`).join(" ");
+  su("also").querySelectorAll("select").forEach(x => x.onchange = () => { SU_DIRTY = true; ALSO = [...su("also").querySelectorAll("select")].map(y => y.value); });
+  su("also-help").textContent = "Pick markets that don't move together if you can (e.g. an index, gold and crude): the bot never holds opposite positions in related markets.";
+}
 function symbolOptions(symbols, selected) {
   const auto = symbols.filter(x => !x.class), groups = {};
   symbols.filter(x => x.class).forEach(x => (groups[x.class] = groups[x.class] || []).push(x));
@@ -2677,9 +3340,9 @@ function suRender() {
     const dg = parseFloat(su("dgoal").value);
     const tooBig = stage === "combine" && dg >= gt.line;
     su("dgoal-help").textContent = tooBig ? `Must stay below ${money0(gt.line)} on a ${plan.name} Combine: past that the 55% Consistency Target would raise your profit target.`
-      : `Trading stops for the day once it is reached. Empty = ${money0(gt.profit_goal)} (45% of the profit target). Every strategy may trade twice its usual daily count, unproven signals trade at half size, `
-        + "a quarter of the day's realized profit is added to the next trade's risk (at most twice your risk per trade), and once the day has made half "
-        + "its goal, new trades are sized so it can't give back more than 40% of its best.";
+      : `Trading stops for the day once it is reached. Empty = ${money0(gt.profit_goal)} (45% of the profit target). Every strategy may trade three times its usual daily count, `
+        + "the probability calculator sizes each trade by its edge (up to 1.5 times your risk per trade), 35% of the day's realized profit is added to the next "
+        + "trade's risk (at most 2.5 times your risk per trade), and once the day has made half its goal, new trades are sized so it can't give back more than 40% of its best.";
     su("dgoal-help").className = "help" + (tooBig ? " bad" : "");
   }
   su("plan-help").textContent = `Profit target ${money0(plan.profit_target)} · Maximum Loss Limit ${money0(plan.max_loss_limit)} · up to ${plan.max_minis} minis`;
@@ -2693,6 +3356,7 @@ function suRender() {
     : `${sym.class ? sym.class + " · " : ""}${money(sym.tick_value)} per tick.` + (blocked ? ` Topstep doesn't currently allow ${sym.key} on a ${plan.name} account.`
     : sym.micro ? " A micro: the best way to start." : " A full-size contract: much more risk per point than a micro.");
   su("symbol-help").className = "help" + (blocked ? " bad" : "");
+  renderAlso(sym, plan);
   const learn = F.goal === "learn", allDay = learn || profit;
   su("first-row").hidden = !learn;
   if (allDay) su("strategy").value = "adaptive";
@@ -2726,7 +3390,7 @@ function suChanged() {
   }
   SU_SUG = next; suRender();
 }
-["plan", "stage", "symbol", "strategy", "payout", "dll"].forEach(id => su(id).addEventListener("change", suChanged));
+["plan", "stage", "symbol", "strategy", "payout", "dll", "count"].forEach(id => su(id).addEventListener("change", suChanged));
 su("first").addEventListener("change", () => SU_DIRTY = true);
 ["risk", "daily", "trades", "dgoal"].forEach(id => su(id).addEventListener("input", () => { SU_DIRTY = true; suRender(); }));
 ["user", "key"].forEach(id => su(id).addEventListener("input", () => SU_DIRTY = true));
@@ -2756,6 +3420,7 @@ su("save").onclick = async () => {
   const d = await post("setup/save", {
     account_id: F.account_id, account_name: F.account_name, plan: su("plan").value, stage: su("stage").value, goal: F.goal,
     topstep_dll: su("dll").checked, payout_path: su("payout").value, symbol: su("symbol").value, fallback: SU.values.fallback, strategy: su("strategy").value,
+    count: su("count").value, markets: [...su("also").querySelectorAll("select")].map(x => x.value).filter(Boolean),
     risk_per_trade: su("risk").value, daily_loss_limit: su("daily").value, max_trades: su("trades").value, fresh: su("fresh").checked,
     first_trade: su("first").checked, daily_goal: su("dgoal").value});
   su("save").disabled = false;
@@ -2816,9 +3481,13 @@ su("dc-save").onclick = async () => {
 // ---- ask: the central intelligence (brain/)
 let ASK_BUSY = false;
 function chatLine(cls, text, by) {
-  const div = document.createElement("div"); div.className = cls; div.textContent = text;
+  const chat = $("ask-chat"), div = document.createElement("div"); div.className = cls; div.textContent = text;
   if (by) { const s = document.createElement("span"); s.className = "by"; s.textContent = by; div.appendChild(s); }
-  $("ask-chat").appendChild(div); $("ask-chat").scrollTop = $("ask-chat").scrollHeight; return div;
+  chat.appendChild(div);
+  // a long answer opens at its start, under the question; anything else keeps the newest line in view
+  const top = div.getBoundingClientRect().top - chat.getBoundingClientRect().top + chat.scrollTop;
+  chat.scrollTop = cls === "a" && div.offsetHeight > chat.clientHeight * 0.6 ? top - 56 : chat.scrollHeight;
+  return div;
 }
 async function askBot(question) {
   question = (question || "").trim();
@@ -2863,7 +3532,7 @@ function renderAI() {
   su("ai-model").innerHTML = Object.entries(a.models || {"claude-opus-5-5": "Claude Opus 5.5"})
     .map(([k, v]) => option(k, v, k === (a.model || "claude-opus-5-5"))).join("");
   if (a.budget) su("ai-spend").textContent = `Claude spending this month: ${money(a.spent_month || 0)} of the ${money(a.budget)} budget `
-    + `(AI coach ${money(a.spent_coach || 0)}, answers ${money(a.spent_ask || 0)}). Change the budget on the AI Coach tab.`;
+    + `(AI coach ${money(a.spent_coach || 0)}, answers ${money(a.spent_ask || 0)}). Change the budget on Ask > Deep review.`;
   su("ai-key").value = ""; su("ai-key").placeholder = a.key_saved ? "saved - leave empty to keep it" : "sk-ant-…";
   su("ai-remove").hidden = !a.key_saved;
 }
@@ -2910,7 +3579,6 @@ async function loadLogs() {
 // ---- Simulation Lab (simlab.py, run by the controller's lab_service.py)
 let LAB = null, labAt = 0, labBusy = false;
 const VERDICTS = {edge: "Edge", mixed: "Mixed", losing: "Losing", thin: "Too few"};
-const pct = v => v == null ? "–" : Math.round(100 * v) + "%";
 async function loadLab(force) {
   if (labBusy || (!force && Date.now() - labAt < 1500)) return;
   labBusy = true;
@@ -3217,11 +3885,19 @@ function render(s) {
   shown("first trade", () => renderFirst(s.bot)); shown("setups", () => renderSetups(s.bot));
   shown("long-run memory", () => renderMemory(s.bot)); shown("ideas", () => renderIdeas(s.bot));
   shown("knowledge", () => renderKnowledge(s.bot)); shown("settings", () => renderSettings(s.bot)); shown("events", () => renderLogs(s));
+  shown("markets", () => renderMarketsStrip(s.bot));
+  if (tabOpen("overview")) shown("chart", () => renderChart(s.bot));
   if (s.setup) $("setupflag").hidden = s.setup.configured && !s.setup.error;
   if (first && s.setup && !s.setup.configured && !ASKED_TAB && !PHONE) showTab("setup");  // first run: straight to setup
-  if (tabOpen("knowledge")) { loadInsights(false); loadBrief(false); }
-  if (tabOpen("trade")) { if (T.side && s.bot) loadTicket(); else renderTicketShell(); }
+  if (tabOpen("knowledge")) { loadHub(false); loadBrief(false); }
+  if (tabOpen("works")) loadInsights(false);
+  if (tabOpen("trade")) {
+    if (T.side && s.bot) loadTicket(); else renderTicketShell();
+    shown("ticket chart", () => renderTicketChart(s.bot)); if (MK) shown("market pick", renderMarketPick);
+  }
   shown("simulation lab", () => renderLabSummary(s.lab)); shown("coach", () => renderCoachSummary(s.coach));
+  const page = document.querySelector("section.tab.on");
+  if (page) shown("pages", () => renderSubtabs(groupOf(page.id.slice(4)), page.id.slice(4)));
   if (tabOpen("lab") && s.lab && (s.lab.running || (LAB && LAB.running))) loadLab(false);
   if (tabOpen("coach") && s.coach && (s.coach.running || (COACH && COACH.running))) loadCoach(false);
 }
@@ -3251,7 +3927,7 @@ async function refresh() {
 }
 const ASKED_TAB = location.hash.slice(1);  // a link to a tab wins over the first-run jump to Setup
 showTab(ASKED_TAB || store.get("tsb-tab") || "overview");
-document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => store.set("tsb-tab", b.dataset.tab)));
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => store.set("tsb-tab", LAST_PAGE[b.dataset.tab] || b.dataset.tab)));
 if (PHONE) {
   $("m-live").title = "LIVE can only be switched on at the PC";
   document.querySelector('.tabs [data-tab="setup"]').hidden = true;

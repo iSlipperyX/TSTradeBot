@@ -20,6 +20,7 @@ knows. They never switch a strategy on or off.
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
     from topstep_bot.engine import TradePlan, TradingCore
     from topstep_bot.execution import ManagedTrade
     from topstep_bot.recommendations import Recommendation
+
+log = logging.getLogger("topstep_bot.manual")
 
 DEFAULT_TARGET_R = 1.5  # suggested target when nothing better is known
 ATR_STOP_MULTIPLE = 1.0  # suggested stop distance when no live idea fits
@@ -318,6 +321,7 @@ class ManualTrading:
                              "mean_r": round(v.stats.mean_r, 2), "n": v.stats.n, "why": v.why, "score": round(v.score, 3)})
             rows.sort(key=lambda r: (r["allowed"], r["score"]), reverse=True)
             out["strategies"] = rows
+            out["odds"] = self._odds(side, BASE_STRATEGIES, STRATEGIES)
 
             mine, other = kb.side_stats(side.label, slot, regime, today), kb.side_stats(side.opposite.label, slot, regime, today)
             out["sides"] = {side.label: mine.to_dict(kb.min_samples), side.opposite.label: other.to_dict(kb.min_samples)}
@@ -374,6 +378,22 @@ class ManualTrading:
         out["verdict"] = {"label": label, "tone": tone, "score": score}
         out["reasons"] = [{"weight": w, "text": t} for w, t in sorted(reasons, key=lambda x: -abs(x[0]))]
         return out
+
+    def _odds(self, side: OrderSide, names: Any, strategies: Any) -> list[dict[str, Any]]:
+        """The probability calculator on this side right now: each strategy's P(win) and expected R, best first."""
+        rows = []
+        for name in names:
+            try:
+                est = self.core.probability.estimate(name, side.label)
+            except Exception:  # noqa: BLE001 - the odds are advice: the ticket works without them
+                log.debug("No estimate for %s %s", name, side.label, exc_info=True)
+                continue
+            if est is not None and est.level != "none":
+                rows.append({"name": name, "title": strategies[name].title, "p_win": round(est.p_win, 3),
+                             "p_lo": round(est.p_lo, 3), "p_hi": round(est.p_hi, 3), "ev_r": round(est.ev_r, 3),
+                             "ev_lo": round(est.ev_lo, 3), "ev_hi": round(est.ev_hi, 3), "n": est.n, "level": est.level})
+        rows.sort(key=lambda r: -r["ev_r"])
+        return rows[:4]
 
     # ------------------------------------------------------------ trading
 

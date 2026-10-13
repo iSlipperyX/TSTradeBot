@@ -31,6 +31,7 @@ import httpx
 
 from topstep_bot.config import (
     CLAUDE_KEY_ENV,
+    MAX_MARKETS,
     NAME_PATTERN,
     RESERVED_NAMES,
     BotConfig,
@@ -93,6 +94,8 @@ def load_for_server(config_path: str | None) -> tuple[BotConfig, str | None]:
 
 GOALS = ("pass", "profit", "learn")
 PROFIT_MAX_TRADES = 12
+# What 3.0's Setup tab wrote into config.yaml for Make money every day (4.0's defaults are more aggressive)
+OLD_AGGRESSIVE = {"house_money": 0.25, "max_risk_multiple": 2.0, "trades_multiple": 2}
 
 
 def suggested_risk(plan: str, goal: str, topstep_dll: bool) -> dict:
@@ -115,6 +118,12 @@ def goal_of(cfg: BotConfig) -> str:
     if cfg.aggressive.enabled:
         return "profit"
     return "learn" if cfg.strategy.name == "adaptive" and cfg.strategy.params.get("trade_unproven") is True else "pass"
+
+
+def _markets_change(v: dict) -> dict:
+    """Several markets at once: the extra markets (a fixed market) or how many the daily pick may choose (Auto)."""
+    return {("instrument", "markets"): v["markets"] or REMOVE,
+            ("instrument", "max_markets"): v["max_markets"] if v["max_markets"] > 1 else REMOVE}
 
 
 def _candidates_change(v: dict, current: list[str]) -> dict:
@@ -180,6 +189,8 @@ class SetupService:
                 "goal": goal, "topstep_dll": dll, "payout_path": a.payout_path,
                 "symbol": market_key(cfg.instrument), "strategy": cfg.strategy.name,
                 "fallback": cfg.instrument.symbol,
+                "markets": list(cfg.instrument.markets),
+                "count": cfg.instrument.max_markets if cfg.instrument.auto_pick else 1 + len(cfg.instrument.markets),
                 "risk_per_trade": cfg.risk.risk_per_trade, "daily_loss_limit": cfg.risk.personal_daily_loss_limit,
                 "max_trades": cfg.risk.max_trades_per_day,
                 "first_trade": cfg.first_trade.enabled, "first_trade_minutes": cfg.first_trade.within_minutes,
@@ -204,6 +215,7 @@ class SetupService:
                 "plans": [{"name": p.name, "profit_target": p.profit_target, "max_loss_limit": p.max_loss_limit,
                            "max_minis": p.max_minis, "daily_loss_limit": p.daily_loss_limit} for p in PLANS.values()],
                 "stages": [{"key": k, "label": label} for k, label in STAGES],
+                "max_markets": MAX_MARKETS,
                 "symbols": [{"key": AUTO, "label": "Auto: the bot picks each day (micro index, gold and crude)",
                              "tick_value": None, "blocked": []},
                             {"key": AUTO_ALL, "label": "Auto: the bot picks each day from every Topstep market",
@@ -303,7 +315,7 @@ class SetupService:
             ("account", "topstep_daily_loss_limit"): True if v["topstep_dll"] and stage != "practice" else REMOVE,
             ("account", "payout_path"): v["payout_path"],
             ("instrument", "symbol"): v["symbol"], ("instrument", "auto_pick"): True if v["auto_pick"] else REMOVE,
-            **_candidates_change(v, cfg.instrument.candidates),
+            **_candidates_change(v, cfg.instrument.candidates), **_markets_change(v),
             ("strategy", "name"): v["strategy"],
             ("risk", "risk_per_trade"): v["risk_per_trade"], ("risk", "personal_daily_loss_limit"): v["daily_loss_limit"],
             ("risk", "max_trades_per_day"): v["max_trades"],
@@ -336,6 +348,11 @@ class SetupService:
         # the aggressive daily-profit mode: its own section, so the goal is a setting you can see in config.yaml
         if goal == "profit":
             changes[("aggressive", "enabled")] = True
+            # 3.0's Setup tab wrote its numbers into config.yaml: saving again moves them to this version's defaults
+            agg = cfg.aggressive
+            for name, old in OLD_AGGRESSIVE.items():
+                if name in agg.model_fields_set and getattr(agg, name) == old:
+                    changes[("aggressive", name)] = REMOVE
             if v.get("daily_goal") is not None:
                 changes[("aggressive", "daily_goal")] = v["daily_goal"]
             elif old_goal != "profit":
@@ -371,6 +388,7 @@ class SetupService:
             symbol = str(body.get("fallback") or "").upper() or "MNQ"
         if symbol not in SPECS:
             raise ValueError("Choose what to trade.")
+        markets, max_markets = SetupService._markets(body, symbol, auto_pick, plan)
         strategy = str(body.get("strategy", ""))
         if strategy not in STRATEGIES:
             raise ValueError("Choose a strategy.")
@@ -402,7 +420,7 @@ class SetupService:
                                  "Consistency Target (55% of the profit target in one day) would raise your target.")
         return {
             "plan": plan, "stage": stage, "goal": goal, "symbol": symbol, "auto_pick": auto_pick, "every_market": every_market,
-            "strategy": strategy,
+            "markets": markets, "max_markets": max_markets, "strategy": strategy,
             "account_id": account_id, "account_name": str(body.get("account_name") or "").strip() or None,
             "topstep_dll": bool(body.get("topstep_dll")),
             "payout_path": "consistency" if body.get("payout_path") == "consistency" and stage == "express" else "standard",
@@ -412,6 +430,36 @@ class SetupService:
             # an educated trade within first_trade.within_minutes of starting: part of teaching the bot
             "first_trade": goal == "learn" and bool(body.get("first_trade", True)),
         }
+
+    @staticmethod
+    def _markets(body: dict, symbol: str, auto_pick: bool, plan: str) -> tuple[list[str], int]:
+        """Markets at once: (the markets traded alongside ``symbol``, how many the daily pick may choose)."""
+        from topstep_bot.market_pick import same_product
+
+        try:
+            count = int(body.get("count") or 1)
+        except (TypeError, ValueError):
+            raise ValueError("Markets at once: pick a number.") from None
+        if not 1 <= count <= MAX_MARKETS:
+            raise ValueError(f"Markets at once: from 1 to {MAX_MARKETS}.")
+        if auto_pick:
+            return [], count
+        extra: list[str] = []
+        raw = body.get("markets") or []
+        for item in raw if isinstance(raw, list) else []:
+            sym = str(item or "").strip().upper()
+            if not sym:
+                continue
+            if sym not in SPECS:
+                raise ValueError(f"Unknown market '{sym}'.")
+            if product_limit(sym, PLANS[plan]) == 0:
+                raise ValueError(f"Topstep doesn't allow {sym} on a {plan} account right now.")
+            if any(same_product(sym, x) for x in (symbol, *extra)):
+                raise ValueError(f"{sym} is the same product as another market you picked: pick a different one.")
+            extra.append(sym)
+        if len(extra) < count - 1:
+            raise ValueError(f"Pick {count - 1 - len(extra)} more market(s) to trade alongside {symbol}, or trade fewer at once.")
+        return extra[: count - 1], 1
 
     def _fresh_text(self, v: dict) -> str:
         from topstep_bot.wizard import render_config
@@ -433,7 +481,7 @@ class SetupService:
         if fresh:
             text = set_values(self._fresh_text(v), {("risk", "max_trades_per_day"): v["max_trades"],
                                                     ("instrument", "auto_pick"): True if v["auto_pick"] else REMOVE,
-                                                    **_candidates_change(v, []),
+                                                    **_candidates_change(v, []), **_markets_change(v),
                                                     ("account", "account_name"): v["account_name"] or REMOVE,
                                                     ("first_trade", "enabled"): v["first_trade"] or REMOVE,
                                                     **({("aggressive", "daily_goal"): v["daily_goal"]}
@@ -454,7 +502,9 @@ class SetupService:
         path.write_text(text, encoding="utf-8")
         self._reload()
         market = (f"auto from {'every market' if v['every_market'] else 'the micros'} (else {v['symbol']})"
-                  if v["auto_pick"] else v["symbol"])
+                  if v["auto_pick"] else ", ".join([v["symbol"], *v["markets"]]))
+        if v["auto_pick"] and v["max_markets"] > 1:
+            market += f", up to {v['max_markets']} at once"
         log.info("Setup saved from the dashboard (%s %s, %s, %s, goal %s, first trade %s)", v["plan"], v["stage"],
                  market, v["strategy"], v["goal"], "on" if v["first_trade"] else "off")
         self.ctl.bot._event("info", f"Setup saved from the dashboard: {v['plan']} {v['stage']}, {market}, "
@@ -935,13 +985,13 @@ class SetupService:
             self.set_claude_key(key)
         enabled = bool(body.get("enabled", True))
         if enabled and not self.ctl.secrets.anthropic_api_key:
-            raise ValueError("Paste your Claude API key first (platform.claude.com > API keys), or save it on the AI Coach tab.")
+            raise ValueError("Paste your Claude API key first (platform.claude.com > API keys), or save it on the Ask tab (Deep review).")
         self._set_config({("brain", "ai"): enabled,
                           ("brain", "model"): model if model != DEFAULT_MODEL else REMOVE})
         if not enabled:
             return "AI answers off: the central intelligence uses its built-in answers (the key stays saved)."
         return (f"AI answers on ({model}). Each question costs a little on your Claude API account and counts toward "
-                "the monthly Claude budget on the AI Coach tab; only the records the AI looks up leave your PC.")
+                "the monthly Claude budget on the Ask tab (Deep review); only the records the AI looks up leave your PC.")
 
     def set_claude_key(self, key: str) -> None:
         """Save the one Claude API key and give it to everything that uses it (the coach and the Ask answers) at once."""

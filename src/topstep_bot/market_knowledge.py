@@ -4,7 +4,7 @@ scheduled reports matter for it.
 This is reference knowledge written down once (sources: CME Group contract specifications and
 the usual economic calendar). It drives three things:
   * which calendar events pause trading for an instrument (news.py, ``news.per_instrument``)
-  * the instrument profile on the dashboard's Market tab and in Telegram /brief
+  * the instrument profile on the dashboard's Knowledge tab (Market data) and in Telegram /brief
   * the headline feed symbol for each market (market_intel.py)
 Times are US Central (exchange time).
 """

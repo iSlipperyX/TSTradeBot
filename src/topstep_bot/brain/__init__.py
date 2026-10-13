@@ -41,7 +41,7 @@ class Brain:
 
     @property
     def api_key(self) -> str | None:
-        return claude.current_key()  # the Setup and AI Coach tabs update it without a restart
+        return claude.current_key()  # the Setup tab and Ask > Deep review update it without a restart
 
     @property
     def ai_ready(self) -> bool:
@@ -51,7 +51,7 @@ class Brain:
         if self.ai_ready:
             return f"AI answers ({self.cfg.brain.model})"
         if self.cfg.brain.ai:
-            return "built-in answers (AI is on, but no Claude API key is saved on the Setup or AI Coach tab)"
+            return "built-in answers (AI is on, but no Claude API key is saved on the Setup tab or Ask > Deep review)"
         return "built-in answers"
 
     async def ask(self, question: str, fetch: Fetch, channel: str = "dashboard", context: str = "") -> dict[str, Any]:

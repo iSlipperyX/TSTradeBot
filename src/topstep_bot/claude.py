@@ -5,7 +5,7 @@ The bot talks to Claude (Anthropic's API) for two things, and both go through th
   * the AI coach (coach.py): long review sessions with tools and simulations;
   * AI answers on the Ask tab and in Telegram (brain/llm.py): short look-up-and-answer turns.
 
-They share one API key (``COACH_ANTHROPIC_API_KEY`` in .env, saved from the Setup or AI Coach tab),
+They share one API key (``COACH_ANTHROPIC_API_KEY`` in .env, saved from the Setup tab or Ask > Deep review),
 one model catalogue with prices, one spending log (``data/coach/usage.jsonl``) and one monthly
 budget (``coach.monthly_budget_usd``). Saving or removing the key anywhere updates every user of it
 at once, masks it in the logs, and never writes it anywhere but .env on this PC.
@@ -80,7 +80,7 @@ def client(api_key: str | None, *, timeout: float = 120.0, retries: int = 2) -> 
     except ImportError:
         raise ClaudeError(INSTALL_HINT) from None
     if not api_key:
-        raise ClaudeError(f"Add your Claude API key first (dashboard > Setup or AI Coach tab). Create one at {KEYS_URL}")
+        raise ClaudeError(f"Add your Claude API key first (dashboard > Setup tab, or Ask > Deep review). Create one at {KEYS_URL}")
     return anthropic.AsyncAnthropic(api_key=api_key, max_retries=retries, timeout=timeout)
 
 
@@ -129,7 +129,7 @@ def explain(exc: BaseException, model: str = "") -> str:
     if isinstance(exc, ClaudeError):
         return str(exc)
     if isinstance(exc, anthropic.AuthenticationError):
-        return f"Claude refused the API key. Copy it again from {KEYS_URL} and save it on the Setup or AI Coach tab."
+        return f"Claude refused the API key. Copy it again from {KEYS_URL} and save it on the Setup tab (or Ask > Deep review)."
     if isinstance(exc, anthropic.PermissionDeniedError):
         return f"The API key isn't allowed to do that ({api_message(exc)}). Check its workspace on {KEYS_URL}."
     if isinstance(exc, anthropic.NotFoundError):
@@ -236,7 +236,7 @@ class Ledger:
         spent = self.spent()
         if spent >= budget:
             raise ClaudeError(f"This month's Claude budget is used up (${spent:.2f} of ${budget:.2f}, shared by the AI coach "
-                              "and the Ask answers). Raise it on the AI Coach tab to continue.")
+                              "and the Ask answers). Raise it on the dashboard's Ask tab (Deep review) to continue.")
 
 
 def ledger_for(data_path: Path) -> Ledger:

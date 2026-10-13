@@ -69,6 +69,21 @@ TOOLS: dict[str, tuple[str, dict]] = {
                 "and each market's jump allowance (the sudden gap the risk manager budgets for).",
                 {"symbol": {"type": "string", "description": "a market to describe in detail, e.g. MNQ, CL, ZC (optional)"}}),
     "rules": ("The Topstep rules for this account and what the bot does about each.", {}),
+    "markets": ("The markets the bot trades on this account right now (it can trade several at once and add, drop or "
+                "switch them without a restart): each one's position, open trade and trades today, and the account's "
+                "combined open risk.", {}),
+    "probability": ("The probability calculator: for each strategy and side, P(win), average win and loss in R, expected "
+                    "value after costs and an 80% range, pooled from this market (its time of day and market mood), the "
+                    "long-run memory and related markets; plus how well its past predictions held up (calibration).",
+                    {"strategy": {"type": "string", "description": "only this strategy, e.g. orb (optional)"},
+                     "market": {"type": "string", "description": "a market the bot trades, e.g. MES (default: the one shown)"}}),
+    "sources": ("Where the bot's knowledge comes from, all together: its real trades, the signals it watched live, "
+                "training replays of real market history, the Simulation Lab's simulated Combines, the long-run memory, "
+                "related markets (the knowledge network) and the price history saved on this PC.", {}),
+    "explain": ("Explain any part of the bot from its user guide, the Topstep rules page and its settings (with this "
+                "account's values): a feature, a setting, a rule, a dashboard panel or a term.",
+                {"topic": {"type": "string", "description": "what to explain, e.g. consistency target, max_conviction, "
+                                                            "knowledge network, the trade chart"}}),
 }
 
 
@@ -358,6 +373,153 @@ class Facts:
             out["fresh"] = network.fresh(picture)
             out["markets"] = {r: picture["markets"][r] for r in focus if r in picture["markets"]}
         return out
+
+    # ------------------------------------------------------------------ markets, odds, sources, the guide
+
+    def _desk(self):
+        return getattr(self.actions, "desk", None) if self.actions is not None else None
+
+    def _core_for(self, market: str | None) -> TradingCore | None:
+        desk = self._desk()
+        if market and desk is not None:
+            return desk.lane_for(market).core
+        return self.core
+
+    def fact_markets(self) -> dict[str, Any]:
+        desk = self._desk()
+        if desk is not None:
+            return {"view": desk.markets_view(), "text": self.actions.markets_text()}
+        from topstep_bot import market_pick as mp
+
+        today = mp.load_today(self.cfg)
+        markets = today["markets"] if today else mp.lane_symbols(self.cfg, self.cfg.instrument.symbol, None)
+        state = self.offline or "The bot is not running."
+        text = (f"{state} It is set to trade {', '.join(markets)}"
+                + (f" today (switched by {today.get('source', 'you')})" if today else "")
+                + ". While it runs, markets can be added, dropped or switched without a restart (Trade tab or /markets).")
+        return {"markets": markets, "text": text}
+
+    def fact_probability(self, strategy: str | None = None, market: str | None = None) -> dict[str, Any]:
+        from topstep_bot.probability import ProbabilityModel, calibration, calibration_text, outlook, outlook_text
+
+        titles = dict(strategy_names())
+        names = list(titles)
+        if strategy:
+            key = strategy if strategy in titles else find_strategy(strategy)
+            if key is None:
+                raise ValueError(f"no strategy called '{strategy}' (known: {', '.join(titles)})")
+            names = [key]
+        core = self._core_for(market)
+        network: list[str] = []
+        if core is not None:
+            kb = core.knowledge
+            rows = outlook(core.probability, names) if kb is not None else []
+            network = core.probability.network_markets
+            where = f"for {core.contract.name} now ({core.slot()} session, {core.regime.value} market)"
+        else:
+            kb = self.knowledge()
+            rows = []
+            if kb is not None:
+                from topstep_bot.probability import load_network, network_paths
+
+                net = load_network(network_paths(self.cfg, self.cfg.instrument.symbol)) if self.cfg.probability.network \
+                    else ([], [])
+                network = net[1]
+                model = ProbabilityModel(kb.obs, today=self._today(), half_life_days=kb.half_life_days,
+                                         real_weight=kb.real_weight, network=net[0])
+                rows = outlook(model, names)
+            where = f"for {self.cfg.instrument.symbol} over the whole day (the bot isn't running)"
+        cal = calibration(kb.obs if kb is not None else [])
+        text = outlook_text(rows, titles, where=where) + "\n\n" + calibration_text(cal)
+        if network:
+            text += f"\nRelated markets it also learns from: {', '.join(network)}."
+        if not self.cfg.probability.enabled:
+            text = "The probability calculator is turned off (probability.enabled).\n" + text
+        for row in rows:
+            row["title"] = titles.get(row["strategy"], row["strategy"])
+        return {"rows": rows[:16], "calibration": cal, "network": network, "where": where, "text": text}
+
+    def fact_sources(self) -> dict[str, Any]:
+        from topstep_bot import knowledge_network as kn
+        from topstep_bot.probability import calibration
+        from topstep_bot.simlab import load_report
+
+        core = self.core
+        symbol = (core.contract.root or core.contract.name) if core is not None else self.cfg.instrument.symbol
+        desk = self._desk()
+        traded = list(desk.lanes) if desk is not None else [symbol]
+        kb = core.knowledge if core is not None else self.knowledge()
+        out: dict[str, Any] = {"symbol": symbol, "traded": traded}
+        lines = [f"Where the bot's knowledge of {symbol} comes from:"]
+        if kb is not None:
+            counts: dict[str, int] = {}
+            for o in kb.obs:
+                counts[o.source] = counts.get(o.source, 0) + 1
+            out["knowledge"] = {"counts": counts, "total": len(kb.obs), "trained": kb.trained}
+            t = kb.trained or {}
+            lines.append(f"• Real trades: {counts.get('real', 0):,} by the bot and {counts.get('manual', 0):,} of yours "
+                         "(they count double).")
+            lines.append(f"• Watched live: {counts.get('shadow', 0):,} signals every strategy gave while the bot ran, "
+                         "followed to their stop, target or the session end.")
+            lines.append(f"• Real market history: {counts.get('train', 0):,} signals replayed"
+                         + (f" over {t.get('days')} days ({t.get('from')} to {t.get('to')}, {t.get('origin') or 'TopstepX'})"
+                            if t else "") + ".")
+        else:
+            lines.append("• The knowledge base is empty or turned off.")
+        memory = core.memory.status() if core is not None and core.memory is not None else None
+        longrun = kn._file_stats(self.cfg.longrun_knowledge_path)
+        if memory is not None:
+            lib = memory["library"]
+            out["memory"] = {"observations": memory["observations"], "bars": lib["bars"], "days": lib["days"],
+                             "first": lib["first"]}
+            lines.append(f"• Long-run memory: {memory['observations']:,} signals replayed over {lib['days']:,} days of saved "
+                         f"bars (since {lib['first']}).")
+        elif longrun:
+            out["memory"] = {"observations": longrun["n"], "days": longrun["days"]}
+            lines.append(f"• Long-run memory: {longrun['n']:,} signals over {longrun['days']:,} days.")
+        report = load_report(self.cfg)
+        if report:
+            tot = report["totals"]
+            best = (report.get("playbooks") or [{}])[0]
+            out["simulations"] = {"generated": report.get("generated"), "combines": tot["simulations"],
+                                  "passed": tot["passed"], "failed": tot["failed"], "open": tot["open"],
+                                  "markets": len(report.get("markets") or []), "best": best.get("label"),
+                                  "best_verdict": best.get("verdict")}
+            lines.append(f"• Simulations: {tot['simulations']} simulated Combines on {len(report.get('markets') or [])} "
+                         f"markets ({tot['passed']} passed, {tot['failed']} failed); best playbook "
+                         f"{best.get('label', '-')} ({best.get('verdict', '-')}).")
+        else:
+            lines.append("• Simulations: none yet (Knowledge tab > Simulations).")
+        net = kn.status(self.cfg, symbol, traded=traded)
+        if kb is not None:  # the live count (the file on disk is saved every few minutes)
+            net["own"] = {**(net.get("own") or {}), "n": len(kb.obs)}
+        out["network"] = net
+        lines.append(f"• Related markets: {net['outcomes']:,} outcomes on {len(net['markets'])} "
+                     f"{net['asset_class'].lower()} market(s)"
+                     + (f" ({', '.join(m['symbol'] for m in net['markets'][:8])})" if net["markets"] else "")
+                     + (f"; {len(net['learnable'])} more it can learn from saved history" if net["learnable"] else "") + ".")
+        try:
+            history = kn._history(self.cfg, self.cfg.instrument.timeframe_minutes)
+        except Exception:  # noqa: BLE001 - the library is optional
+            history = {}
+        if history:
+            out["library"] = {"markets": len(history), "days": max(h["days"] for h in history.values())}
+            lines.append(f"• Price history on this PC: {len(history)} market(s), up to {out['library']['days']:,} "
+                         "trading days each.")
+        cal = calibration(kb.obs if kb is not None else [])
+        out["calibration"] = cal
+        if cal["n"]:
+            lines.append(f"• Probability calculator: {cal['n']:,} predictions scored"
+                         + (f", skill {cal['skill']:+.1%} over always guessing the average" if cal.get("skill") is not None
+                            else "") + ".")
+        lines.append("All of it is evidence about the past after costs: no source guarantees the next trade.")
+        out["text"] = "\n".join(lines)
+        return out
+
+    def fact_explain(self, topic: str = "") -> dict[str, Any]:
+        from topstep_bot.brain.guide import search
+
+        return search(topic, self.core.cfg if self.core is not None else self.cfg)
 
     def fact_rules(self) -> dict[str, Any]:
         from topstep_bot.risk.summary import rules_text
