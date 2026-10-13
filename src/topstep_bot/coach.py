@@ -34,39 +34,22 @@ import secrets as pysecrets
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from topstep_bot.config import CLAUDE_KEY_ENV, BotConfig, load_secrets
+from topstep_bot import claude
+from topstep_bot.claude import BILLING_URL, CONSOLE_URL, KEYS_URL, ClaudeError
+from topstep_bot.config import BotConfig, load_secrets
 
 log = logging.getLogger("topstep_bot.coach")
 UTC = timezone.utc
 
-ENV_KEY = CLAUDE_KEY_ENV  # shared with the Ask answers (brain/llm.py)
-CONSOLE_URL = "https://platform.claude.com"
-BILLING_URL = "https://platform.claude.com/settings/billing"
-KEYS_URL = "https://platform.claude.com/settings/keys"
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
+ENV_KEY = claude.KEY_ENV  # shared with the Ask answers (brain/llm.py)
 MAX_TOKENS = 16000
 LESSONS_KEPT = 60
 SESSIONS_KEPT = 40
 MAX_SIM_SPECS = 160  # one coach experiment: at most this many simulations (keeps a session quick)
 TOOL_RESULT_CHARS = 24000
-
-# $ per million tokens: input, output, cache read, cache write (5-minute)
-PRICES: dict[str, tuple[float, float, float, float]] = {
-    "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
-    "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
-    "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
-    "claude-fable-5-1": (10.00, 50.00, 0.25, 12.50),
-}
-MODELS = {
-    "claude-opus-5-5": "Claude Opus 5.5 - recommended: thorough and careful",
-    "claude-sonnet-5-5": "Claude Sonnet 5.5 - about half the price of Opus",
-    "claude-haiku-5-5": "Claude Haiku 5.5 - cheapest, for quick check-ins",
-    "claude-fable-5-1": "Claude Fable 5.1 - most capable, about 2.5x the price of Opus",
-}
-FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"}
+MODELS = {m.id: m.label for m in claude.MODELS.values()}
 
 SYSTEM = """You are the trading coach for an automated futures trading bot that trades Topstep accounts \
 (Trading Combine evaluations and Express Funded Accounts) through the TopstepX API. You work for the bot's owner.
@@ -112,7 +95,7 @@ at, what you found, what you tested, what you recommend and why, and what would 
 Markdown headings and short bullet lists. Keep it under about 400 words."""
 
 
-class CoachError(RuntimeError):
+class CoachError(ClaudeError):
     """The coach can't run: no key, no credits, over budget, or the API refused (the message says which)."""
 
 
@@ -135,6 +118,11 @@ TOOLS: list[dict[str, Any]] = [
     _tool("get_markets",
           "Every market Topstep permits: asset class, contract specs and fees, the price history on this PC, whether "
           "this account's plan may trade it, and long-term context (20-day trend, volatility vs its own 10-year past).", {}),
+    _tool("get_market_network",
+          "The market network: every market read together - daily trend and volatility state, which markets move with "
+          "which (60-day correlations), markets moving against their peers, the board's risk appetite, reports and "
+          "headlines in the next 24 hours, and each market's jump allowance (the largest sudden 5-minute gap the risk "
+          "manager budgets for). Information only.", {}),
     _tool("get_knowledge",
           "What the bot's knowledge base has learned for one market: each strategy's average result in R by time-of-day "
           "slot and volatility regime, after costs, plus the long-run memory's report if it has one.",
@@ -193,92 +181,40 @@ class Coach:
 
     @property
     def api_key(self) -> str | None:
-        return self._api_key or os.environ.get(ENV_KEY) or load_secrets().anthropic_api_key
+        return self._api_key or claude.current_key() or load_secrets().anthropic_api_key
 
     def set_key(self, key: str | None) -> None:
         self._api_key = key or None
 
     def _client(self):
         try:
-            import anthropic
-        except ImportError:
-            raise CoachError("The Claude API package isn't installed. Run: .venv\\Scripts\\python -m pip install anthropic") from None
-        key = self.api_key
-        if not key:
-            raise CoachError("Add your Claude API key first (dashboard > Coach). Create one at " + KEYS_URL)
-        return anthropic.AsyncAnthropic(api_key=key, max_retries=3, timeout=600.0)
+            return claude.client(self.api_key, timeout=600.0, retries=3)
+        except ClaudeError as exc:
+            raise CoachError(str(exc)) from None
 
     async def test_key(self, key: str) -> str:
         """Check a key with the Claude API (a free call: it looks up the model). Returns a message."""
         try:
-            import anthropic
-        except ImportError:
-            raise CoachError("The Claude API package isn't installed. Run: .venv\\Scripts\\python -m pip install anthropic") from None
-        client = anthropic.AsyncAnthropic(api_key=key, max_retries=1, timeout=30.0)
-        try:
-            model = await client.models.retrieve(self.cfg.coach.model)
-        except anthropic.AuthenticationError:
-            raise CoachError("Claude refused that key. Copy it again from " + KEYS_URL) from None
-        except anthropic.PermissionDeniedError:
-            raise CoachError("That key may not use the Claude API (permission denied). Check its workspace on " + KEYS_URL) from None
-        except anthropic.NotFoundError:
-            return f"The key works, but {self.cfg.coach.model} isn't available to it: pick another model."
-        except anthropic.APIConnectionError:
-            raise CoachError("Couldn't reach the Claude API. Check the internet connection and try again.") from None
-        finally:
-            await client.close()
-        return f"Key works: {getattr(model, 'display_name', None) or self.cfg.coach.model} is available."
+            return await claude.check_key(key, self.cfg.coach.model)
+        except ClaudeError as exc:
+            raise CoachError(str(exc)) from None
 
-    def _usage_path(self) -> Path:
-        return self.folder / "usage.jsonl"
+    @property
+    def ledger(self) -> claude.Ledger:
+        return claude.Ledger(self.folder)
 
     def spent(self, month: str | None = None) -> float:
-        """Dollars spent on Claude this calendar month (UTC): coaching and the Ask tab's AI answers, from the usage log."""
-        month = month or datetime.now(UTC).strftime("%Y-%m")
-        total = 0.0
-        path = self._usage_path()
-        if not path.exists():
-            return 0.0
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if str(row.get("at", "")).startswith(month):
-                total += float(row.get("cost", 0.0))
-        return round(total, 4)
+        """Dollars spent on Claude this calendar month (UTC): coaching and the Ask answers, from the usage log."""
+        return self.ledger.spent(month)
 
     @staticmethod
     def price(model: str, usage: Any) -> float:
         """Dollars for one response's usage (every attempt, if the response fell back to another model)."""
-        def one(m: str, u: Any) -> float:
-            pin, pout, pread, pwrite = PRICES.get(m, PRICES["claude-opus-5-5"])
-            return (_tokens(u, "input_tokens") * pin + _tokens(u, "output_tokens") * pout
-                    + _tokens(u, "cache_read_input_tokens") * pread + _tokens(u, "cache_creation_input_tokens") * pwrite) / 1_000_000
-
-        iterations = getattr(usage, "iterations", None) if not isinstance(usage, dict) else usage.get("iterations")
-        if iterations:
-            total = 0.0
-            for it in iterations:
-                m = (it.get("model") if isinstance(it, dict) else getattr(it, "model", None)) or model
-                total += one(m, it)
-            return total
-        return one(model, usage)
+        return claude.price(model, usage)
 
     def log_usage(self, model: str, usage: Any, cost: float | None = None, source: str = "coach") -> float:
-        """Price (unless ``cost`` is given) and log one response; the Ask tab's AI answers log here too (source "ask")."""
-        cost = self.price(model, usage) if cost is None else cost
-        self._log_usage(model, usage, cost, source)
-        return cost
-
-    def _log_usage(self, model: str, usage: Any, cost: float, source: str = "coach") -> None:
-        self.folder.mkdir(parents=True, exist_ok=True)
-        row = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "source": source, "model": model,
-               "input": _tokens(usage, "input_tokens"),
-               "output": _tokens(usage, "output_tokens"), "cache_read": _tokens(usage, "cache_read_input_tokens"),
-               "cache_write": _tokens(usage, "cache_creation_input_tokens"), "cost": round(cost, 6)}
-        with self._usage_path().open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row) + "\n")
+        """Price (unless ``cost`` is given) and log one response; the Ask answers log here too (source "ask")."""
+        return self.ledger.log(model, usage, source, cost)
 
     # ---------------------------------------------------------------- lessons and proposals
 
@@ -564,6 +500,16 @@ class Coach:
                 **{k: rep[k] for k in ("markets", "totals", "playbooks", "holdout", "opportunities", "params",
                                        "risk_per_trade", "caveats")}}
 
+    def _network(self) -> dict[str, Any]:
+        from topstep_bot import network
+
+        picture = network.load(self.cfg)
+        if not picture:
+            return {"note": network.text(None)}
+        view = network.view(picture)
+        return {"built": view["built"], "fresh": view["fresh"], "board": view["board"], "markets": view["rows"],
+                "coverage": view["coverage"]}
+
     async def _run_tool(self, name: str, args: dict[str, Any], session: dict[str, Any],
                         progress: Callable[[str], None] | None) -> str:
         try:
@@ -573,6 +519,8 @@ class Coach:
                 result = self._simulation_report()
             elif name == "get_markets":
                 result = self._markets()
+            elif name == "get_market_network":
+                result = await asyncio.to_thread(self._network)
             elif name == "get_knowledge":
                 result = await asyncio.to_thread(self._knowledge, str(args.get("symbol") or ""))
             elif name == "get_trade_journal":
@@ -648,9 +596,7 @@ class Coach:
                 progress(text)
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": self._opening(question)}]
-        extra: dict[str, Any] = {}
-        if c.model in FALLBACK_MODELS:
-            extra = {"betas": [FALLBACK_BETA], "fallbacks": "default"}
+        state: dict[str, Any] = {}  # claude.create remembers here if this account refuses refusal fallbacks
         try:
             for turn in range(c.max_turns):
                 if self._cancel:
@@ -671,19 +617,10 @@ class Coach:
                            "tool_choice": {"type": "none"} if last else {"type": "auto"}, "messages": messages,
                            "thinking": {"type": "adaptive"}, "output_config": {"effort": c.effort},
                            "cache_control": {"type": "ephemeral"}}
-                try:
-                    response = await client.beta.messages.create(**request, **extra)
-                except anthropic.BadRequestError as exc:
-                    msg = _api_message(exc).lower()
-                    if not extra or any(w in msg for w in ("credit", "balance", "billing")):
-                        raise
-                    # an account or API version without refusal fallbacks: carry on without them
-                    log.warning("The Claude API refused the request with refusal fallbacks (%s); retrying without them", msg)
-                    extra = {}
-                    response = await client.beta.messages.create(**request)
+                response = await claude.create(client, request, c.model, state)
                 cost = self.price(c.model, response.usage)
                 self.session_cost += cost
-                self._log_usage(response.model or c.model, response.usage, cost)
+                self.ledger.log(response.model or c.model, response.usage, "coach", cost)
                 session["turns"] = turn + 1
                 if response.stop_reason == "refusal":
                     session["stopped"] = "Claude declined to continue this session"
@@ -706,23 +643,8 @@ class Coach:
                     results.append({"type": "tool_result", "tool_use_id": call.id, "content": out,
                                     **({"is_error": True} if out.startswith('{"error"') else {})})
                 messages.append({"role": "user", "content": results})
-        except anthropic.AuthenticationError:
-            raise self._fail("Claude refused the API key. Add it again on the Coach tab (" + KEYS_URL + ").") from None
-        except anthropic.PermissionDeniedError as exc:
-            raise self._fail(f"The API key isn't allowed to do that: {_api_message(exc)}") from None
-        except anthropic.RateLimitError:
-            raise self._fail("The Claude API is rate-limiting this key right now. Try again in a minute.") from None
-        except anthropic.BadRequestError as exc:
-            msg = _api_message(exc)
-            if "credit" in msg.lower() or "balance" in msg.lower() or "billing" in msg.lower():
-                raise self._fail("Your Claude API credit balance is too low. Buy credits at " + BILLING_URL) from None
-            raise self._fail(f"The Claude API rejected the request: {msg}") from None
-        except anthropic.APIStatusError as exc:
-            if exc.status_code == 402:
-                raise self._fail("Your Claude API credit balance is too low. Buy credits at " + BILLING_URL) from None
-            raise self._fail(f"The Claude API had a problem ({exc.status_code}): {_api_message(exc)}. Try again later.") from None
-        except anthropic.APIConnectionError:
-            raise self._fail("Couldn't reach the Claude API. Check the internet connection and try again.") from None
+        except anthropic.APIError as exc:
+            raise self._fail(claude.explain(exc, c.model)) from None
         finally:
             self.running = False
             self.stage = ""
@@ -760,7 +682,7 @@ class Coach:
         latest = self.sessions(1)
         return {"enabled": c.enabled, "key_saved": bool(self.api_key), "model": c.model, "models": MODELS, "effort": c.effort,
                 "max_session_usd": c.max_session_usd, "monthly_budget_usd": c.monthly_budget_usd,
-                "spent_month": self.spent(), "running": self.running, "stage": self.stage,
+                "spent_month": self.spent(), "spent_ask": self.ledger.spent(source="ask"), "running": self.running, "stage": self.stage,
                 "elapsed": round(time.time() - self.started) if self.running and self.started else None,
                 "session_cost": round(self.session_cost, 4), "error": self.last_error,
                 "lessons": list(reversed(self.lessons()))[:30],
@@ -775,7 +697,8 @@ class Coach:
     def status_text(self) -> str:
         s = self.status()
         lines = [f"AI coach: {'on' if s['enabled'] else 'off'} · {s['model']} · key {'saved' if s['key_saved'] else 'missing'}",
-                 f"Spent this month: ${s['spent_month']:.2f} of ${s['monthly_budget_usd']:.2f} (session cap ${s['max_session_usd']:.2f})"]
+                 f"Spent on Claude this month: ${s['spent_month']:.2f} of ${s['monthly_budget_usd']:.2f} "
+                 f"(of which Ask answers ${s['spent_ask']:.2f}; session cap ${s['max_session_usd']:.2f})"]
         if s["lessons"]:
             lines.append("Latest lessons:")
             lines += [f"  [{x['confidence']}] {x['text']}" for x in s["lessons"][:6]]
@@ -785,11 +708,6 @@ class Coach:
         if not s["key_saved"]:
             lines.append(f"Add a Claude API key on the dashboard's AI Coach or Setup tab (create one at {KEYS_URL}).")
         return "\n".join(lines)
-
-
-def _tokens(usage: Any, key: str) -> int:
-    value = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, 0)
-    return int(value or 0)
 
 
 def _echoable(content: list[Any]) -> list[Any]:
@@ -802,20 +720,12 @@ def _echoable(content: list[Any]) -> list[Any]:
     return [b for i, b in enumerate(content) if i > idx or getattr(b, "type", "") not in drop + ("fallback",)]
 
 
-def _api_message(exc: Any) -> str:
-    body = getattr(exc, "body", None)
-    if isinstance(body, dict):
-        err = body.get("error") or {}
-        if isinstance(err, dict) and err.get("message"):
-            return str(err["message"])
-    return str(getattr(exc, "message", "") or exc)
-
-
 def _tool_label(name: str, args: Any) -> str:
     args = args or {}
     if name == "run_simulation":
         return f"simulating {', '.join(args.get('strategies') or [])} on {', '.join(args.get('symbols') or [])}"
     return {"get_account_overview": "reading the account and rules", "get_simulation_report": "reading the Simulation Lab report",
+            "get_market_network": "reading the market network",
             "get_knowledge": f"reading what the bot knows about {args.get('symbol') or 'the market'}",
             "get_trade_journal": "reading the trade journal", "get_strategy_catalog": "reading the strategy catalogue",
             "record_lesson": "recording a lesson", "propose_change": "writing a proposal"}.get(name, name)

@@ -13,13 +13,12 @@ settings.
 from __future__ import annotations
 
 import logging
-import os
 from collections import deque
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from topstep_bot import claude
 from topstep_bot.brain import intents, llm
-from topstep_bot.config import CLAUDE_KEY_ENV
 
 if TYPE_CHECKING:
     from topstep_bot.brain.intents import Fetch
@@ -36,15 +35,13 @@ class Brain:
         self.cfg = cfg
         self.history: dict[str, deque[tuple[str, str]]] = {}
 
-    def _spending(self):
-        """The coach's usage log: AI answers are priced and counted against the same monthly budget."""
-        from topstep_bot.coach import Coach
-
-        return Coach(self.cfg)
+    def _spending(self) -> claude.Ledger:
+        """The shared Claude usage log: AI answers are priced and counted against the coach's monthly budget."""
+        return claude.ledger_for(self.cfg.data_path)
 
     @property
     def api_key(self) -> str | None:
-        return os.environ.get(CLAUDE_KEY_ENV) or None  # the Setup and AI Coach tabs update it without a restart
+        return claude.current_key()  # the Setup and AI Coach tabs update it without a restart
 
     @property
     def ai_ready(self) -> bool:
@@ -75,12 +72,13 @@ class Brain:
                    f"minute bars with the '{self.cfg.strategy.name}' strategy. {context}").strip()
             spending = self._spending()
             try:
-                if spending.spent() >= self.cfg.coach.monthly_budget_usd:
-                    raise llm.AIUnavailable(f"this month's Claude budget (${self.cfg.coach.monthly_budget_usd:.2f}, shared "
-                                            "with the AI coach) is used up - raise it on the AI Coach tab")
+                try:
+                    spending.check(self.cfg.coach.monthly_budget_usd)
+                except claude.ClaudeError as exc:
+                    raise llm.AIUnavailable(str(exc)) from None
                 answer = await llm.ask(question, history, fetch, api_key=self.api_key or "", model=b.model, effort=b.effort,
                                        max_tool_calls=b.max_tool_calls, context=ctx,
-                                       on_usage=lambda m, u: spending.log_usage(m, u, source="ask"))
+                                       on_usage=lambda m, u: spending.log(m, u, "ask"))
                 turns.append((question, answer))
                 return {"answer": answer, "by": "ai", "note": None}
             except llm.AIUnavailable as exc:

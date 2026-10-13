@@ -465,7 +465,7 @@ def test_ai_answers_look_up_the_records_with_read_only_tools(tmp_path, monkeypat
         block(stop_reason="tool_use", content=[block(type="tool_use", id="t1", name="status", input={})]),
         block(stop_reason="end_turn", content=[block(type="text", text="done")]),
     ]
-    assert run(llm.ask("x", [], fetch, api_key="k", model="claude-sonnet-5-5", max_tool_calls=1)) == "done"
+    assert run(llm.ask("x", [], fetch, api_key="k", model="claude-haiku-5-5", max_tool_calls=1)) == "done"
     assert "fallbacks" not in FakeAnthropic.requests[0] and FakeAnthropic.requests[1]["tool_choice"] == {"type": "none"}
     FakeAnthropic.script = [block(stop_reason="refusal", content=[])]
     with pytest.raises(llm.AIUnavailable, match="declined"):

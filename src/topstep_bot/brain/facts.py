@@ -64,6 +64,10 @@ TOOLS: dict[str, tuple[str, dict]] = {
               "month's Claude spending.", {}),
     "forecast": ("When the next automatic trade is likely and what it is waiting for (only while the bot runs).", {}),
     "market": ("Live market picture for what the bot trades: levels, today's reports, headlines (only while running).", {}),
+    "network": ("The market network: every market read together - trend and volatility state, which markets move "
+                "together, markets moving against their peers, risk appetite, the next 24 hours' reports and headlines, "
+                "and each market's jump allowance (the sudden gap the risk manager budgets for).",
+                {"symbol": {"type": "string", "description": "a market to describe in detail, e.g. MNQ, CL, ZC (optional)"}}),
     "rules": ("The Topstep rules for this account and what the bot does about each.", {}),
 }
 
@@ -340,6 +344,20 @@ class Facts:
         if self.actions is None:
             return {"text": "The live market picture needs the bot running."}
         return {"text": self.actions.market_text()}
+
+    def fact_network(self, symbol: str = "") -> dict[str, Any]:
+        from topstep_bot import network
+        from topstep_bot.market_pick import current_symbol
+
+        picture = network.load(self.cfg)
+        focus = [r for sym in (symbol, current_symbol(self.cfg)) for r in network.focus_for(sym)]
+        focus = list(dict.fromkeys(focus))
+        out: dict[str, Any] = {"text": network.text(picture, focus)}
+        if picture:
+            out["built"] = picture.get("built")
+            out["fresh"] = network.fresh(picture)
+            out["markets"] = {r: picture["markets"][r] for r in focus if r in picture["markets"]}
+        return out
 
     def fact_rules(self) -> dict[str, Any]:
         from topstep_bot.risk.summary import rules_text

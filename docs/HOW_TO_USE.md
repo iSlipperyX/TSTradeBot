@@ -48,6 +48,20 @@ explains why it took or skipped every trade, what each trade taught it, and whic
 trusts, from its own records ([section 38](#38-the-central-intelligence-ask-the-bot-why)). The AI
 coach and the Ask tab's optional AI answers now share one Claude API key and one monthly budget.
 
+**New in 3.0, the first release:**
+
+- **Make money every day.** A third goal on the Setup tab, next to *Pass the Combine* and *Teach the
+  bot*: the bot trades every signal its strategies find, up to 12 a day, presses a little harder on a
+  good day and stops at a daily profit goal ([section 39](#39-make-money-every-day-the-aggressive-mode)).
+- **Two risk gaps closed, in every goal.** No single trade can carry a Combine day past the
+  consistency line any more, and every loss limit now allows for a sudden jump past the stop
+  ([section 39](#two-protections-that-work-in-every-goal)).
+- **The market network.** Every market Topstep permits, read together: which move together, which
+  are stressed, what is scheduled, how far each can jump. On the Market tab, in Telegram (`/network`)
+  and to the AI ([section 40](#40-the-market-network)).
+- **One Claude integration.** The AI coach and the Ask answers share one key, one model list with
+  prices, one spending log and the same plain-words errors.
+
 ---
 
 ## Contents
@@ -90,6 +104,8 @@ coach and the Ask tab's optional AI answers now share one Claude API key and one
 36. [Every market Topstep permits](#36-every-market-topstep-permits)
 37. [Trading another market today](#37-trading-another-market-today)
 38. [The central intelligence: ask the bot why](#38-the-central-intelligence-ask-the-bot-why)
+39. [Make money every day: the aggressive mode](#39-make-money-every-day-the-aggressive-mode)
+40. [The market network](#40-the-market-network)
 
 ---
 
@@ -328,7 +344,9 @@ bottom; every field already has a suggestion, and a short note under each one ex
    - **What is this account for?** *Pass the Combine* protects the account and stops early on big
      days. *Teach the bot* trades more often and tries unproven strategies so it learns faster;
      use it only on an account you're willing to lose ([section 17](#using-a-combine-to-teach-the-bot)).
-     Every Topstep rule applies either way. With *Teach the bot*, a **First trade after starting**
+     *Make money every day* is the aggressive mode: as many trades as the rules allow, pressing harder on
+     good days, stopping at a **daily profit goal** you can set ([section 39](#39-make-money-every-day-the-aggressive-mode)).
+     Every Topstep rule applies whichever you choose. With *Teach the bot*, a **First trade after starting**
      box appears, ticked: the bot then makes one educated trade within 15 minutes of starting
      ([The first trade after starting](#the-first-trade-after-starting)).
    - Tick **Daily Loss Limit** if you added Topstep's optional one at checkout (it's under Risk
@@ -1116,6 +1134,7 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/funded` | Progress toward passing the Combine or the next payout ([section 32](#32-funded-account-goals-and-topsteps-rules)) |
 | `/rules` | Every Topstep rule the bot knows and what it does about each |
 | `/research` | What the bot has gathered from the internet ([section 33](#33-research-knowledge-that-grows-from-the-internet)) |
+| `/network` | The market network: the board's mood, the biggest moves against normal, busy asset classes, your market's peers, reports in the next 24 hours and jump allowance ([section 40](#40-the-market-network)) |
 | `/lab` | The Simulation Lab's latest results: Combines passed/failed, the best playbooks, the opportunities, the held-out check and its suggestion ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
 | `/switch MES` | **Trade another market for the rest of today** (asks to confirm; the bot must have no open trade). `/switch usual` goes back ([section 37](#37-trading-another-market-today)) |
 | `/coach` | The AI coach: latest lessons, proposals waiting for you, and this month's spending ([section 35](#35-the-ai-coach-claude-teaches-the-bot)) |
@@ -1959,6 +1978,19 @@ funded:                        # Express Funded payout goals (section 32)
   protect_winning_day: true    # standard path: keep a $150+ day a winning day
   cycle_profit_goal: null      # consistency path: each day capped at 40% of this (default: the profit target)
 
+aggressive:                    # "Make money every day" (section 39); the Setup tab writes this
+  enabled: false
+  daily_goal: null             # $ per day; default 45% of the profit target (must stay under 50% on a Combine)
+  trades_multiple: 2           # adaptive: each strategy may trade this many times its own daily count
+  unproven_risk: 0.5           # share of the risk per trade for signals the knowledge base hasn't proven
+  house_money: 0.25            # share of today's realized profit added to the next trade's risk
+  max_risk_multiple: 2.0       # ...never past this multiple of risk.risk_per_trade
+  cushion_share: 0.25          # one trade never risks more than this share of the room above the MLL
+  lock_in_at: 0.5              # once the day has made this share of its goal...
+  give_back: 0.4               # ...it can't give back more than this share of its best (and stops if it does)
+  stressed_risk: 0.5           # risk per trade while the market network marks the market as stressed
+  flatten_before_news: true    # close an open trade just before a high-impact release
+
 research:                      # what the bot gathers from the internet (section 33)
   enabled: true
   calendar: true
@@ -2067,6 +2099,7 @@ different config file.
 | `... --account NAME` | With several accounts: `preflight`, `go-live`, `flatten`, `journal`, `logs`, `rules` and `start --mode` act on one account (default: all); `backtest`, `train`, `download`, `tune`, `learn`, `insights` use that account's strategy and market |
 | `topstep-bot simulate [--starts N] [--symbols A,B] [--scope all\|tradable] [--classes fx,metals] [--strategies A,B] [--no-teach] [--show]` | Simulation Lab: replay the bot through history as fresh Combines started on N days per market and strategy, on every market with history (or the ones you name), score every playbook and every time-of-day opportunity, then teach the long-run memory; `--show` prints the last report ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) |
 | `topstep-bot markets [--download] [--yahoo] [--symbols A,B]` | Every market Topstep permits, with the history the bot has for each; `--download` brings all of them up to date (TopstepX when your login works, Yahoo otherwise or with `--yahoo`) ([section 36](#36-every-market-topstep-permits)) |
+| `topstep-bot network [--symbols A,B] [--show]` | Build the market network from the history on this PC and print it; `--show` prints the last one without rebuilding ([section 40](#40-the-market-network)) |
 | `topstep-bot coach ["question"] [--status]` | Run an AI coaching session (uses your Claude API credits), or `--status` for lessons, proposals and spending ([section 35](#35-the-ai-coach-claude-teaches-the-bot)) |
 | `topstep-bot insights [--csv FILE] [--longrun]` | What the bot has learned: results after costs, real fills, market conditions; or export every observation to CSV ([section 17](#what-the-bot-learned-results-after-costs-real-fills-and-conditions)) |
 
@@ -2102,6 +2135,7 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `data/research/daily_<MARKET>.json` | Ten years of daily prices per market: the long-term context in the Markets list (how busy a market is now compared with its own past) |
 | `data/simlab/` | The Simulation Lab: `report.json` (the latest), `runs.csv` (every simulated Combine, opens in Excel), `history/` (the last 20 reports). Safe to delete |
 | `data/coach/` | The AI coach: `lessons.json`, `proposals.json`, `sessions/` (each session's report, tool calls and cost), `latest_report.md`, `usage.jsonl` (every API call's tokens and cost) |
+| `data/network.json` | The market network (section 40): rebuilt every hour while the dashboard runs. Safe to delete |
 | `data/controller.json` | The mode you chose last (Paper/Live) and whether phone access is on |
 | `data/tools/cloudflared.exe` | Cloudflare's tunnel program for phone access (downloaded the first time you turn it on) |
 | `data/bot_exit.json` | Why the bot last exited (shown on the dashboard) |
@@ -3031,6 +3065,97 @@ the long-run memory held about 19 test days of MNQ from TopstepX, far too few fo
 either rule, so it keeps the classic rule. That will change only as the memory grows (it does every
 day the bot runs, faster with an imported CSV). No bot, rule or AI can guarantee profits or passing
 the Combine.
+
+## 39. Make money every day: the aggressive mode
+
+Choose **Make money every day** on the Setup tab (step 2, *What is this account for?*) and press
+**Save**. It works on a Combine, an Express Funded Account or a practice account.
+
+**What changes:**
+
+- **Strategy:** `adaptive` with every strategy, including the ones the knowledge base hasn't judged
+  yet. A strategy the evidence shows is *losing* at this time of day still isn't traded. Each
+  strategy may trade **twice its usual daily count** (ORB's one breakout a day becomes two), so the
+  bot takes every chance its strategies find, up to **12 trades a day**.
+- **Size by conviction:** a signal the knowledge base hasn't proven yet trades at **half** the risk
+  per trade; a proven one at full risk.
+- **Press on good days:** a quarter of the day's *realized* profit is added to the next trade's risk,
+  never past **twice** your risk per trade. A losing day never increases the size.
+- **Daily profit goal:** trading stops for the day once it is reached. The default is 45% of the
+  profit target ($1,350 on a 50K, $2,700 on a 100K, $4,050 on a 150K); type your own on the Setup tab.
+  On a Combine it must stay under 50% of the target, because of the consistency rule.
+- **Lock in the day:** once the day has made half its goal, new trades are sized so a stop-out can't
+  give back more than 40% of the day's best, and the bot stops for the day if it does.
+- **Protect the account:** one trade never risks more than a quarter of the room left above the
+  Maximum Loss Limit, so a losing streak shrinks the size instead of ending the account. Losing days
+  stop at your daily loss limit, after 3 losses in a row, as always.
+- **Stressed markets:** when the market network marks the market as stressed (its volatility in the
+  top 10% of its last decade), the risk per trade is halved for the day.
+- **News:** an open trade is closed just before a high-impact release instead of riding it.
+
+The **Overview** shows a *Make money every day* panel: today's progress toward the goal, what the next
+trade may risk and why, how much is locked in, and the consistency line no trade can cross.
+
+**Honest expectations.** Aggressive means more trades and bigger size on good days, so the swings are
+bigger in both directions. More trades are not more profit: each extra trade only helps if the
+strategy behind it has an edge, and the bot's evidence for most strategies is still small. On
+simulated data (40 days, 12 seeds per market, MNQ, MES and MCL) the aggressive mode averaged about 2
+trades a day against about 1.7 for *Pass the Combine*; the strategies find only so many signals.
+Simulated data shows the guards work (no simulated day crossed the consistency line or the MLL); it
+says nothing about whether real trading will make money. No bot can guarantee a profit or a pass.
+
+### Two protections that work in every goal
+
+**The consistency line.** On a Combine, Topstep raises your profit target if one day makes more than
+55% of it. The bot already closed an open trade once the day reached 50%, but a single fast winner
+(a gap through the target) could still jump past the line before the close arrived. Now every entry,
+automatic, manual, an idea you take or the first trade, is planned so that **winning it can't lift the
+day past 50% of the target**: the profit target becomes a limit order at the broker, and when the
+strategy's target would go past the line it moves to the line (if that is still at least as far as
+the stop), otherwise the size comes down until it fits. With less than 4 ticks of room left, no new
+trade is taken. On an Express Funded Account on the consistency path the same applies to the path's
+daily cap.
+
+**Sudden jumps past the stop.** A stop is a promise to sell at the next price, not at the stop price:
+in a fast market or at a report the fill can be many ticks worse, and grains, livestock and energy jump
+the most. Every hard limit (the Maximum Loss Limit, your daily loss limit and Topstep's optional Daily
+Loss Limit) is now checked against the stop **plus the market's jump allowance**, so a stop that fills
+late still can't reach them. The allowance comes from the market network (the largest 5-minute gap in
+one bar out of 200 over the last 120 days, with a floor per asset class: 3 ticks for rates, 4 for
+currencies, 8 for indexes and metals, 10 for energy and crypto, 12 for grains and livestock, and a cap
+of four times that floor). It only ever makes trades smaller.
+
+## 40. The market network
+
+The bot trades one market per account, but markets move together: the index futures follow each
+other, bonds and gold rise when stocks are feared, the dollar moves every currency future, crude leads
+the energy complex. The market network reads every market Topstep permits together, from what the bot
+already collects:
+
+- **Each market's state:** trend over 5 and 20 days, and how volatile it is now against its own last
+  ten years (calm, normal, busy or stressed).
+- **Links:** which markets moved together over the last 60 days, and the ones that moved against their
+  usual partners today.
+- **The board:** a risk-appetite reading from stocks, bonds, the yen and gold (risk-on, risk-off or
+  mixed), how stressed the stock market is, the biggest moves against normal, and which asset classes
+  are busy.
+- **The day ahead:** the reports in the next 24 hours that matter for each market, and how many
+  headlines it has had.
+- **The bot's own evidence:** the Simulation Lab's best playbooks.
+- **Jump allowance:** how far each market can jump against a stop (above).
+
+Where to see it: **Market** tab → **Market network** (your market highlighted), `/network` in Telegram,
+`topstep-bot network`, and the Ask tab ("is gold stressed?", "how are the markets moving together?").
+The AI coach reads it with its own lookup.
+
+It builds from the daily history the research library downloads (section 33) and the 5-minute history
+in the market library (Simulations tab → *Download history*), and is rebuilt every hour while the
+dashboard runs. A picture older than 36 hours isn't used: the bot falls back to the class defaults.
+
+**What it may change:** only protection. The jump allowance makes trades smaller, and in the aggressive
+mode a stressed market halves the risk per trade. It never makes the bot trade bigger or more often,
+and never picks a direction: correlations and moods change, and treating them as signals would be
+fitting the past.
 
 ---
 

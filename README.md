@@ -24,6 +24,24 @@ Other systems: `pip install -e .` then run `topstep-bot` (it starts the dashboar
 
 No bot can guarantee passing the Combine or making a profit, and this one doesn't either.
 
+## New in 3.0 — the first release
+
+- **Make money every day** — a third goal on the Setup tab: the bot trades every signal its strategies
+  find (each strategy up to twice its usual daily count, at most 12 trades a day), sizes unproven
+  signals at half risk, adds part of the day's realized profit to the next trade, locks in a good day
+  and stops at a daily profit goal. ([guide](docs/HOW_TO_USE.md#39-make-money-every-day-the-aggressive-mode))
+- **Two risk gaps closed, in every goal** — no single trade can carry a Combine day past the
+  consistency line (its target is moved to the line or the size comes down), and every loss limit
+  allows for a sudden jump past the stop, measured per market.
+- **The market network** — all 51 markets read together: what moves with what, which are stressed,
+  the board's risk appetite, the next 24 hours' reports, and each market's jump risk. On the Market
+  tab, `/network`, `topstep-bot network`, the Ask tab and the AI coach.
+  ([guide](docs/HOW_TO_USE.md#40-the-market-network))
+- **One Claude integration** — the AI coach and the Ask answers share one key, one model list with
+  prices (Opus 5.5 by default), one spending log and the same plain-words errors.
+
+Aggressive means bigger swings both ways. It can't break a Topstep rule by itself, but it can lose.
+
 ## New in 2.2
 
 - **Ask the bot why** — the dashboard's **Ask** tab, or typing to the bot in Telegram (`/ask`), explains

@@ -23,6 +23,7 @@ HELP = """I'm the bot's central intelligence. I answer from its own records. Try
 • when is the next trade?  • how am I doing today?
 • which decision rule are you using?  • what are my rules?
 • what did the simulations find?  • what has the coach learned?
+• how are the markets moving together?  • is gold stressed?
 I can explain and report, but I can't place trades or change settings - use the dashboard for that.
 In Telegram, send /help for the bot's commands."""
 
@@ -32,6 +33,24 @@ DAY = re.compile(r"\b(20\d\d-\d\d-\d\d)\b")
 
 def _has(q: str, *words: str) -> bool:
     return any(re.search(rf"\b{w}", q) for w in words)
+
+
+NAME_SKIP = {"mini", "micro", "futures", "index", "year", "note", "bond", "dollar", "short", "tons", "ultra",
+             "australian", "british", "canadian", "japanese", "swiss", "new", "zealand", "mexican", "live", "lean"}
+
+
+def _symbol(question: str) -> str | None:
+    """The market a question names: a symbol written in capitals (MNQ, CL) or a word of its name (gold, crude)."""
+    from topstep_bot.market_knowledge import MICROS, PRODUCTS
+
+    for tok in re.findall(r"\b[A-Z0-9]{2,4}\b", question):
+        if tok in PRODUCTS or tok in MICROS:
+            return tok
+    words = set(re.findall(r"[a-z]+", question.lower()))
+    for root, p in PRODUCTS.items():
+        if words & {w for w in re.findall(r"[a-z]+", p.name.lower()) if len(w) > 3 and w not in NAME_SKIP}:
+            return root
+    return None
 
 
 async def answer(question: str, fetch: Fetch) -> str:
@@ -93,6 +112,9 @@ async def answer(question: str, fetch: Fetch) -> str:
         return await text("status")
     if _has(q, "know", "knowledge", "brain", "memory", "what works", "best strateg"):
         return await text("knowledge")
+    if _has(q, "network", "correlat", "move together", "moving together", "moves with", "stressed", "risk appetite", "risk.on", "risk.off",
+            "all markets", "across markets", "jump"):
+        return await text("network", {"symbol": sym} if (sym := _symbol(question)) else {})
     if _has(q, "market", "news", "headline", "level"):
         return await text("market")
     if _has(q, "rule", "limit", "risk", "topstep", "drawdown", "mll", "consistency"):

@@ -48,8 +48,10 @@ touching it ends the account. In an XFA the MLL moves to $0 after the first payo
 
 **The bot:**
 - Tracks the floor the same way (end-of-day, locking) and saves it, so restarts don't lose it.
-- Sizes every trade so that a stop-out (including slippage and fees) still leaves `mll_buffer`
-  ($200 by default) above the floor.
+- Sizes every trade so that a stop-out (including slippage, fees **and the market's jump
+  allowance**, the sudden gap a stop can fill at in a fast market) still leaves `mll_buffer` above the
+  floor. The allowance is measured per market by the market network (3 to 48 ticks; grains,
+  livestock and energy the most) and only ever makes trades smaller.
 - Stops new trades when equity is within `mll_buffer` of the floor, and closes an open trade at
   once when it gets within half of it.
 - If the bot can't work out the floor (for example an account that was traded before), the
@@ -67,6 +69,8 @@ later. When your day's P&L reaches it, Topstep flattens the account and blocks t
   amount) or leave it empty. The dashboard's Setup tab asks you.
 - Stops new trades at 90% of the DLL and closes an open trade at 95%, so Topstep's limit is never
   the one that fires.
+- Sizes every trade so a stop-out that fills a jump late still stays inside 90% of the DLL and
+  inside your personal limit.
 - Always has its own, lower limit too (`risk.personal_daily_loss_limit`, $500 by default). The bot
   refuses to start if your personal limit is not below Topstep's DLL and MLL.
 
@@ -80,6 +84,12 @@ $4,000).
 - Stops opening trades once the day is up 40% of the profit target (`risk.daily_profit_target`).
 - If an open trade keeps running, it is closed when the day reaches 50% of the target, before the
   55% line (`risk.consistency_guard`, on by default).
+- Plans every entry so that **winning it can't carry the day past that 50% line**: the trade's
+  profit target (a limit order at the broker) is moved to the line or the size is reduced, and with
+  less than 4 ticks of room no trade is taken. This covers the case the close-out can't: one fast
+  winner that gaps through the line between two price updates.
+- In the *Make money every day* goal the day stops at its own goal instead (45% of the target by
+  default, always under 50%).
 - Shows the current target (including any increase) on the dashboard's profit target meter.
 
 ### Profit target (Combine)

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -282,40 +281,28 @@ class CoachService:
         return self.coach.status()
 
     async def save_key(self, body: dict) -> dict:
-        from topstep_bot.coach import ENV_KEY, CoachError
-        from topstep_bot.wizard import update_env_file
+        from topstep_bot.claude import KEY_PREFIX
+        from topstep_bot.coach import CoachError
 
         key = str(body.get("key", "")).strip()
         if not key:
             raise ValueError("Paste your Claude API key first.")
-        if not key.startswith("sk-ant-"):
-            raise ValueError("That doesn't look like a Claude API key (they start with sk-ant-).")
+        if not key.startswith(KEY_PREFIX):
+            raise ValueError(f"That doesn't look like a Claude API key (they start with {KEY_PREFIX}).")
         self._sync()
         try:
             message = await self.coach.test_key(key)
         except CoachError as exc:
             return {"ok": False, "message": str(exc)}
-        update_env_file(self.ctl.setup.env_path, {ENV_KEY: key})
-        os.environ[ENV_KEY] = key
-        self.ctl.secrets.anthropic_api_key = key
-        self.coach.set_key(key)
-        from topstep_bot.logging_setup import add_secret
-
-        add_secret(key)
+        self.ctl.setup.set_claude_key(key)  # one key: the Ask answers use it too
         return {"ok": True, "message": f"{message} Saved in .env on this PC."}
 
     def remove_key(self) -> str:
-        from topstep_bot.coach import ENV_KEY
-        from topstep_bot.wizard import remove_env_keys
-
-        remove_env_keys(self.ctl.setup.env_path, {ENV_KEY})
-        os.environ.pop(ENV_KEY, None)
-        self.ctl.secrets.anthropic_api_key = None
-        self.coach.set_key(None)
-        return "Claude API key removed from this PC."
+        self.ctl.setup.forget_claude_key()
+        return "Claude API key removed from this PC (the Ask answers used it too)."
 
     def settings(self, body: dict) -> str:
-        from topstep_bot.coach import MODELS
+        from topstep_bot.claude import EFFORTS, MODELS
 
         changes: dict[tuple[str | None, str], Any] = {}
         if "model" in body:
@@ -323,7 +310,7 @@ class CoachService:
                 raise ValueError("Unknown model.")
             changes[("coach", "model")] = body["model"]
         if "effort" in body:
-            if body["effort"] not in ("low", "medium", "high", "xhigh", "max"):
+            if body["effort"] not in EFFORTS:
                 raise ValueError("Effort must be low, medium, high, xhigh or max.")
             changes[("coach", "effort")] = body["effort"]
         for key, low, high in (("max_session_usd", 0.05, 50), ("monthly_budget_usd", 0.5, 1000)):

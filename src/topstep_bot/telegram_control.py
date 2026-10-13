@@ -52,6 +52,7 @@ COMMANDS = [
     ("market", "Market brief: key levels, today's reports, headlines"),
     ("funded", "Progress to your Combine pass or next payout"),
     ("research", "What the bot has gathered from the internet"),
+    ("network", "Market network: how every market is moving together, stress, jump risk"),
     ("lab", "Simulation Lab: every market and strategy as fresh Combines, plus opportunities"),
     ("switch", "Trade another market for the rest of today, e.g. /switch MES (or /switch usual)"),
     ("coach", "AI coach: latest lessons, proposals and spending"),
@@ -519,7 +520,7 @@ class TelegramController:
         elif command == "train":
             await self.send("🧠 Training on recent history - this takes a few seconds...")
             self._in_background(self._slow("train", source, "Training failed", target))
-        elif command in ("brief", "next", "market", "funded", "rules", "research", "lab", "coach"):
+        elif command in ("brief", "next", "market", "funded", "rules", "research", "network", "lab", "coach"):
             await self.send(await self._do(f"{command}_text", account=target))
         elif command == "learn":
             await self.send("📚 Learning from the long-run memory: downloading missing history and replaying all of it. "

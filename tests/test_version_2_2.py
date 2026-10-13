@@ -112,7 +112,7 @@ def test_the_dashboard_defines_each_function_and_id_once():
     ids = re.findall(r'\bid="([^"]+)"', html)
     assert sorted({n for n in names if names.count(n) > 1}) == []  # a second loadLab once broke the Simulations tab
     assert sorted({i for i in ids if ids.count(i) > 1}) == []
-    assert 'data-tab="ask"' in html and 'id="tab-ask"' in html and "v2.2" in html
+    assert 'data-tab="ask"' in html and 'id="tab-ask"' in html and "v3.0" in html
 
 
 def test_saving_the_key_on_the_setup_tab_gives_it_to_the_coach(tmp_path, monkeypatch):

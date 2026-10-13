@@ -92,6 +92,7 @@ REMOTE_ROUTES = {
     ("POST", "/api/phone/off"),
     ("POST", "/api/page-error"),  # the page tells the PC's log when its own script fails
     ("POST", "/api/lab/state"),
+    ("POST", "/api/network"),  # the market network: read-only
     ("POST", "/api/lab/run"),
     ("POST", "/api/coach/state"),
     ("POST", "/api/coach/run"),  # the API key, budgets and applying proposals stay on the PC

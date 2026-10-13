@@ -234,6 +234,10 @@ class LiveRunner:
         await self._warmup()
         await core.begin_day(today, acct.balance, realized, closed_today)
         core.risk.live_guards = True
+        try:
+            core.apply_network()
+        except Exception:  # noqa: BLE001 - the class defaults stay in place
+            log.exception("Could not read the market network")
         core.risk.best_prior_day = self._best_prior_day(label, today, starting_balance(cfg))
         from topstep_bot.remote import RemoteControl
 

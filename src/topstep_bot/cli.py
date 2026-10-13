@@ -509,6 +509,23 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_network(args: argparse.Namespace) -> int:
+    """The market network (network.py): every market read together, rebuilt from the history on this PC."""
+    from topstep_bot import network
+    from topstep_bot.market_pick import current_symbol
+
+    cfg = _load_account(args, first_if_several=True)
+    picture = network.load(cfg) if args.show else None
+    if picture is None:
+        with console.status("Reading every market together..."):
+            picture = network.refresh(cfg)
+    symbols = [s.strip() for s in args.symbols.split(",")] if args.symbols else [current_symbol(cfg)]
+    focus = list(dict.fromkeys(r for sym in symbols for r in network.focus_for(sym)))
+    console.print(network.text(picture, focus), markup=False, highlight=False)
+    console.print(f"[dim]Saved in {network.path_for(cfg)}. The dashboard's Market tab shows it.[/]")
+    return 0
+
+
 def cmd_markets(args: argparse.Namespace) -> int:
     """Every market Topstep permits, the history the bot has for each, and (with --download) bring it up to date."""
     from topstep_bot.instruments import CLASSES
@@ -1468,6 +1485,7 @@ MENU = [
     ("keys", "Manage your TopstepX API keys (one per account, if you like)"),
     ("markets", "MARKETS: every market Topstep permits, and download all their history"),
     ("simulate", "SIMULATION LAB: run every market and strategy as fresh Combines"),
+    ("network", "MARKET NETWORK: how every market is moving together, stress and jump risk"),
 ]
 
 
@@ -1644,6 +1662,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--offline", action="store_true", help="don't download: replay only what is already in the library")
     p.add_argument("-a", "--account", help=account_help)
     p.set_defaults(func=cmd_learn, import_csv=None)
+
+    p = sub.add_parser("network", help="Market network: how every market is moving together, stress and jump risk")
+    p.add_argument("--symbols", help="markets to describe in detail, e.g. MNQ,CL (default: the account's market)")
+    p.add_argument("--show", action="store_true", help="show the last picture instead of rebuilding it")
+    p.add_argument("-a", "--account", help=account_help)
+    p.set_defaults(func=cmd_network)
 
     p = sub.add_parser("simulate", help="Simulation Lab: run the bot through history as fresh Combines started on many days")
     p.add_argument("--starts", type=int, default=None, help="Combine start days per market and strategy (default 4)")

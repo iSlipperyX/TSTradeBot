@@ -49,8 +49,11 @@ def build_core(
     floor = cfg.account.mll_floor_override if cfg.account.mll_floor_override is not None else mll_floor
     tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
     fees = fees_for(cfg, contract)
-    risk = RiskManager(cfg.risk, cfg.account, plan, contract, schedule, tracker, fees, cfg.funded)
-    strategy = create_strategy(cfg.strategy.name, cfg.strategy.params, contract, cfg.instrument.timeframe_minutes)
+    risk = RiskManager(cfg.risk, cfg.account, plan, contract, schedule, tracker, fees, cfg.funded, cfg.aggressive)
+    params = dict(cfg.strategy.params)
+    if cfg.aggressive.enabled and cfg.strategy.name == "adaptive":  # more chances a day, each still judged and risk-checked
+        params.setdefault("trades_multiple", cfg.aggressive.trades_multiple)
+    strategy = create_strategy(cfg.strategy.name, params, contract, cfg.instrument.timeframe_minutes)
     orders = OrderManager(
         broker,
         contract,

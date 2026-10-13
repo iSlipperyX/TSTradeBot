@@ -16,6 +16,7 @@ from rich.table import Table
 
 from topstep_bot.api.rest import ProjectXClient, ProjectXError
 from topstep_bot.instruments import SPECS
+from topstep_bot.risk.manager import AGGRESSIVE_GOAL_SHARE
 from topstep_bot.risk.topstep import PLANS
 from topstep_bot.strategies import STRATEGIES
 
@@ -53,6 +54,11 @@ def remove_env_keys(path: Path, keys: set[str]) -> bool:
     return True
 
 
+PROFIT_HEADER = ("# Goal: PROFIT - aggressive daily profit. The bot trades as often as the rules allow, presses harder on\n"
+                 "# good days and stops at its daily goal. Every Topstep rule and loss limit still applies; no bot can\n"
+                 "# guarantee a profit on any day or a pass.\n")
+
+
 def render_config(
     *,
     mode: str = "paper",
@@ -70,27 +76,42 @@ def render_config(
     goal: str = "pass",
     accounts: list[dict] | None = None,
 ) -> str:
-    """``goal``: "pass" protects the Combine; "learn" trades more so the knowledge base learns faster."""
+    """``goal``: "pass" protects the Combine; "learn" trades more so the knowledge base learns faster;
+    "profit" (aggressive daily profit) trades as often as the rules allow and presses on good days."""
     learn = goal == "learn"
-    if learn:
+    profit = goal == "profit"
+    if learn or profit:
         strategy = "adaptive"
         max_trades = max(max_trades, 8)
     target = PLANS[plan].profit_target
     deep_days = 730 if learn else 365  # learning: a longer memory to compare against
-    params = "{trade_unproven: true}   # learning: also trade strategies the bot has no evidence on yet" if learn else \
-        "{}                   # override strategy defaults here, e.g. {target_r: 1.5}"
+    params = ("{trade_unproven: true}   # learning: also trade strategies the bot has no evidence on yet" if learn else
+              "{trade_unproven: true}   # aggressive: every signal not proven to lose (unproven ones at reduced size)" if profit
+              else "{}                   # override strategy defaults here, e.g. {target_r: 1.5}")
     if learn:
         profit_lines = (f"  daily_profit_target: {target:g}     # learning: no early stop for the day (a big day only raises the target)\n"
                         "  consistency_guard: false      # learning: keep trading past 50% of the target in a day\n"
                         "  max_consecutive_losses: 4\n"
                         "  cooldown_minutes_after_loss: 5")
+    elif profit:
+        profit_lines = ("  consistency_guard: true       # never let a day pass 50% of the profit target (Topstep's limit is 55%)\n"
+                        "  max_consecutive_losses: 3\n"
+                        "  cooldown_minutes_after_loss: 3")
     else:
         profit_lines = (f"  # daily_profit_target: {0.4 * target:g}   # combine default: 40% of the profit target (protects the consistency rule)\n"
                         "  consistency_guard: true       # combine: close out before a day reaches 55% of the profit target\n"
                         "  max_consecutive_losses: 2")
     goal_line = ("# Goal: LEARN - this account is for teaching the bot. It trades more often, tries unproven\n"
                  "# strategies, and doesn't stop early for the consistency rule. Every Topstep rule still applies.\n"
-                 if learn else "")
+                 if learn else PROFIT_HEADER if profit else "")
+    aggressive = (f"\naggressive:                     # Make money every day: as many trades as the rules allow, pressing on good days\n"
+                  f"  enabled: true\n"
+                  f"  # daily_goal: {AGGRESSIVE_GOAL_SHARE * target:g}            # default: 45% of the profit target (under the consistency line)\n"
+                  "  unproven_risk: 0.5            # signals the bot hasn't proven yet trade at half size\n"
+                  "  house_money: 0.25             # add a quarter of today's realized profit to the next trade's risk\n"
+                  "  max_risk_multiple: 2          # ...never more than twice risk_per_trade\n"
+                  "  lock_in_at: 0.5               # once the day has made half its goal, lock part of it in:\n"
+                  "  give_back: 0.4                # never give back more than 40% of the day's best\n") if profit else ""
     first_trade = ("\nfirst_trade:                    # learning: an educated trade soon after the bot starts (every rule still applies)\n"
                    "  enabled: true\n"
                    "  within_minutes: 15            # placed within this many minutes of starting (or of entries opening)\n"
@@ -133,7 +154,7 @@ knowledge:                      # what the bot learns while it runs (drives the 
   history_days: 60
   deep_learning: true           # long-run memory: keep every bar, backfill history, replay it all daily (reports only)
   deep_history_days: {deep_days}        # how far back the long-run memory reaches (up to 3650)
-{first_trade}
+{first_trade}{aggressive}
 risk:
   risk_per_trade: {risk_per_trade:g}          # $ lost if a trade hits its stop (position size is calculated from this)
   personal_daily_loss_limit: {daily_loss:g} # stop trading for the day after losing this much (incl. open P&L)
@@ -516,15 +537,12 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         [("combine", "Trading Combine (evaluation)"), ("express", "Express Funded Account (XFA)"), ("practice", "Practice account")],
         hint_stage or "combine",
     )
-    goal = "pass"
+    goals = [("pass", "Pass the Combine: protect the account and stop early on big days"),
+             ("profit", "Make money every day (aggressive): as many trades as the rules allow, pressing on good days")]
     if stage in ("combine", "practice"):
-        goal = _pick(
-            "What is this account for?",
-            [("pass", "Pass the Combine: protect the account and stop early on big days"),
-             ("learn", "Teach the bot: trade more often and try unproven strategies so it learns faster "
-                       "(losing this account is acceptable)")],
-            "pass",
-        )
+        goals.append(("learn", "Teach the bot: trade more often and try unproven strategies so it learns faster "
+                               "(losing this account is acceptable)"))
+    goal = _pick("What is this account for?", goals, "pass")
     dll_amount = PLANS[plan].daily_loss_limit
     topstep_dll = stage != "practice" and Confirm.ask(
         f"Did you add Topstep's optional Daily Loss Limit (${dll_amount:,.0f}) when you bought this account?\n"
@@ -545,9 +563,9 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         [(s, f"{SPECS[s].description} - ${SPECS[s].tick_value:g}/tick") for s in SYMBOL_CHOICES],
         "MNQ",
     )
-    if goal == "learn":
+    if goal in ("learn", "profit"):
         strategy = "adaptive"
-        console.print("\n[bold cyan]5. Strategy[/]\nLearning accounts use [bold]adaptive[/]: it runs every strategy and "
+        console.print("\n[bold cyan]5. Strategy[/]\nThis goal uses [bold]adaptive[/]: it runs every strategy and "
                       "learns from all of them.")
     else:
         strategy = _pick("5. Strategy (adaptive is recommended: it trades all day and learns what works)",
@@ -559,12 +577,16 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
     # ---- risk
     mll = PLANS[plan].max_loss_limit
     console.print(
-        f"\n[bold cyan]6. Risk[/]\nYour Maximum Loss Limit is ${mll:,.0f}. Suggested: risk about {7.5:g}% of it per trade "
-        f"and stop for the day after losing 25% of it."
+        f"\n[bold cyan]6. Risk[/]\nYour Maximum Loss Limit is ${mll:,.0f}. The suggestions below fit this goal: risk "
+        f"{'10' if goal == 'profit' else '5' if goal == 'learn' else '7.5'}% of it per trade and stop for the day after losing "
+        f"{'30' if goal == 'profit' else '25'}% of it."
     )
-    risk = FloatPrompt.ask("Dollars to risk per trade", default=round(mll * (0.05 if goal == "learn" else 0.075)))
+    from topstep_bot.setup_service import suggested_risk
+
+    hint = suggested_risk(plan, goal, topstep_dll)
+    risk = FloatPrompt.ask("Dollars to risk per trade", default=hint["risk_per_trade"])
     ceiling = min(mll, dll_amount) if topstep_dll else mll
-    suggested = min(round(mll * 0.25), round(ceiling * 0.8))
+    suggested = hint["daily_loss_limit"]
     daily = FloatPrompt.ask("Personal daily loss limit ($)", default=suggested)
     while daily >= ceiling:
         console.print(f"[yellow]It must be below ${ceiling:,.0f} "
@@ -601,7 +623,7 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         render_config(
             plan=plan, stage=stage, account_id=account_id, symbol=symbol, strategy=strategy,
             risk_per_trade=risk, daily_loss=daily, topstep_dll=topstep_dll, payout_path=payout_path, goal=goal,
-            accounts=profiles,
+            accounts=profiles, max_trades=hint["max_trades"],
         ),
         encoding="utf-8",
     )

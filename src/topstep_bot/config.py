@@ -362,6 +362,8 @@ class KnowledgeConfig(_Section):
 # The one Claude API key the AI coach and the Ask answers share. Its own name, so a system-wide
 # ANTHROPIC_API_KEY (set for some other program) is never picked up and billed by accident.
 CLAUDE_KEY_ENV = "COACH_ANTHROPIC_API_KEY"
+# The Claude models the bot can use (prices and labels in claude.py).
+ClaudeModel = Literal["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
 
 
 class BrainConfig(_Section):
@@ -372,7 +374,7 @@ class BrainConfig(_Section):
     It can't place trades or change settings either way."""
 
     ai: bool = Field(default=False, description="Let a Claude model write the answers (needs the Claude API key, shared with the AI coach).")
-    model: str = Field(default="claude-opus-5-5", description="The Claude model that writes the answers.")
+    model: ClaudeModel = Field(default="claude-opus-5-5", description="The Claude model that writes the answers.")
     effort: Literal["low", "medium", "high"] = Field(default="medium", description="How hard the model thinks per answer.")
     max_tool_calls: int = Field(default=8, ge=1, le=20, description="Lookups the model may make for one answer.")
     explain_trades: bool = Field(default=True, description="Add why a trade was taken to its Telegram alert.")
@@ -392,6 +394,52 @@ class FirstTradeConfig(_Section):
     contracts: int = Field(default=1, ge=1, le=5, description="Size of that trade (1 = the smallest).")
 
 
+class AggressiveConfig(_Section):
+    """Aggressive daily profit (the Setup tab's "Make money every day" goal).
+
+    The bot takes as many trades as Topstep's rules and its own loss limits allow and presses harder
+    while the day is going well: every strategy's signal that the knowledge base hasn't proven to be
+    losing is traded (unproven ones at reduced size), part of the day's realized profit is added to the
+    next trade's risk, and the day stops at its profit goal or once it gives back too much of its best.
+    It can never size past the Maximum Loss Limit, the daily loss limits, Topstep's position caps or the
+    Combine's consistency line: those are checked on every trade exactly as in the other goals."""
+
+    enabled: bool = Field(default=False, description="Trade for a sizeable profit every day (as many trades as the rules allow).")
+    daily_goal: float | None = Field(
+        default=None, gt=0,
+        description="Profit to aim for each day: trading stops for the day once it is reached. Default: 45% of the plan's "
+                    "profit target (under the Combine's 55% consistency line), never above an XFA payout path's daily cap.")
+    trades_multiple: int = Field(
+        default=2, ge=1, le=3,
+        description="With the adaptive strategy: each strategy may trade this many times its own daily count (ORB's one "
+                    "breakout a day becomes two). Every one is still judged by the knowledge base and every risk rule.")
+    unproven_risk: float = Field(
+        default=0.5, gt=0, le=1,
+        description="Share of the risk per trade used for signals the knowledge base hasn't proven yet (1 = full size).")
+    house_money: float = Field(
+        default=0.25, ge=0, le=0.5,
+        description="Share of today's realized profit added to the next trade's risk (0 = never press).")
+    max_risk_multiple: float = Field(
+        default=2.0, ge=1, le=3, description="Risk per trade never grows past this multiple of risk.risk_per_trade.")
+    cushion_share: float = Field(
+        default=0.25, gt=0, le=0.5,
+        description="One trade never risks more than this share of the room left above the Maximum Loss Limit (after "
+                    "risk.mll_buffer), so a losing streak can't end the account in a few trades.")
+    lock_in_at: float = Field(
+        default=0.5, gt=0, le=1,
+        description="Once the day's realized profit reaches this share of the daily goal, part of it is locked in...")
+    give_back: float = Field(
+        default=0.4, gt=0, lt=1,
+        description="...new trades are sized so a stop-out can't give back more than this share of the day's best, and "
+                    "trading stops for the day if it does.")
+    stressed_risk: float = Field(
+        default=0.5, gt=0, le=1,
+        description="Risk per trade, as a share, while the market network marks the market as stressed (its volatility "
+                    "in the top 10% of its last decade).")
+    flatten_before_news: bool = Field(
+        default=True, description="Close an open trade just before a scheduled high-impact release instead of holding through it.")
+
+
 class CoachConfig(_Section):
     """The AI coach (coach.py): Claude reviews the bot's evidence, runs simulations and writes lessons.
 
@@ -399,7 +447,7 @@ class CoachConfig(_Section):
     Setup tab; the Ask answers share it) and API credits. It never places a trade or changes a setting by itself: what it proposes waits for you."""
 
     enabled: bool = True
-    model: Literal["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"] = Field(
+    model: ClaudeModel = Field(
         default="claude-opus-5-5", description="Claude model the coach uses (Opus 5.5 is the recommended default).")
     effort: Literal["low", "medium", "high", "xhigh", "max"] = Field(
         default="high", description="How hard Claude thinks: higher is more thorough and costs more.")
@@ -494,7 +542,7 @@ class BacktestConfig(_Section):
 
 # Sections an account may override. Anything not overridden is inherited from the shared settings.
 ACCOUNT_SECTIONS = ("account", "instrument", "strategy", "risk", "session", "execution", "data",
-                    "notifications", "news", "recommendations", "knowledge", "funded")
+                    "notifications", "news", "recommendations", "knowledge", "funded", "aggressive")
 # What 'follow' copies from the leader, so both accounts get the same trade calls.
 CALL_SECTIONS = ("instrument", "strategy", "session", "knowledge", "news", "recommendations")
 # Account names must not be confused with Telegram words (/pause all, /set risk 150, ...).
@@ -544,6 +592,7 @@ class AccountProfile(_Section):
     recommendations: dict[str, Any] = Field(default_factory=dict)
     knowledge: dict[str, Any] = Field(default_factory=dict)
     funded: dict[str, Any] = Field(default_factory=dict)
+    aggressive: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -602,6 +651,7 @@ class BotConfig(_Section):
     recommendations: RecommendationsConfig = Field(default_factory=RecommendationsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     first_trade: FirstTradeConfig = Field(default_factory=FirstTradeConfig)
+    aggressive: AggressiveConfig = Field(default_factory=AggressiveConfig)
     brain: BrainConfig = Field(default_factory=BrainConfig)
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     funded: FundedConfig = Field(default_factory=FundedConfig)
@@ -741,6 +791,11 @@ class BotConfig(_Section):
                             f"risk.personal_daily_loss_limit (${risk.personal_daily_loss_limit:,.0f})")
         if product_limit(self.instrument.symbol, plan) == 0:
             problems.append(f"Topstep does not currently allow trading {self.instrument.symbol}")
+        goal = self.aggressive.daily_goal
+        if self.aggressive.enabled and goal is not None and self.account.stage == "combine" and risk.consistency_guard \
+                and goal >= 0.5 * plan.profit_target:
+            problems.append(f"aggressive.daily_goal (${goal:,.0f}) must stay below ${0.5 * plan.profit_target:,.0f}, where the "
+                            "bot closes out for the day ahead of the Combine's 55% Consistency Target")
         if problems:
             raise ValueError("; ".join(problems))
         return self

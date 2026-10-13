@@ -337,6 +337,7 @@ pre { white-space:pre-wrap; word-break:break-word; font:12px/1.5 var(--font-num)
 .lv .px { font-family:var(--font-num); text-align:right; } .lv .dist { font-family:var(--font-num); color:var(--muted); text-align:right; }
 .lv .now { color:var(--accent); font-weight:600; }
 ul.plain { margin:0; padding-left:18px; } ul.plain li { margin:3px 0; }
+tr.focus td { background:var(--accent-soft); }
 .hl a { color:var(--text); text-decoration:none; } .hl a:hover { text-decoration:underline; }
 .hl time { color:var(--muted); font-size:11.5px; margin-right:6px; font-family:var(--font-num); }
 .imp { font:600 10px/1.6 var(--font-label); padding:0 6px; border-radius:3px; border:1px solid var(--border2); text-transform:uppercase; letter-spacing:.05em; }
@@ -529,7 +530,7 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
 <aside class="rail">
   <div class="brandbox">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="#1d2636"/><path d="M7 21l6-6 4 4 8-9" stroke="#7ea4f2" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand">Topstep Bot<small>Futures console · v2.2</small></div>
+    <div class="brand">Topstep Bot<small>Futures console · v3.0</small></div>
   </div>
   <nav class="tabs" aria-label="Sections">
     <div class="grp">Trading</div>
@@ -649,6 +650,12 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
             <button class="small danger" id="flatten">Flatten &amp; halt</button>
           </div>
           <p class="hint">Pause blocks automatic entries; an open trade keeps its stop. Flatten &amp; halt closes everything and stops trading until restart.</p>
+        </div>
+        <div class="panel" id="aggpanel" hidden>
+          <h2>Make money every day</h2>
+          <div class="meter"><div class="mrow"><span>Today's profit goal</span><span id="agg-txt"></span></div><div class="track"><div class="fill" id="agg-bar"></div></div></div>
+          <ul class="plain meta" id="agg-lines"></ul>
+          <p class="hint">Aggressive mode: as many trades as the rules allow, every one sized inside your loss limits and Topstep's rules. No bot can promise a winning day.</p>
         </div>
         <div class="panel" id="fundedpanel">
           <h2 id="funded-title">Account goal</h2>
@@ -801,6 +808,16 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
         <p class="hint">No new trades from a few minutes before to a few minutes after each of these.</p></div>
       <div class="panel"><h2>Headlines</h2><div id="mk-headlines" class="feed hl"></div>
         <p class="hint">For information only. The bot does not trade on headlines.</p></div>
+    </div>
+    <div class="panel gap-top" id="net-panel">
+      <h2>Market network</h2>
+      <p class="meta" id="net-board">Loading…</p>
+      <div class="tablewrap"><table id="net-table"><thead><tr><th>Market</th><th>Trend</th><th class="num">Day</th><th class="num">20 days</th>
+        <th>Volatility</th><th>Moves with</th><th class="num">Jump allowance</th><th>Next 24h</th></tr></thead><tbody></tbody></table></div>
+      <button class="small" id="net-more" hidden style="margin-top:8px"></button>
+      <p class="hint">Every market the bot knows, read together: how they move with each other, which ones are stressed, what is scheduled, and the
+        biggest sudden jump each one has made. The bot uses it only to size trades down (jump risk, stress), never up, and never to pick a direction.
+        Rebuilt every hour from the downloaded history and the research library.</p>
     </div>
     <div class="panel gap-top"><h2>About this market</h2><dl id="mk-profile"></dl></div>
     <div class="panel gap-top" id="research-panel" hidden>
@@ -1181,9 +1198,14 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
       <div class="sfield" id="su-goal-row"><span class="lbl">What is this account for?</span>
         <div class="ctl"><div class="choices">
           <button class="choice" data-goal="pass"><b>Pass the Combine</b><small>Protect the account and stop early on big days.</small></button>
-          <button class="choice" data-goal="learn"><b>Teach the bot</b><small>Trade more often, try unproven strategies and make a first
+          <button class="choice" data-goal="profit"><b>Make money every day</b><small>Aggressive: as many trades as the rules allow,
+            pressing harder on good days and stopping at a daily profit goal.</small></button>
+          <button class="choice" data-goal="learn" id="su-goal-learn"><b>Teach the bot</b><small>Trade more often, try unproven strategies and make a first
             trade soon after starting, so it learns faster. Losing this account is acceptable.</small></button></div></div>
-        <div class="help">Every Topstep rule applies either way.</div></div>
+        <div class="help" id="su-goal-help">Every Topstep rule applies whichever you choose.</div></div>
+      <div class="sfield" id="su-dgoal-row" hidden><label for="su-dgoal">Daily profit goal ($)</label>
+        <div class="ctl"><input type="number" class="short" id="su-dgoal" min="1" step="50" inputmode="decimal" placeholder="default"></div>
+        <div class="help" id="su-dgoal-help"></div></div>
       <div class="sfield" id="su-first-row" hidden><span class="lbl">First trade after starting</span>
         <div class="ctl"><label class="checkline"><input type="checkbox" id="su-first"><span id="su-first-label">Make an educated trade
           within 15 minutes of starting</span></label></div>
@@ -1272,8 +1294,8 @@ textarea.ask { width:100%; min-height:72px; padding:9px 11px; resize:vertical; l
       <div class="sfield"><span class="lbl">Use AI answers</span>
         <div class="ctl"><label class="checkline"><input type="checkbox" id="su-ai-on"><span>Let the AI answer questions (the built-in answers stay as the fallback)</span></label></div></div>
       <div class="sfield"><label for="su-ai-model">Model</label>
-        <div class="ctl"><input type="text" id="su-ai-model" class="short" style="width:220px" spellcheck="false"></div>
-        <div class="help">claude-opus-5-5 is the default.</div></div>
+        <div class="ctl"><select id="su-ai-model" style="width:min(100%,420px)"></select></div>
+        <div class="help" id="su-ai-spend">Claude Opus 5.5 is the default. Short answers cost a few cents each.</div></div>
       <div class="msg" id="su-ai-msg"></div>
     </div>
 
@@ -1433,6 +1455,7 @@ function showTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (name === "logs") loadLogs();
   if (name === "trade") { loadTicket(); loadMarkets(false); }
+  if (name === "market") loadNetwork();
   if (name === "knowledge") { loadInsights(true); loadBrief(true); }
   if (name === "ask") loadAsk();
   if (name === "setup") loadSetup(false);
@@ -1680,9 +1703,10 @@ function renderOverview(b) {
     $("tgt-note").textContent = r.combine ? r.combine.summary : ""; }
   else $("target-meter").hidden = true;
   meter("trades", r.trades_today / r.max_trades, `${r.trades_today} of ${r.max_trades}`);
-  renderTrade(b);
+  renderTrade(b); renderAggressive(r);
   const rows = [["Auto-traded", b.strategy], ["Time of day", `${b.slot} · ${b.regime}`],
-    ["Risk per trade", money0(r.risk_per_trade) + (r.risk_scale < 1 ? " (ramp-up)" : "")],
+    ["Risk per trade", money0(r.risk_per_trade) + (r.risk_scale < 1 ? " (ramp-up)" : "")
+      + (r.aggressive && r.next_trade_risk !== r.risk_per_trade ? ` · next trade ${money0(r.next_trade_risk)}` : "")],
     ["Last bar", b.last_bar ? b.last_bar.replace("T", " ").slice(0, 16) + " UTC" : "–"], ["Last price", b.last_price != null ? px(b.last_price) : "–"]];
   for (const [k, v] of Object.entries(b.strategy_state || {})) rows.push([k.replace(/_/g, " "), v ?? "–"]);
   $("strategy").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
@@ -2029,6 +2053,20 @@ function kbCell(cell, n) {
   return `${cell && n ? `${signed(cell.mean_r)}R (${n})` : "–"}`;
 }
 
+function renderAggressive(r) {
+  const a = r && r.aggressive;
+  $("aggpanel").hidden = !a;
+  if (!a) return;
+  meter("agg", Math.max(0, r.day_pnl) / a.goal, `${money(r.day_pnl)} of ${money(a.goal)}`, r.day_pnl >= a.goal ? css("--good") : css("--accent"));
+  const lines = [`Next trade risks up to ${money0(r.next_trade_risk)}` + (r.next_trade_risk > r.risk_per_trade ? " (pressing with today's profit)" : "")
+    + (r.stressed ? " - cut because the market is stressed" : "") + "."];
+  lines.push(a.locked_in != null ? `Locked in: ${money0(a.locked_in)} of today's best ${money0(a.best_today)} - new trades can't give it back.`
+    : `Profit gets locked in once the day has made ${money0(a.lock_in_from)}.`);
+  if (r.profit_ceiling != null) lines.push(`No trade can take the day past ${money0(r.profit_ceiling)} (the consistency line).`);
+  if (r.network) lines.push(`Market network: ${r.network}.`);
+  $("agg-lines").innerHTML = lines.map(x => `<li>${esc(x)}</li>`).join("");
+}
+
 function renderFunded(b) {
   const f = b && b.funded;
   $("fundedpanel").hidden = !f;
@@ -2054,6 +2092,33 @@ function renderPick(p) {
       <td class="num">${c.usd_per_day != null ? money0(c.usd_per_day) : "–"}</td><td class="num">${c.trades || 0}${c.test_days ? ` / ${c.test_days}d` : ""}</td>
       <td class="num">${c.win_rate != null ? Math.round(c.win_rate * 100) + "%" : "–"}</td><td class="meta">${esc(c.note)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
 }
+
+let NET_AT = 0, NET_ALL = false;
+async function loadNetwork(force) {
+  if (!force && Date.now() - NET_AT < 120000) return;
+  NET_AT = Date.now();
+  let d;
+  try { d = await post("network", {account: accName()}); } catch (e) { $("net-board").textContent = "Couldn't load the market network."; return; }
+  const n = d && d.network, body = $("net-table").querySelector("tbody");
+  if (!n) { $("net-board").textContent = "No market network yet: it builds from the daily history the bot downloads (Simulations tab > Download history) and refreshes every hour."; body.innerHTML = ""; return; }
+  const b = n.board, pct = x => x == null ? "–" : `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+  $("net-board").textContent = `${b.mood}${b.appetite != null ? ` (appetite ${b.appetite > 0 ? "+" : ""}${b.appetite.toFixed(2)})` : ""}. Equity volatility: ${b.equity_state}. `
+    + `${n.coverage.daily} of ${n.coverage.markets} markets with daily history${n.fresh ? "" : " (out of date: the bot uses its safe defaults)"}.`;
+  // one row per market with history (a micro shows under its full-size market), yours first; the rest on request
+  const shown = n.rows.filter(r => r.focus || (r.state !== "unknown" && r.symbol === r.feed));
+  const rest = n.rows.filter(r => !shown.includes(r) && r.symbol === r.feed);
+  const rows = (NET_ALL ? [...shown, ...rest] : shown).sort((a, c) => (c.focus - a.focus)
+    || ((c.state !== "unknown") - (a.state !== "unknown")) || (Math.abs(c.move_z || 0) - Math.abs(a.move_z || 0)));
+  $("net-more").hidden = !rest.length;
+  $("net-more").textContent = NET_ALL ? "Show only markets with history" : `Show ${rest.length} more markets (no daily history yet: class defaults)`;
+  body.innerHTML = rows.map(r => `<tr${r.focus ? ' class="focus"' : ""}><td><b>${esc(r.symbol)}</b> <span class="muted">${esc(r.class_label)}</span></td>
+    <td>${esc(r.trend || "–")}</td><td class="num">${pct(r.chg_1d)}</td><td class="num">${pct(r.chg_20d)}</td>
+    <td>${esc(r.state)}${r.vol_pctile != null ? ` <span class="muted">(${Math.round(r.vol_pctile * 100)}th pct)</span>` : ""}</td>
+    <td>${esc(r.peers.join(", ") || "–")}${r.divergence ? `<div class="muted">${esc(r.divergence)}</div>` : ""}</td>
+    <td class="num">${r.jump} ticks</td><td>${r.events ? `${r.events} report${r.events > 1 ? "s" : ""}` : "–"}${r.headlines ? ` · ${r.headlines} headlines` : ""}</td></tr>`).join("");
+}
+
+$("net-more").onclick = () => { NET_ALL = !NET_ALL; loadNetwork(true); };
 
 function renderMarket(b) {
   renderPick(b && b.market_pick);
@@ -2392,6 +2457,7 @@ function fillSetup() {
   F.account_id = v.account_id; F.account_name = v.account_name; F.goal = v.goal;
   su("risk").value = v.risk_per_trade; su("daily").value = v.daily_loss_limit; su("trades").value = v.max_trades;
   su("first").checked = v.goal === "learn" ? v.first_trade : true;  // on by default when switching to Teach the bot
+  su("dgoal").value = v.daily_goal || "";
   su("first-label").textContent = `Make an educated trade within ${v.first_trade_minutes || 15} minutes of starting`;
   SU_SUG = suSuggestion();
   su("path").textContent = SU.exists ? `Saved in ${SU.path}` : `Creates ${SU.path}`;
@@ -2598,9 +2664,24 @@ function pickAccount(a) {
 function suRender() {
   const c = SU.choices, plan = c.plans.find(p => p.name === su("plan").value) || c.plans[0], stage = su("stage").value;
   const learnable = stage === "combine" || stage === "practice";
-  if (!learnable) F.goal = "pass";
-  su("goal-row").hidden = !learnable;
+  if (!learnable && F.goal === "learn") F.goal = "pass";
+  su("goal-learn").hidden = !learnable;
   document.querySelectorAll("[data-goal]").forEach(b => b.classList.toggle("on", b.dataset.goal === F.goal));
+  const profit = F.goal === "profit", gt = c.goal_targets[plan.name];
+  su("dgoal-row").hidden = !profit;
+  su("goal-help").textContent = profit
+    ? "Aggressive does not mean reckless: every trade is still sized inside the Maximum Loss Limit, your daily loss limit and Topstep's position caps, "
+      + "and no single trade can carry a Combine day past the consistency line. It will lose on some days; no bot can guarantee a profit or a pass."
+    : "Every Topstep rule applies whichever you choose.";
+  if (profit) {
+    const dg = parseFloat(su("dgoal").value);
+    const tooBig = stage === "combine" && dg >= gt.line;
+    su("dgoal-help").textContent = tooBig ? `Must stay below ${money0(gt.line)} on a ${plan.name} Combine: past that the 55% Consistency Target would raise your profit target.`
+      : `Trading stops for the day once it is reached. Empty = ${money0(gt.profit_goal)} (45% of the profit target). Every strategy may trade twice its usual daily count, unproven signals trade at half size, `
+        + "a quarter of the day's realized profit is added to the next trade's risk (at most twice your risk per trade), and once the day has made half "
+        + "its goal, new trades are sized so it can't give back more than 40% of its best.";
+    su("dgoal-help").className = "help" + (tooBig ? " bad" : "");
+  }
   su("plan-help").textContent = `Profit target ${money0(plan.profit_target)} · Maximum Loss Limit ${money0(plan.max_loss_limit)} · up to ${plan.max_minis} minis`;
   su("dll-row").hidden = stage === "practice";
   su("dll-label").textContent = `I added Topstep's optional Daily Loss Limit (${money0(plan.daily_loss_limit)})`;
@@ -2612,12 +2693,13 @@ function suRender() {
     : `${sym.class ? sym.class + " · " : ""}${money(sym.tick_value)} per tick.` + (blocked ? ` Topstep doesn't currently allow ${sym.key} on a ${plan.name} account.`
     : sym.micro ? " A micro: the best way to start." : " A full-size contract: much more risk per point than a micro.");
   su("symbol-help").className = "help" + (blocked ? " bad" : "");
-  const learn = F.goal === "learn";
+  const learn = F.goal === "learn", allDay = learn || profit;
   su("first-row").hidden = !learn;
-  if (learn) su("strategy").value = "adaptive";
-  su("strategy").disabled = learn;
+  if (allDay) su("strategy").value = "adaptive";
+  su("strategy").disabled = allDay;
   const st = c.strategies.find(x => x.key === su("strategy").value);
   su("strategy-help").textContent = learn ? "Learning accounts use Adaptive: it runs every strategy and learns from all of them."
+    : profit ? "Make money every day uses Adaptive: every strategy, all day, taking each signal the bot hasn't proven to lose."
     : st ? st.description + (st.key === "adaptive" ? " Recommended." : "") : "";
   // risk: the same limits config.yaml enforces, explained before Save
   const sug = suSuggestion(), dll = su("dll").checked && stage !== "practice";
@@ -2631,7 +2713,9 @@ function suRender() {
   let dh = "No new trades for the day after losing this much, open trades included.", dc = "";
   if (daily >= ceiling) { dh = `Must be below ${money0(ceiling)} (${why}).`; dc = " bad"; }
   su("daily-help").textContent = dh; su("daily-help").className = "help" + dc;
-  su("trades-help").textContent = learn ? "Learning trades more often: 8 or more is suggested." : "The bot stops opening trades after this many in a day.";
+  su("trades-help").textContent = learn ? "Learning trades more often: 8 or more is suggested."
+    : profit ? "Aggressive trades as often as it gets signals: 12 is suggested. The daily loss limit and losing-streak stop still end a bad day early."
+    : "The bot stops opening trades after this many in a day.";
 }
 function suChanged() {
   SU_DIRTY = true;
@@ -2644,7 +2728,7 @@ function suChanged() {
 }
 ["plan", "stage", "symbol", "strategy", "payout", "dll"].forEach(id => su(id).addEventListener("change", suChanged));
 su("first").addEventListener("change", () => SU_DIRTY = true);
-["risk", "daily", "trades"].forEach(id => su(id).addEventListener("input", () => { SU_DIRTY = true; suRender(); }));
+["risk", "daily", "trades", "dgoal"].forEach(id => su(id).addEventListener("input", () => { SU_DIRTY = true; suRender(); }));
 ["user", "key"].forEach(id => su(id).addEventListener("input", () => SU_DIRTY = true));
 document.querySelectorAll("[data-goal]").forEach(b => b.onclick = () => { F.goal = b.dataset.goal; suChanged(); });
 su("suggest").onclick = () => { const g = suSuggestion(); su("risk").value = g.risk_per_trade; su("daily").value = g.daily_loss_limit;
@@ -2673,7 +2757,7 @@ su("save").onclick = async () => {
     account_id: F.account_id, account_name: F.account_name, plan: su("plan").value, stage: su("stage").value, goal: F.goal,
     topstep_dll: su("dll").checked, payout_path: su("payout").value, symbol: su("symbol").value, fallback: SU.values.fallback, strategy: su("strategy").value,
     risk_per_trade: su("risk").value, daily_loss_limit: su("daily").value, max_trades: su("trades").value, fresh: su("fresh").checked,
-    first_trade: su("first").checked});
+    first_trade: su("first").checked, daily_goal: su("dgoal").value});
   su("save").disabled = false;
   if (d.ok === false) { suMsg("save-msg", d.message, false); return; }
   toast(d.message); SU_DIRTY = false;
@@ -2775,13 +2859,17 @@ $("dec-reload").onclick = loadAsk;
 // ---- setup: AI answers
 function renderAI() {
   const a = SU.ai || {};
-  su("ai-on").checked = !!a.enabled; su("ai-model").value = a.model || "claude-opus-5-5";
+  su("ai-on").checked = !!a.enabled;
+  su("ai-model").innerHTML = Object.entries(a.models || {"claude-opus-5-5": "Claude Opus 5.5"})
+    .map(([k, v]) => option(k, v, k === (a.model || "claude-opus-5-5"))).join("");
+  if (a.budget) su("ai-spend").textContent = `Claude spending this month: ${money(a.spent_month || 0)} of the ${money(a.budget)} budget `
+    + `(AI coach ${money(a.spent_coach || 0)}, answers ${money(a.spent_ask || 0)}). Change the budget on the AI Coach tab.`;
   su("ai-key").value = ""; su("ai-key").placeholder = a.key_saved ? "saved - leave empty to keep it" : "sk-ant-…";
   su("ai-remove").hidden = !a.key_saved;
 }
 async function saveAI(body) {
   su("ai-save").disabled = true; suMsg("ai-msg", body.api_key ? "Checking the key with Anthropic…" : "");
-  const d = await post("setup/ai", Object.assign({model: su("ai-model").value.trim()}, body));
+  const d = await post("setup/ai", Object.assign({model: su("ai-model").value}, body));
   su("ai-save").disabled = false; suMsg("ai-msg", d.message, d.ok !== false);
   if (d.ok !== false) loadSetup(true); else renderAI();
 }
@@ -3070,7 +3158,7 @@ function renderCoach() {
     const d = await post("coach/lesson/forget", {id: b.dataset.forget}); toast(d.message, d.ok === false); loadCoach(true);
   });
   const used = c.spent_month / c.monthly_budget_usd;
-  meter("co-spend", used, `$${c.spent_month.toFixed(2)} of $${c.monthly_budget_usd.toFixed(2)}`, used > .9 ? css("--crit") : used > .6 ? css("--warn") : css("--accent"));
+  meter("co-spend", used, `$${c.spent_month.toFixed(2)} of $${c.monthly_budget_usd.toFixed(2)}` + (c.spent_ask ? ` (Ask answers $${c.spent_ask.toFixed(2)})` : ""), used > .9 ? css("--crit") : used > .6 ? css("--warn") : css("--accent"));
   if (!coachFormFilled) {
     $("co-model").innerHTML = Object.entries(c.models).map(([k, v]) => option(k, v, k === c.model)).join("");
     $("co-effort").value = c.effort; $("co-session").value = c.max_session_usd; $("co-month").value = c.monthly_budget_usd;

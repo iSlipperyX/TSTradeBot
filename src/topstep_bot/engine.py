@@ -11,6 +11,7 @@ Per clock tick:   trading-day rollover (end-of-day MLL update), session flatten 
 from __future__ import annotations
 
 import logging
+import math
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -52,6 +53,7 @@ UTC = timezone.utc
 
 FLATTEN_RETRY = timedelta(seconds=5)
 QUOTE_FRESH = timedelta(seconds=5)  # older bid/offer quotes aren't trusted for pricing entries
+MIN_CEILING_TICKS = 4  # a trade with less room than this before the consistency line isn't worth its costs
 
 
 @dataclass
@@ -251,6 +253,18 @@ class TradingCore:
             self.strategy.on_new_day(day)
             self.strategy_day = day
 
+    def apply_network(self, picture: dict | None = None) -> None:
+        """Take this market's jump allowance and stress from the market network (network.py): protection only."""
+        from topstep_bot import network
+
+        root = (self.contract.root or self.contract.name).upper()
+        r = network.market_risk(self.cfg, root, picture)
+        self.risk.jump_ticks, self.risk.stressed, self.risk.network_note = r.jump_ticks, r.stressed, r.why
+        log.info("Market network for %s: %s", root, r.why)
+        if r.stressed and self.cfg.aggressive.enabled:
+            self.event("info", f"Market network: {root} is stressed ({r.why}) - aggressive risk per trade is "
+                               f"cut to {self.cfg.aggressive.stressed_risk:.0%} today")
+
     async def end_day(self) -> None:
         if self.current_day is None:
             return
@@ -283,6 +297,11 @@ class TradingCore:
             return
         await self.end_day()
         await self.begin_day(day, self.balance)
+        if self.risk.live_guards:  # a live bot that runs for days takes each morning's network picture
+            try:
+                self.apply_network()
+            except Exception:  # noqa: BLE001 - the previous allowance stays in place
+                log.exception("Could not read the market network")
 
     # -------------------------------------------------------------------- bars
 
@@ -456,8 +475,10 @@ class TradingCore:
             return f"stop is {c.ticks(distance):.0f} ticks away (max {self.cfg.risk.max_stop_ticks})"
         max_slip = self.cfg.execution.max_entry_slippage_ticks
         worst_entry = entry_ref + side.sign * c.price_offset(max_slip or 0)
+        # Aggressive mode sizes signals the knowledge base hasn't proven yet smaller (adaptive marks them).
+        conviction = self.cfg.aggressive.unproven_risk if sig.meta.get("level") == "unproven" else 1.0
         # Risk holds even at the worst fill; near scheduled news the size is capped below Topstep's max.
-        size = self.risk.position_size(worst_entry, stop, self.balance, now=self.clock())
+        size = self.risk.position_size(worst_entry, stop, self.balance, now=self.clock(), conviction=conviction)
         if size < 1:
             return "1 contract would risk more than the allowed budget"
         target = None
@@ -465,11 +486,47 @@ class TradingCore:
             target = c.round_price(sig.target_price, "down" if side == OrderSide.BUY else "up")
             if (target - entry_ref) * side.sign <= 0:
                 target = None
+        room = self.risk.reward_room(self.balance)
+        if room is not None:  # one fast winner must not carry the day past the consistency line
+            capped = self.cap_reward(side, entry_ref, stop, target, size, room)
+            if isinstance(capped, str):
+                return capped
+            size, target = capped
         limit = None
         if max_slip is not None:
             limit = self.entry_limit(side, worst_entry, entry_ref)
         planned = size * self.risk.risk_per_contract(worst_entry, stop)
         return TradePlan(side, entry_ref, stop, target, size, limit, planned)
+
+    def cap_reward(self, side: OrderSide, entry_ref: float, stop: float, target: float | None, size: int,
+                   room: float) -> tuple[int, float | None] | str:
+        """Size and profit target so that winning this trade can't lift the day past its profit ceiling.
+
+        ``room`` is what the day may still make. The target becomes a limit order at the broker, so the
+        trade closes at the line instead of relying on a price update to arrive in time. A target is kept
+        while it fits; otherwise it moves to the line, as long as that is at least 1R away, else the size
+        comes down until it is. One tick of slippage is allowed for, and the guard's line sits below
+        Topstep's 55% with room to spare."""
+        c = self.contract
+        if room <= 0:
+            return "today's profit is at its ceiling (the Combine's consistency line)"
+        slip = self.cfg.risk.slippage_ticks
+        risk_ticks = c.ticks(abs(entry_ref - stop))
+        want = c.ticks(abs(target - entry_ref)) if target is not None else None
+
+        def ceiling_ticks(n: int) -> int:
+            return math.floor(room / (n * c.tick_value) - slip)
+
+        for n in range(size, 0, -1):
+            ticks = ceiling_ticks(n)
+            if want is not None and want <= ticks:
+                return n, target
+            if ticks >= risk_ticks:
+                return n, c.round_price(entry_ref + side.sign * c.price_offset(ticks), "down" if side == OrderSide.BUY else "up")
+        ticks = ceiling_ticks(1)
+        if ticks < MIN_CEILING_TICKS:
+            return f"only {max(ticks, 0)} ticks of profit left before the consistency line"
+        return 1, c.round_price(entry_ref + side.sign * c.price_offset(ticks), "down" if side == OrderSide.BUY else "up")
 
     def on_quote(self, bid: float | None, ask: float | None, ts: datetime) -> None:
         """The current best bid and offer (live and paper trading; backtests have none)."""
@@ -586,12 +643,17 @@ class TradingCore:
             await self._flatten(self._flatten_reason(), now)
         elif (news_reason := self.risk.news_flatten_reason(now, self.orders.position)) is not None:
             await self._flatten(news_reason, now, kind="risk")
-        elif self.cfg.news.flatten_before and self.schedule.news and not self.orders.is_flat:
+        elif self._flatten_before_news and self.schedule.news and not self.orders.is_flat:
             event = self.schedule.news.releasing_soon(now)
             if event:
                 await self._flatten(f"closing ahead of news: {event.label}", now)
         if self.first_trade:
             await self.first_trade.on_clock(now)
+
+    @property
+    def _flatten_before_news(self) -> bool:
+        a = self.cfg.aggressive
+        return self.cfg.news.flatten_before or (a.enabled and a.flatten_before_news)
 
     async def halt(self, reason: str) -> None:
         """Kill switch: flatten and stop opening trades until restarted."""
