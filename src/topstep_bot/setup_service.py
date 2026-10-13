@@ -91,19 +91,29 @@ def load_for_server(config_path: str | None) -> tuple[BotConfig, str | None]:
         return anchor_folders(BotConfig(), path), str(exc)
 
 
+GOALS = ("pass", "profit", "learn")
+PROFIT_MAX_TRADES = 12
+
+
 def suggested_risk(plan: str, goal: str, topstep_dll: bool) -> dict:
-    """The wizard's suggestions: risk about 7.5% of the Maximum Loss Limit per trade (5% when
-    learning) and stop for the day after losing 25% of it (and below Topstep's DLL)."""
+    """The suggestions for each goal, as shares of the Maximum Loss Limit (and below Topstep's DLL):
+
+    pass    risk 7.5% per trade, stop the day after losing 25%, 4 trades a day
+    learn   risk 5%, stop after 25%, 8 trades
+    profit  risk 10%, stop after 30%, 12 trades (the aggressive mode then sizes each trade within that)"""
     p = PLANS[plan]
     ceiling = min(p.max_loss_limit, p.daily_loss_limit) if topstep_dll else p.max_loss_limit
-    daily = min(round(p.max_loss_limit * 0.25), round(ceiling * 0.8))
-    risk = min(round(p.max_loss_limit * (0.05 if goal == "learn" else 0.075)), daily)
-    return {"risk_per_trade": risk, "daily_loss_limit": daily, "daily_ceiling": ceiling,
-            "max_trades": LEARN_MIN_TRADES if goal == "learn" else 4}
+    daily = min(round(p.max_loss_limit * (0.30 if goal == "profit" else 0.25)), round(ceiling * 0.8))
+    share = {"learn": 0.05, "profit": 0.10}.get(goal, 0.075)
+    risk = min(round(p.max_loss_limit * share), daily)
+    trades = {"learn": LEARN_MIN_TRADES, "profit": PROFIT_MAX_TRADES}.get(goal, 4)
+    return {"risk_per_trade": risk, "daily_loss_limit": daily, "daily_ceiling": ceiling, "max_trades": trades}
 
 
 def goal_of(cfg: BotConfig) -> str:
-    """'learn' when config.yaml is set up to teach the bot (as the wizard writes it), else 'pass'."""
+    """'profit' with the aggressive mode on, 'learn' when set up to teach the bot (as the wizard writes it), else 'pass'."""
+    if cfg.aggressive.enabled:
+        return "profit"
     return "learn" if cfg.strategy.name == "adaptive" and cfg.strategy.params.get("trade_unproven") is True else "pass"
 
 
@@ -173,6 +183,7 @@ class SetupService:
                 "risk_per_trade": cfg.risk.risk_per_trade, "daily_loss_limit": cfg.risk.personal_daily_loss_limit,
                 "max_trades": cfg.risk.max_trades_per_day,
                 "first_trade": cfg.first_trade.enabled, "first_trade_minutes": cfg.first_trade.within_minutes,
+                "daily_goal": cfg.aggressive.daily_goal,
             },
             "alerts": {
                 "telegram": bool(s.telegram_bot_token and s.telegram_chat_id),
@@ -182,7 +193,7 @@ class SetupService:
                 "discord": bool(s.discord_webhook_url),
             },
             "github_token_saved": bool(s.github_token),
-            "ai": {"enabled": cfg.brain.ai, "key_saved": bool(s.anthropic_api_key), "model": cfg.brain.model},
+            "ai": self._ai_state(),
             "multi": cfg.multi,
             "profiles": [self._profile_view(p.name) for p in cfg.accounts],
             "keys": ["main", *sorted(s.logins)] if s.api_key else sorted(s.logins),
@@ -203,9 +214,20 @@ class SetupService:
                     for sym in [*SYMBOL_CHOICES, *(x for x in SPECS if x not in SYMBOL_CHOICES)]],
                 "strategies": [{"key": c.name, "title": c.title, "description": c.description} for c in STRATEGIES.values()],
                 "suggested": {f"{p}|{g}|{int(d)}": suggested_risk(p, g, d)
-                              for p in PLANS for g in ("pass", "learn") for d in (False, True)},
+                              for p in PLANS for g in GOALS for d in (False, True)},
+                "goal_targets": {p: {"profit_goal": round(0.45 * PLANS[p].profit_target), "line": round(0.5 * PLANS[p].profit_target)}
+                                 for p in PLANS},
             },
         }
+
+    def _ai_state(self) -> dict:
+        from topstep_bot import claude
+
+        cfg = self.ctl.cfg
+        ledger = claude.ledger_for(cfg.data_path)
+        return {"enabled": cfg.brain.ai, "key_saved": bool(self.ctl.secrets.anthropic_api_key), "model": cfg.brain.model,
+                "models": {m.id: m.label for m in claude.MODELS.values()}, "budget": cfg.coach.monthly_budget_usd,
+                "spent_month": ledger.spent(), "spent_coach": ledger.spent(source="coach"), "spent_ask": ledger.spent(source="ask")}
 
     @staticmethod
     def _autostart_state() -> dict:
@@ -272,7 +294,8 @@ class SetupService:
 
     # ---------------------------------------------------------------- config.yaml
 
-    def _changes(self, v: dict, old_goal: str | None, fresh: bool, has_first_trade: bool = False) -> dict:
+    def _changes(self, v: dict, old_goal: str | None, fresh: bool, has_first_trade: bool = False,
+                 has_aggressive: bool = False) -> dict:
         cfg = self.ctl.cfg
         plan, stage, goal = v["plan"], v["stage"], v["goal"]
         changes: dict[tuple[str | None, str], Any] = {
@@ -292,7 +315,7 @@ class SetupService:
         # strategy parameters: kept while the strategy stays the same (e.g. after 'tune --save')
         params = dict(cfg.strategy.params) if not fresh and v["strategy"] == cfg.strategy.name else {}
         if v["strategy"] == "adaptive":
-            if goal == "learn":
+            if goal in ("learn", "profit"):
                 params["trade_unproven"] = True
             else:
                 params.pop("trade_unproven", None)
@@ -302,11 +325,23 @@ class SetupService:
                 changes.update({("risk", "daily_profit_target"): PLANS[plan].profit_target,
                                 ("risk", "consistency_guard"): False, ("risk", "max_consecutive_losses"): 4,
                                 ("risk", "cooldown_minutes_after_loss"): 5})
+            elif goal == "profit":
+                changes.update({("risk", "daily_profit_target"): REMOVE, ("risk", "consistency_guard"): True,
+                                ("risk", "max_consecutive_losses"): 3, ("risk", "cooldown_minutes_after_loss"): 3})
             else:
                 changes.update({("risk", "daily_profit_target"): REMOVE, ("risk", "consistency_guard"): True,
                                 ("risk", "max_consecutive_losses"): 2, ("risk", "cooldown_minutes_after_loss"): REMOVE})
         elif goal == "learn":
             changes[("risk", "daily_profit_target")] = PLANS[plan].profit_target  # follows a plan change
+        # the aggressive daily-profit mode: its own section, so the goal is a setting you can see in config.yaml
+        if goal == "profit":
+            changes[("aggressive", "enabled")] = True
+            if v.get("daily_goal") is not None:
+                changes[("aggressive", "daily_goal")] = v["daily_goal"]
+            elif old_goal != "profit":
+                changes[("aggressive", "daily_goal")] = REMOVE
+        elif has_aggressive:
+            changes[("aggressive", "enabled")] = False
         # the first trade after starting: only for teaching the bot
         changes[("first_trade", "enabled")] = True if v["first_trade"] else (False if has_first_trade else REMOVE)
         return changes
@@ -339,7 +374,9 @@ class SetupService:
         strategy = str(body.get("strategy", ""))
         if strategy not in STRATEGIES:
             raise ValueError("Choose a strategy.")
-        goal = "learn" if body.get("goal") == "learn" and stage in ("combine", "practice") else "pass"
+        goal = str(body.get("goal") or "pass")
+        if goal not in GOALS or (goal == "learn" and stage not in ("combine", "practice")):
+            goal = "pass"
         account_id = body.get("account_id")
         try:
             account_id = int(account_id) if account_id not in (None, "") else None
@@ -348,8 +385,21 @@ class SetupService:
         max_trades = number("max_trades", "Max trades per day")
         if max_trades != int(max_trades) or not 1 <= max_trades <= 50:
             raise ValueError("Max trades per day must be a whole number from 1 to 50.")
-        if goal == "learn":
-            strategy = "adaptive"  # learning runs every strategy and learns from all of them
+        if goal in ("learn", "profit"):
+            strategy = "adaptive"  # every strategy, trading what isn't proven to lose (and learning from all of them)
+        daily_goal = None
+        raw_goal = str(body.get("daily_goal") or "").replace("$", "").replace(",", "").strip()
+        if goal == "profit" and raw_goal:
+            try:
+                daily_goal = float(raw_goal)
+            except ValueError:
+                raise ValueError("Daily profit goal: type a number, or leave it empty for the default.") from None
+            line = 0.5 * PLANS[plan].profit_target
+            if daily_goal <= 0:
+                raise ValueError("Daily profit goal must be more than 0.")
+            if stage == "combine" and daily_goal >= line:
+                raise ValueError(f"Daily profit goal must stay below ${line:,.0f} on a {plan} Combine: past that the "
+                                 "Consistency Target (55% of the profit target in one day) would raise your target.")
         return {
             "plan": plan, "stage": stage, "goal": goal, "symbol": symbol, "auto_pick": auto_pick, "every_market": every_market,
             "strategy": strategy,
@@ -358,7 +408,7 @@ class SetupService:
             "payout_path": "consistency" if body.get("payout_path") == "consistency" and stage == "express" else "standard",
             "risk_per_trade": number("risk_per_trade", "Risk per trade"),
             "daily_loss_limit": number("daily_loss_limit", "Daily loss limit"),
-            "max_trades": int(max_trades),
+            "max_trades": int(max_trades), "daily_goal": daily_goal,
             # an educated trade within first_trade.within_minutes of starting: part of teaching the bot
             "first_trade": goal == "learn" and bool(body.get("first_trade", True)),
         }
@@ -385,11 +435,15 @@ class SetupService:
                                                     ("instrument", "auto_pick"): True if v["auto_pick"] else REMOVE,
                                                     **_candidates_change(v, []),
                                                     ("account", "account_name"): v["account_name"] or REMOVE,
-                                                    ("first_trade", "enabled"): v["first_trade"] or REMOVE})
+                                                    ("first_trade", "enabled"): v["first_trade"] or REMOVE,
+                                                    **({("aggressive", "daily_goal"): v["daily_goal"]}
+                                                       if v["goal"] == "profit" and v["daily_goal"] else {})})
         else:
             old_goal = None if self.config_error else goal_of(self.ctl.cfg)
             has_first_trade = re.search(r"^first_trade\s*:", original, re.MULTILINE) is not None
-            text = set_values(original, self._changes(v, old_goal, fresh=False, has_first_trade=has_first_trade))
+            has_aggressive = re.search(r"^aggressive\s*:", original, re.MULTILINE) is not None
+            text = set_values(original, self._changes(v, old_goal, fresh=False, has_first_trade=has_first_trade,
+                                                      has_aggressive=has_aggressive))
             text = _goal_header(text, v["goal"])
         try:
             config_from_text(text, path.name)
@@ -862,42 +916,52 @@ class SetupService:
         return "GitHub token saved. Press Check now to look for updates."
 
     async def ai(self, body: dict) -> str:
-        """The central intelligence's AI answers: save or remove the Anthropic API key, turn them on or off."""
+        """The central intelligence's AI answers: save or remove the Claude API key, turn them on or off."""
         from topstep_bot.brain.llm import check_key
+        from topstep_bot.claude import DEFAULT_MODEL, MODELS
 
         cfg = self.ctl.cfg
         model = str(body.get("model") or cfg.brain.model).strip()
+        if model not in MODELS:
+            raise ValueError(f"Unknown model '{model}'. Choose one of: {', '.join(MODELS)}.")
         if body.get("remove"):
-            self._set_secrets({"anthropic_api_key": None})
-            self._share_claude_key(None)
-            self._set_config({("brain", "ai"): False})
+            self.forget_claude_key()
             return "Claude API key removed (the AI coach used it too). The central intelligence uses its built-in answers."
         key = str(body.get("api_key") or "").strip()
         if key:
             problem = await check_key(key, model)
             if problem:
                 raise ValueError(f"{problem[0].upper()}{problem[1:]}. Nothing was saved.")
-            self._set_secrets({"anthropic_api_key": key})
-            self._share_claude_key(key)
+            self.set_claude_key(key)
         enabled = bool(body.get("enabled", True))
         if enabled and not self.ctl.secrets.anthropic_api_key:
             raise ValueError("Paste your Claude API key first (platform.claude.com > API keys), or save it on the AI Coach tab.")
         self._set_config({("brain", "ai"): enabled,
-                          ("brain", "model"): model if model != "claude-opus-5-5" else REMOVE})
+                          ("brain", "model"): model if model != DEFAULT_MODEL else REMOVE})
         if not enabled:
             return "AI answers off: the central intelligence uses its built-in answers (the key stays saved)."
-        return (f"AI answers on ({model}). Each question costs a little on your Anthropic account; the bot's records "
-                "never leave your PC except the parts the AI looks up to answer you.")
+        return (f"AI answers on ({model}). Each question costs a little on your Claude API account and counts toward "
+                "the monthly Claude budget on the AI Coach tab; only the records the AI looks up leave your PC.")
 
-    def _share_claude_key(self, key: str | None) -> None:
-        """The AI coach uses the same Claude API key: give it the new one (or none) at once, and keep it out of the logs."""
+    def set_claude_key(self, key: str) -> None:
+        """Save the one Claude API key and give it to everything that uses it (the coach and the Ask answers) at once."""
+        from topstep_bot import claude
+
+        claude.store_key(self.env_path, key, self.ctl.secrets)
         coach = getattr(self.ctl, "coach", None)
         if coach is not None:
             coach.coach.set_key(key)
-        if key:
-            from topstep_bot.logging_setup import add_secret
 
-            add_secret(key)
+    def forget_claude_key(self) -> None:
+        """Remove the Claude API key from this PC: the coach stops, and the Ask answers go back to built-in ones."""
+        from topstep_bot import claude
+
+        claude.store_key(self.env_path, None, self.ctl.secrets)
+        coach = getattr(self.ctl, "coach", None)
+        if coach is not None:
+            coach.coach.set_key(None)
+        if self.configured and self.ctl.cfg.brain.ai:
+            self._set_config({("brain", "ai"): False})
 
     def _set_config(self, values: dict) -> None:
         """Change a few settings in config.yaml (keeping the rest as written) and use them at once."""
@@ -936,13 +1000,17 @@ def _problems(exc: ConfigError) -> str:
 
 
 def _goal_header(text: str, goal: str) -> str:
-    """Keep the 'Goal: LEARN' note at the top of config.yaml in step with the goal."""
+    """Keep the 'Goal: ...' note at the top of config.yaml in step with the goal."""
+    from topstep_bot.wizard import PROFIT_HEADER
+
     lines = text.splitlines()
-    while lines and lines[0].startswith("# Goal: LEARN"):
+    while lines and (lines[0].startswith("# Goal: LEARN") or lines[0].startswith("# Goal: PROFIT")):
         lines.pop(0)
         while lines and lines[0].startswith("# ") and not lines[0].startswith("# Topstep Bot configuration"):
             lines.pop(0)
     if goal == "learn":
         lines[:0] = ["# Goal: LEARN - this account is for teaching the bot. It trades more often, tries unproven",
                      "# strategies, and doesn't stop early for the consistency rule. Every Topstep rule still applies."]
+    elif goal == "profit":
+        lines[:0] = PROFIT_HEADER.rstrip("\n").split("\n")
     return "\n".join(lines) + "\n"

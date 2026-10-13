@@ -513,6 +513,12 @@ class ProxyActions:
             return "Research is turned off (research.enabled: false)."
         return self.ctl.research.text()
 
+    async def network_text(self, account: str | None = None) -> str:
+        from topstep_bot import network
+
+        view = await asyncio.to_thread(self.ctl.network_view, account)
+        return view["text"] if view else network.text(None)
+
     async def lab_text(self, account: str | None = None) -> str:
         from topstep_bot.simlab import load_report, report_text
 
@@ -665,6 +671,7 @@ class Controller:
                 ("POST", "/api/lab/apply", lambda r: self.lab.apply(r.json(), source(r))),
                 ("POST", "/api/lab/download", lambda r: self.lab.download(r.json(), source(r))),
                 ("POST", "/api/markets", lambda r: self.lab.markets(r.json())),
+                ("POST", "/api/network", self._network),
                 ("POST", "/api/market/switch", lambda r: self.switch_market(str(r.json().get("symbol", "")), source(r),
                                                                            r.json().get("account"))),
                 ("POST", "/api/coach/state", lambda r: self.coach.state()),
@@ -1141,12 +1148,47 @@ class Controller:
         if self.research is not None:
             self._research_task = spawn(self.research.run(), name="research")
         self._lab_tasks = self.lab.start_background()
+        self._lab_tasks.append(spawn(self._network_loop(), name="market-network"))
         if open_browser and self.cfg.dashboard.open_browser:
             webbrowser.open(self.server.url)
         try:
             await self._exit.wait()
         finally:
             await self.shutdown()
+
+    async def _network_loop(self, every: float = 3600.0) -> None:
+        """Rebuild the market network (network.py) from the downloaded history and research every hour."""
+        from topstep_bot import network
+
+        await asyncio.sleep(30)  # let the bots and the first data refresh start first
+        while True:
+            try:
+                picture = await asyncio.to_thread(network.refresh, self.cfg)
+                log.info("Market network rebuilt: %s of %s markets with daily history",
+                         picture["coverage"]["daily"], picture["coverage"]["markets"])
+            except Exception:  # noqa: BLE001 - the last picture (or the class defaults) stays in use
+                log.exception("Could not rebuild the market network")
+            await asyncio.sleep(every)
+
+    async def _network(self, req: Request) -> dict:
+        account = str(req.json().get("account") or "") or None
+        try:
+            return {"network": await asyncio.to_thread(self.network_view, account)}
+        except ValueError:
+            return {"network": await asyncio.to_thread(self.network_view, None)}
+
+    def network_view(self, account: str | None = None) -> dict | None:
+        """The Market network panel: the whole board, with the selected account's market first."""
+        from topstep_bot import network
+        from topstep_bot.market_knowledge import product_for
+        from topstep_bot.market_pick import current_symbol
+
+        focus = []
+        with contextlib.suppress(ValueError, KeyError):
+            p = product_for(current_symbol(self.account_cfg(self.pick(account)[0].account)))
+            if p:
+                focus = [p.root]
+        return network.view(network.load(self.cfg), focus)
 
     def request_exit(self, code: int) -> None:
         """End run() (used to restart with a newly installed update)."""

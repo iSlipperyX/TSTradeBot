@@ -232,7 +232,9 @@ def test_a_winning_day_is_protected_on_the_standard_path(mnq):
     core.risk.start_day(date(2026, 3, 3), 3_000.0)
     rpc = core.risk.risk_per_contract(100, 90)
     full = core.risk.position_size(100, 90, 3_000.0)
-    assert core.risk.position_size(100, 90, 3_000.0 + 200) == int(50 // rpc)  # $200 up: may only risk the $50 above $150
+    worst = core.risk.worst_loss_per_contract(100, 90)  # the stop plus the market's jump allowance
+    assert worst > rpc
+    assert core.risk.position_size(100, 90, 3_000.0 + 200) == int(50 // worst)  # $200 up: may only risk the $50 above $150
     assert core.risk.position_size(100, 90, 3_000.0 + 140) == full            # not a winning day yet: normal size
     off = make_core(mnq, protect_winning_day=False)
     off.risk.start_day(date(2026, 3, 3), 3_000.0)

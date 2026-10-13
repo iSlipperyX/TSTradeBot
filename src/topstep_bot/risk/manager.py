@@ -12,7 +12,10 @@ Topstep rules enforced here (see docs/TOPSTEP_RULES.md):
   flattened at 95%.
 * Position size - plan cap, XFA Scaling Plan and product caps (metals/energy).
 * Combine Consistency Target - a daily profit cap keeps the best day below 55% of the profit
-  target, and an open trade is closed before the day crosses it.
+  target, an open trade is closed before the day crosses it, and no trade is sized or targeted
+  so that one fast winner could carry the day past the line (``profit_ceiling``).
+* Sudden moves - every hard limit (MLL, daily loss limits) is checked against the stop plus the
+  market's jump allowance (network.py), so a stop that fills late can't carry the account past it.
 * Combine profit target - once reached, trading stops so the pass can't be given back.
 * News - Topstep's maximum position size is never held into a scheduled major release.
 """
@@ -23,7 +26,7 @@ import math
 from datetime import date, datetime, timedelta
 
 from topstep_bot import funded
-from topstep_bot.config import AccountConfig, FundedConfig, RiskConfig
+from topstep_bot.config import AccountConfig, AggressiveConfig, FundedConfig, RiskConfig
 from topstep_bot.models import Contract
 from topstep_bot.risk.topstep import (
     CombineProgress,
@@ -40,6 +43,8 @@ DEFAULT_COMBINE_DAILY_CAP = 0.40
 # An open Combine trade is closed once the day's P&L reaches this share of the profit target,
 # safely before the 55% line that would raise the target.
 CONSISTENCY_GUARD_FRACTION = 0.50
+# The aggressive daily goal by default: 45% of the profit target, under the consistency line.
+AGGRESSIVE_GOAL_SHARE = 0.45
 # Within this long before a scheduled major release (or when the calendar is unavailable)
 # new trades use at most half of Topstep's maximum position size.
 NEWS_SIZE_GUARD = timedelta(minutes=30)
@@ -56,9 +61,13 @@ class RiskManager:
         tracker: LossLimitTracker,
         fees_round_turn: float,
         funded_cfg: FundedConfig | None = None,
+        aggressive_cfg: AggressiveConfig | None = None,
     ):
+        from topstep_bot.network import default_jump_ticks
+
         self.cfg = cfg
         self.funded = funded_cfg or FundedConfig()
+        self.aggressive = aggressive_cfg or AggressiveConfig()
         self.account_cfg = account
         self.plan = plan
         self.stage = account.stage
@@ -81,6 +90,13 @@ class RiskManager:
         # calendar (news position-size cap, stop at the Combine target). Backtests replay many
         # Combine attempts from one run and have no calendar, so they leave these off.
         self.live_guards = False
+        # How far price can jump past a stop (ticks), added to every worst case checked against a hard
+        # limit; the live bot refreshes it from the market network (network.py) each day.
+        self.jump_ticks = default_jump_ticks(contract.root or contract.name)
+        self.stressed = False  # the network marks this market as stressed (aggressive mode sizes down)
+        self.network_note = ""
+        self.realized_today = 0.0
+        self.day_peak = 0.0  # best realized P&L today (the aggressive mode's lock-in)
 
     # ----------------------------------------------------------------- limits
 
@@ -88,9 +104,56 @@ class RiskManager:
     def daily_profit_target(self) -> float | None:
         if self.cfg.daily_profit_target is not None:
             return self.cfg.daily_profit_target
+        if self.aggressive.enabled:
+            return self.aggressive_goal
         if self.stage == "combine":
             return DEFAULT_COMBINE_DAILY_CAP * self.plan.profit_target
         return funded.daily_cap(self.funded, self.plan, self.stage, self.account_cfg.payout_path)
+
+    @property
+    def aggressive_goal(self) -> float:
+        """The aggressive mode's profit goal for one day (never above a funded payout path's daily cap)."""
+        goal = self.aggressive.daily_goal or AGGRESSIVE_GOAL_SHARE * self.plan.profit_target
+        cap = funded.daily_cap(self.funded, self.plan, self.stage, self.account_cfg.payout_path)
+        return min(goal, cap) if cap is not None else goal
+
+    def profit_ceiling(self) -> float | None:
+        """The day P&L no trade may carry the day past: the Combine's consistency line (where the guard closes
+        out, safely under Topstep's 55%) or an XFA consistency path's daily cap. None = no such line."""
+        if self.stage == "combine" and self.cfg.consistency_guard:
+            return CONSISTENCY_GUARD_FRACTION * self.plan.profit_target
+        return funded.daily_cap(self.funded, self.plan, self.stage, self.account_cfg.payout_path)
+
+    def reward_room(self, balance: float) -> float | None:
+        """Dollars a new trade may still make today before the day reaches its profit ceiling."""
+        ceiling = self.profit_ceiling()
+        if ceiling is None or self.day is None:  # no trading day started yet: no day P&L to measure against
+            return None
+        return ceiling - self.day_pnl(balance)
+
+    def locked_floor(self) -> float | None:
+        """Aggressive mode: the realized profit today that is locked in (None until the day has made enough)."""
+        a = self.aggressive
+        goal = self.daily_profit_target
+        if not a.enabled or not goal or self.day_peak <= 0 or self.day_peak < a.lock_in_at * goal:
+            return None
+        return self.day_peak * (1 - a.give_back)
+
+    def trade_risk(self, balance: float, conviction: float = 1.0) -> float:
+        """Dollars the next trade may lose at its stop (before Topstep's and the daily limits are applied).
+
+        Aggressive mode: ``conviction`` < 1 for signals the knowledge base hasn't proven; part of today's
+        realized profit is added (house money), up to ``max_risk_multiple``; a stressed market halves it;
+        and it never exceeds ``cushion_share`` of the room above the Maximum Loss Limit."""
+        base = self.cfg.risk_per_trade * self.risk_scale
+        a = self.aggressive
+        if not a.enabled:
+            return base
+        risk = base * min(1.0, max(0.0, conviction)) + a.house_money * max(0.0, self.realized_today)
+        risk = min(risk, a.max_risk_multiple * base)
+        if self.stressed:
+            risk *= a.stressed_risk
+        return max(0.0, min(risk, a.cushion_share * (self.tracker.room(balance) - self.cfg.mll_buffer)))
 
     @property
     def topstep_dll(self) -> float | None:
@@ -165,11 +228,18 @@ class RiskManager:
         self.consecutive_losses = 0
         self.last_loss_at = None
         self.lock_reason = None
+        self.realized_today = 0.0
+        self.day_peak = 0.0
         for ts, net_pnl in sorted(closed_today or []):
             self.record_trade(net_pnl, ts)
+        if not closed_today:
+            self.realized_today = realized_so_far
+            self.day_peak = max(0.0, realized_so_far)
 
     def record_trade(self, net_pnl: float, ts: datetime) -> None:
         self.trades_today += 1
+        self.realized_today += net_pnl
+        self.day_peak = max(self.day_peak, self.realized_today)
         if net_pnl < 0:
             self.consecutive_losses += 1
             self.last_loss_at = ts
@@ -188,29 +258,39 @@ class RiskManager:
     # ---------------------------------------------------------------- sizing
 
     def risk_per_contract(self, entry: float, stop: float) -> float:
-        """Worst-case loss per contract if the stop is hit: distance + stop slippage + fees."""
+        """Expected loss per contract if the stop is hit: distance + stop slippage + fees."""
         ticks = self.contract.ticks(entry - stop) + self.cfg.slippage_ticks
         return ticks * self.contract.tick_value + self.fees_round_turn
 
-    def position_size(self, entry: float, stop: float, balance: float, now: datetime | None = None) -> int:
+    def worst_loss_per_contract(self, entry: float, stop: float) -> float:
+        """Worst case per contract: the expected loss plus a sudden jump past the stop (the jump allowance)."""
+        return self.risk_per_contract(entry, stop) + self.jump_ticks * self.contract.tick_value
+
+    def position_size(self, entry: float, stop: float, balance: float, now: datetime | None = None,
+                      conviction: float = 1.0) -> int:
         rpc = self.risk_per_contract(entry, stop)
         if rpc <= 0:
             return 0
         day_pnl = self.day_pnl(balance)
-        budgets = [
-            self.cfg.risk_per_trade * self.risk_scale,
+        # Hard limits: a stop-out, even one that fills a jump late, must not reach any of them.
+        hard = [
             self.cfg.personal_daily_loss_limit + day_pnl,
             self.tracker.room(balance) - self.cfg.mll_buffer,
         ]
         if self.topstep_dll:
-            budgets.append(0.9 * self.topstep_dll + day_pnl)
+            hard.append(0.9 * self.topstep_dll + day_pnl)
         keep = funded.protected_floor(self.funded, self.stage, self.account_cfg.payout_path, day_pnl)
         if keep is not None:  # XFA standard path: a stop-out must not undo today's winning day
-            budgets.append(day_pnl - keep)
-        budget = min(budgets)
-        if budget <= 0:
+            hard.append(day_pnl - keep)
+        locked = self.locked_floor()
+        if locked is not None:  # aggressive mode: a stop-out must not give back the locked-in profit
+            hard.append(day_pnl - locked)
+        soft = self.trade_risk(balance, conviction)
+        budget = min(hard)
+        if soft <= 0 or budget <= 0:
             return 0
-        return max(0, min(math.floor(budget / rpc), self.max_contracts(now)))
+        size = min(math.floor(soft / rpc), math.floor(budget / self.worst_loss_per_contract(entry, stop)))
+        return max(0, min(size, self.max_contracts(now)))
 
     # ---------------------------------------------------------------- checks
 
@@ -239,6 +319,10 @@ class RiskManager:
         target = self.daily_profit_target
         if target is not None and day_pnl >= target:
             return self.lock(f"daily profit target ${target:,.0f} reached")
+        locked = self.locked_floor()
+        if locked is not None and day_pnl <= locked:
+            return self.lock(f"gave back {self.aggressive.give_back:.0%} of today's best (${self.day_peak:,.0f}) - "
+                             f"keeping ${day_pnl:,.0f}")
         if day_pnl <= -self.cfg.personal_daily_loss_limit:
             return self.lock(f"personal daily loss limit ${self.cfg.personal_daily_loss_limit:,.0f} reached")
         if self.tracker.room(balance + open_pnl) <= self.cfg.mll_buffer:
@@ -305,6 +389,17 @@ class RiskManager:
                                                         self.day_pnl(balance)),
             "locked": self.lock_reason,
             "risk_per_trade": round(self.cfg.risk_per_trade * self.risk_scale, 2),
+            "next_trade_risk": round(self.trade_risk(balance), 2),
+            "profit_ceiling": self.profit_ceiling(),
+            "jump_ticks": self.jump_ticks,
+            "stressed": self.stressed,
+            "network": self.network_note,
+            "aggressive": None if not self.aggressive.enabled else {
+                "goal": round(self.aggressive_goal, 2), "best_today": round(self.day_peak, 2),
+                "realized_today": round(self.realized_today, 2),
+                "locked_in": None if self.locked_floor() is None else round(self.locked_floor(), 2),
+                "lock_in_from": round(self.aggressive.lock_in_at * self.aggressive_goal, 2),
+            },
             "risk_scale": self.risk_scale,
             "paused": self.paused,
         }
