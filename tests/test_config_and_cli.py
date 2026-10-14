@@ -114,3 +114,118 @@ def test_news_blackout_reason_uses_central_time(tmp_path):
     reason = schedule.entry_block_reason(release - timedelta(minutes=2))
     assert reason == "news blackout: USD CPI m/m at 07:30 CT"
     assert release.astimezone(CT).hour == 7
+
+
+# ---------------------------------------------------------------- emergency flatten
+
+FLATTEN_CONFIG = """accounts:
+  - name: c1
+    account_id: 111
+  - name: c2
+    account_id: 222
+    login: second
+"""
+
+
+class FlattenBroker:
+    """TopstepX as the emergency flatten sees it: per account, open positions and working orders."""
+
+    def __init__(self, fail_close=0, fail_always=False):
+        from topstep_bot.models import Order, OrderSide, OrderStatus, OrderType, Position
+
+        self.positions = {111: [Position(111, "CON.MES", 1, 100.0)], 222: [Position(222, "CON.MNQ", -2, 200.0)]}
+        self.orders = {111: [Order(7, 111, "CON.MES", OrderType.STOP, OrderSide.SELL, 1, OrderStatus.OPEN, stop_price=95.0)],
+                       222: [Order(8, 222, "CON.MNQ", OrderType.STOP, OrderSide.BUY, 2, OrderStatus.OPEN, stop_price=210.0)]}
+        self.fail_close, self.fail_always = fail_close, fail_always
+        self.logins, self.calls = [], []
+
+
+class FlattenClient:
+    def __init__(self, broker, login):
+        self.broker, self.login = broker, login
+
+    async def __aenter__(self):
+        self.broker.logins.append(self.login)
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def search_accounts(self, only_active=True):
+        from topstep_bot.models import Account
+
+        return [Account(111, "C1-50K", 50_000.0), Account(222, "C2-100K", 100_000.0)]
+
+    async def search_open_positions(self, account_id):
+        return list(self.broker.positions[account_id])
+
+    async def search_open_orders(self, account_id):
+        return list(self.broker.orders[account_id])
+
+    async def close_position(self, account_id, contract_id, *, quick=False):
+        assert quick
+        self.broker.calls.append(("close", account_id, contract_id))
+        if self.broker.fail_always or self.broker.fail_close > 0:
+            self.broker.fail_close -= 1
+            raise httpx.ConnectError("getaddrinfo failed")
+        self.broker.positions[account_id] = [p for p in self.broker.positions[account_id] if p.contract_id != contract_id]
+
+    async def cancel_order(self, account_id, order_id, *, quick=False):
+        assert quick
+        self.broker.calls.append(("cancel", account_id, order_id))
+        self.broker.orders[account_id] = [o for o in self.broker.orders[account_id] if o.id != order_id]
+
+
+def flatten(tmp_path, monkeypatch, broker, capsys):
+    path = write(tmp_path, FLATTEN_CONFIG)
+
+    class FakeSecrets:
+        def login_for(self, cfg):
+            return cfg.account.login
+
+    monkeypatch.setattr(cli, "load_secrets", lambda: FakeSecrets())
+    monkeypatch.setattr(cli, "_client", lambda cfg: FlattenClient(broker, cfg.account.login))
+    monkeypatch.setattr(cli, "FLATTEN_SETTLE_SECONDS", 0)
+    monkeypatch.setattr(cli.console, "width", 300)
+    rc = cli.cmd_flatten(cli.build_parser().parse_args(["-c", str(path), "flatten", "--yes"]))
+    return rc, capsys.readouterr().out
+
+
+def test_flatten_uses_each_accounts_key_and_closes_before_cancelling(tmp_path, monkeypatch, capsys):
+    broker = FlattenBroker()
+    rc, out = flatten(tmp_path, monkeypatch, broker, capsys)
+    assert rc == 0 and "Flat." in out and "does not halt a running bot" in out
+    assert sorted(broker.logins, key=str) == sorted([None, "second"], key=str)
+    for account in (111, 222):
+        mine = [c[0] for c in broker.calls if c[1] == account]
+        assert mine == ["close", "cancel"]  # the stop stays until the position is gone
+
+
+@pytest.mark.parametrize("fail_always", [False, True])
+def test_flatten_keeps_going_and_reports_what_is_still_open(tmp_path, monkeypatch, capsys, fail_always):
+    broker = FlattenBroker(fail_close=1, fail_always=fail_always)
+    rc, out = flatten(tmp_path, monkeypatch, broker, capsys)
+    assert "Could not close CON.MES" in out
+    assert ("cancel", 222, 8) in broker.calls  # one failure did not stop the other account
+    if fail_always:
+        assert rc == 1 and "STILL OPEN: c1: 1 position(s) in CON.MES" in out and "STILL OPEN: c2" in out
+    else:  # the second pass got it
+        assert rc == 0 and "Flat." in out and broker.positions[111] == []
+
+
+def test_flatten_says_which_account_it_could_not_check(tmp_path, monkeypatch, capsys):
+    broker = FlattenBroker()
+
+    def client(cfg):
+        if cfg.account.login == "second":
+            raise SystemExit(2)
+        return FlattenClient(broker, None)
+
+    path = write(tmp_path, FLATTEN_CONFIG)
+    monkeypatch.setattr(cli, "load_secrets", lambda: type("S", (), {"login_for": lambda self, cfg: cfg.account.login})())
+    monkeypatch.setattr(cli, "_client", client)
+    monkeypatch.setattr(cli, "FLATTEN_SETTLE_SECONDS", 0)
+    monkeypatch.setattr(cli.console, "width", 300)
+    rc = cli.cmd_flatten(cli.build_parser().parse_args(["-c", str(path), "flatten", "--yes"]))
+    out = capsys.readouterr().out
+    assert rc == 1 and "NOT CHECKED: c2" in out and broker.positions[111] == [] and "Flat." not in out

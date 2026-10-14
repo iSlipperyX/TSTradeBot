@@ -432,7 +432,7 @@ the preflight, the journal and so on. To open it, open a Command Prompt in the b
 | 5 | train | **Teaches the bot** which strategy works at which time of day, from recent real data ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
 | 6 | paper | **Starts the bot in PAPER mode** (simulated orders on real prices) with the dashboard and Telegram |
 | 7 | live | **Starts the bot in LIVE mode** (real orders) with the dashboard and Telegram |
-| 8 | flatten | **Emergency:** cancels all orders and closes all positions on the account |
+| 8 | flatten | **Emergency:** closes every position, then cancels every order, on each account; checks again and lists anything still open. It does not stop a running bot (use Flatten & halt for that). |
 | 9 | journal | Recent trades and daily results |
 | 10 | strategies | Describes each strategy and its parameters |
 | 11 | demo | Backtest on synthetic data, no account needed |
@@ -875,7 +875,7 @@ cooldown. If it finds a position protected by one of its own stops (for example 
 | Restart the bot | **Restart** or Telegram `/restart` — it flattens first. |
 | Close everything, including the dashboard | Close the Topstep Bot window, or press **Ctrl+C** in it. |
 | Kill switch without the dashboard | Create an empty file named `KILL` in the bot folder. The bot flattens and halts within a second. Delete the file before the next start. |
-| Panic button when nothing is running | Menu **8 (flatten)** — cancels every order and closes every position on the account. |
+| Panic button when nothing is running | Menu **8 (flatten)** — closes every position and cancels every order on each account at TopstepX, keeps going if one call fails, then checks again and lists anything **STILL OPEN** or **NOT CHECKED**. It does not halt a running bot: use **Flatten & halt** or `/flatten` for that. |
 | Last resort | Close the position in TopstepX yourself. |
 
 Whenever the bot stops, it flattens any open position first (`execution.flatten_on_shutdown`).
@@ -2157,7 +2157,7 @@ different config file.
 | `topstep-bot download [--days N] [--tf M]` | Save history to `data/` |
 | `topstep-bot start [--mode paper\|live] [--yes] [--no-bot] [--no-browser]` | Start the dashboard + Telegram **and** the bot, which runs 24/7 (`service` does the same) |
 | `topstep-bot run [--mode paper\|live] [--yes]` | Run only the trading bot, without dashboard (normally started for you by `start`) |
-| `topstep-bot flatten [--yes]` | Emergency: cancel all orders, close all positions |
+| `topstep-bot flatten [--yes]` | Emergency: close all positions, then cancel all orders, on every account; reports anything still open. Does not halt a running bot. |
 | `topstep-bot journal [--mode paper\|live] [--limit N]` | Recent trades and daily results |
 | `topstep-bot telegram-test` | Check the Telegram token and chat ID with a test message |
 | `topstep-bot preflight [--days N] [--skip-backtest]` | Check everything before trading live |

@@ -27,6 +27,7 @@ console = Console()
 UTC = timezone.utc
 log = logging.getLogger("topstep_bot")
 LOG_DIR = Path("logs")
+FLATTEN_SETTLE_SECONDS = 2.0  # emergency flatten: closes and cancels are accepted before they are done
 
 
 # --------------------------------------------------------------------- helpers
@@ -983,36 +984,99 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 
 def cmd_flatten(args: argparse.Namespace) -> int:
-    """Emergency: cancel all open orders and close all positions on the configured account(s)."""
+    """Emergency: close every position and cancel every order of the configured account(s) at TopstepX.
+
+    It keeps going after a failed call, checks again afterwards and says what is still open."""
     from topstep_bot.live import select_account
 
+    console.print("This does not halt a running bot. Use the dashboard's Flatten or Telegram /flatten for that; "
+                  "this command only closes positions and cancels orders at TopstepX.")
     targets = _targets(args)
+    secrets = load_secrets()
+    by_login: dict[str | None, list[BotConfig]] = {}
+    for t in targets:
+        by_login.setdefault(secrets.login_for(t), []).append(t)
 
-    async def go() -> None:
-        async with _client(targets[0]) as client:
-            work = []
-            for cfg in targets:
-                account = await select_account(client, cfg)
-                positions = await client.search_open_positions(account.id)
-                orders = await client.search_open_orders(account.id)
-                console.print(f"{_title(cfg)}Account {account.name}: {len(positions)} open position(s), "
+    def name_of(cfg: BotConfig) -> str:
+        return cfg.active_account or cfg.account.account_name or str(cfg.account.account_id or "main")
+
+    async def go() -> int:
+        unchecked: list[str] = []  # "<account>: <reason>"
+        selected: list[tuple[BotConfig, object, object]] = []  # (config, client, account)
+        async with contextlib.AsyncExitStack() as stack:
+            for group in by_login.values():
+                try:
+                    client = await stack.enter_async_context(_client(group[0]))
+                except (Exception, SystemExit) as exc:  # noqa: BLE001 - one login's problem must not stop the others
+                    names = ", ".join(name_of(t) for t in group)
+                    console.print(f"[red]Could not log in for {names}:[/] {exc}")
+                    unchecked += [f"{name_of(t)}: could not log in ({exc})" for t in group]
+                    continue
+                for cfg in group:
+                    try:
+                        account = await select_account(client, cfg)
+                    except Exception as exc:  # noqa: BLE001 - SetupError, AuthError, ProjectXError, httpx errors
+                        console.print(f"[red]{name_of(cfg)}:[/] {exc}")
+                        unchecked.append(f"{name_of(cfg)}: {exc}")
+                        continue
+                    selected.append((cfg, client, account))
+
+            async def look() -> dict[int, tuple[list, list]]:
+                found = {}
+                for i, (cfg, client, account) in enumerate(selected):
+                    try:
+                        found[i] = (await client.search_open_positions(account.id), await client.search_open_orders(account.id))
+                    except Exception as exc:  # noqa: BLE001 - counted as not clean below
+                        console.print(f"[red]Could not check {name_of(cfg)}:[/] {exc}")
+                return found
+
+            async def clear(found: dict[int, tuple[list, list]]) -> None:
+                # Positions first, then orders - as the bot does: the protective stop stays until the position is gone.
+                for i, (positions, orders) in found.items():
+                    cfg, client, account = selected[i]
+                    for pos in positions:
+                        try:
+                            await client.close_position(account.id, pos.contract_id, quick=True)
+                        except Exception as exc:  # noqa: BLE001 - keep going: the second pass and the report follow
+                            console.print(f"Could not close {pos.contract_id} on {name_of(cfg)}: {exc}")
+                    for order in orders:
+                        try:
+                            await client.cancel_order(account.id, order.id, quick=True)
+                        except Exception as exc:  # noqa: BLE001
+                            console.print(f"Could not cancel order {order.id} on {name_of(cfg)}: {exc}")
+
+            found = await look()
+            for i, (positions, orders) in found.items():
+                console.print(f"{_title(selected[i][0])}Account {selected[i][2].name}: {len(positions)} open position(s), "
                               f"{len(orders)} open order(s).")
-                if positions or orders:
-                    work.append((account, positions, orders))
-            if not work:
-                return
-            if not args.yes and Prompt.ask("Type FLATTEN to close everything listed above") != "FLATTEN":
+            work = {i: f for i, f in found.items() if f[0] or f[1]}
+            missing = [i for i in range(len(selected)) if i not in found]
+            if not work and not missing and not unchecked:
+                console.print("[green]Flat.[/]")
+                return 0
+            if work and not args.yes and Prompt.ask("Type FLATTEN to close everything listed above") != "FLATTEN":
                 console.print("Cancelled.")
-                return
-            for account, positions, orders in work:
-                for order in orders:
-                    await client.cancel_order(account.id, order.id)
-                for pos in positions:
-                    await client.close_position(account.id, pos.contract_id)
-            console.print("[green]Flatten requests sent.[/] Verify in TopstepX.")
+                return 1
+            for _ in range(2):  # the second pass retries only what is left
+                if not work:
+                    break
+                await clear(work)
+                await asyncio.sleep(FLATTEN_SETTLE_SECONDS)  # closes and cancels are accepted before they are done
+                found = await look()
+                work = {i: f for i, f in found.items() if f[0] or f[1]}
+            missing = [i for i in range(len(selected)) if i not in found]
+            for i, (positions, orders) in work.items():
+                ids = ", ".join(p.contract_id for p in positions) or "-"
+                console.print(f"[red]STILL OPEN: {name_of(selected[i][0])}: {len(positions)} position(s) in {ids}, "
+                              f"{len(orders)} order(s)[/] - a working order can open a new position: cancel it in TopstepX")
+            unchecked += [f"{name_of(selected[i][0])}: could not check it" for i in missing]
+            for line in unchecked:
+                console.print(f"[red]NOT CHECKED: {line}[/]")
+            if not work and not unchecked:
+                console.print("[green]Flat.[/]")
+            return len(work) + len(unchecked)
 
-    asyncio.run(go())
-    return 0
+    return 1 if asyncio.run(go()) else 0
 
 
 def cmd_journal(args: argparse.Namespace) -> int:

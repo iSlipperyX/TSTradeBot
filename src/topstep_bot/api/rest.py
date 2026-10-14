@@ -300,8 +300,9 @@ class ProjectXClient:
         data = await self._post("/api/Order/place", body, idempotent=False)
         return int(data["orderId"])
 
-    async def cancel_order(self, account_id: int, order_id: int) -> None:
-        await self._post("/api/Order/cancel", {"accountId": account_id, "orderId": order_id})
+    async def cancel_order(self, account_id: int, order_id: int, *, quick: bool = False) -> None:
+        """``quick``: no retries (the emergency flatten retries the whole pass instead)."""
+        await self._post("/api/Order/cancel", {"accountId": account_id, "orderId": order_id}, idempotent=not quick)
 
     async def modify_order(
         self,
@@ -340,8 +341,10 @@ class ProjectXClient:
         data = await self._post("/api/Position/searchOpen", {"accountId": account_id})
         return [parse.position(p) for p in data.get("positions") or []]
 
-    async def close_position(self, account_id: int, contract_id: str) -> None:
-        await self._post("/api/Position/closeContract", {"accountId": account_id, "contractId": contract_id})
+    async def close_position(self, account_id: int, contract_id: str, *, quick: bool = False) -> None:
+        """``quick``: no retries (the emergency flatten retries the whole pass instead)."""
+        await self._post("/api/Position/closeContract", {"accountId": account_id, "contractId": contract_id},
+                         idempotent=not quick)
 
     async def partial_close_position(self, account_id: int, contract_id: str, size: int) -> None:
         await self._post(
