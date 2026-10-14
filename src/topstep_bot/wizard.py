@@ -15,6 +15,7 @@ from rich.prompt import Confirm, FloatPrompt, Prompt
 from rich.table import Table
 
 from topstep_bot.api.rest import ProjectXClient, ProjectXError
+from topstep_bot.config import atomic_write_text, env_key, env_line, read_text_any
 from topstep_bot.instruments import SPECS
 from topstep_bot.risk.manager import AGGRESSIVE_GOAL_SHARE
 from topstep_bot.risk.topstep import PLANS
@@ -26,32 +27,41 @@ SYMBOL_CHOICES = ["MNQ", "MES", "NQ", "ES", "M2K", "RTY", "MYM", "YM", "MGC", "G
 
 
 def update_env_file(path: Path, values: dict[str, str]) -> None:
-    """Set keys in a .env file, keeping any other lines intact."""
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    """Set keys in a .env file, keeping any other lines intact (an ``export KEY=`` line is replaced too)."""
+    lines = read_text_any(path).splitlines() if path.exists() else []
     remaining = dict(values)
     out = []
     for line in lines:
-        key = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
+        key = env_key(line)
         if key in remaining:
             out.append(f"{key}={remaining.pop(key)}")
+        elif key in values:
+            continue  # a second line for a key just written: it would only confuse the next reader
         else:
             out.append(line)
     if not lines:
         out.append("# TopstepX API credentials - keep this file private. Never share or commit it.")
     out.extend(f"{k}={v}" for k, v in remaining.items())
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    _write_env(path, "\n".join(out) + "\n")
 
 
 def remove_env_keys(path: Path, keys: set[str]) -> bool:
     """Delete keys from a .env file, keeping every other line. Returns True if anything was removed."""
     if not path.exists():
         return False
-    lines = path.read_text(encoding="utf-8").splitlines()
-    kept = [ln for ln in lines if not ("=" in ln and not ln.lstrip().startswith("#") and ln.split("=", 1)[0].strip() in keys)]
+    lines = read_text_any(path).splitlines()
+    kept = [ln for ln in lines if env_key(ln) not in keys]
     if len(kept) == len(lines):
         return False
-    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    _write_env(path, "\n".join(kept) + "\n")
     return True
+
+
+def _write_env(path: Path, text: str) -> None:
+    try:
+        atomic_write_text(path, text)
+    except OSError as exc:  # PermissionError, or a Windows sharing violation
+        raise ValueError(f"Not saved: {path.name} is read-only or open in another program ({exc})") from None
 
 
 PROFIT_HEADER = ("# Goal: PROFIT - aggressive daily profit. The bot trades as often as the rules allow, presses harder on\n"
@@ -426,9 +436,10 @@ def _offer_own_keys(env_path: Path, profiles: list[dict]) -> None:
 
 
 def _main_username(env_path: Path) -> str:
-    for line in env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []:
-        if line.startswith("TOPSTEPX_USERNAME="):
-            return line.split("=", 1)[1].strip()
+    for line in read_text_any(env_path).splitlines() if env_path.exists() else []:
+        parsed = env_line(line)
+        if parsed and parsed[0] == "TOPSTEPX_USERNAME":
+            return parsed[1]
     return ""
 
 
@@ -623,13 +634,13 @@ def run_wizard(config_path: Path, env_path: Path) -> bool:
         if Confirm.ask("Set up update checks now? (You can do it later on the dashboard: Settings, Updates)", default=True):
             setup_github_token(env_path, UpdatesConfig().repo)
 
-    config_path.write_text(
+    atomic_write_text(
+        config_path,
         render_config(
             plan=plan, stage=stage, account_id=account_id, symbol=symbol, strategy=strategy,
             risk_per_trade=risk, daily_loss=daily, topstep_dll=topstep_dll, payout_path=payout_path, goal=goal,
             accounts=profiles, max_trades=hint["max_trades"],
         ),
-        encoding="utf-8",
     )
     console.print(
         Panel.fit(

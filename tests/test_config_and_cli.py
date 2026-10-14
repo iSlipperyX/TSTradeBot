@@ -40,6 +40,11 @@ def test_service_times_still_parse(tmp_path):
     ("instrument:\n  timeframe_minutes: 10\nstrategy:\n  name: orb\n  params: {range_minutes: 15}\n", "multiple of the bar timeframe"),
     ("mode: paper\n  risk: 1\n", "not valid YAML"),
     ("- just\n- a list\n", "should contain settings"),
+    ("risk:\n  risk_per_trade: 100\nmode: paper\nrisk:\n  risk_per_trade: 200\n", "risk: appears twice (lines 1 and 4)"),
+    ("session:\n  trade_start: 8\n", "must look like"),
+    ('session:\n  trade_start: "8"\n', "must look like"),
+    ("session:\n  trade_start: 0800\n", "must look like"),
+    ("session:\n  trade_start: 830\n", "must look like"),
 ])
 def test_config_problems_are_explained(tmp_path, text, expected):
     with pytest.raises(ConfigError, match=None) as info:
@@ -229,3 +234,96 @@ def test_flatten_says_which_account_it_could_not_check(tmp_path, monkeypatch, ca
     rc = cli.cmd_flatten(cli.build_parser().parse_args(["-c", str(path), "flatten", "--yes"]))
     out = capsys.readouterr().out
     assert rc == 1 and "NOT CHECKED: c2" in out and broker.positions[111] == [] and "Flat." not in out
+
+
+
+# ---------------------------------------------------------------- config.yaml and .env as Windows leaves them
+
+def test_a_section_written_twice_is_not_saved_into_the_first_copy():
+    from topstep_bot.config_edit import set_value
+
+    with pytest.raises(ValueError, match="^Not saved: risk: appears twice"):
+        set_value("risk:\n  risk_per_trade: 100\nrisk:\n  risk_per_trade: 200\n", "risk", "risk_per_trade", 50)
+
+
+def test_the_dashboard_opens_whatever_is_in_the_file(tmp_path, monkeypatch):
+    from topstep_bot import setup_service
+
+    cfg, problem = setup_service.load_for_server(str(write(tmp_path, 'session:\n  trade_start: "8"\n')))
+    assert cfg.session.trade_start == BotConfig().session.trade_start and "must look like" in problem
+
+    def boom(path):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(setup_service, "load_config", boom)
+    assert "boom" in setup_service.load_for_server(str(tmp_path / "config.yaml"))[1]
+
+
+def test_a_utf16_config_says_how_to_fix_it_and_a_bom_env_still_reads(tmp_path, monkeypatch):
+    from topstep_bot.config import load_env_file
+
+    path = tmp_path / "config.yaml"
+    path.write_bytes("mode: paper\n".encode("utf-16"))  # what PowerShell's > writes
+    assert load_config(path).mode == "paper"
+    path.write_bytes(b"mode: paper\n\xff\xfe\x00 bad")
+    with pytest.raises(ConfigError, match="not saved as UTF-8"):
+        load_config(path)
+    monkeypatch.delenv("TOPSTEPX_USERNAME", raising=False)
+    env = tmp_path / ".env"
+    env.write_bytes("TOPSTEPX_USERNAME=me\n".encode("utf-8-sig"))
+    load_env_file(env)
+    import os
+    assert os.environ["TOPSTEPX_USERNAME"] == "me"
+
+
+def test_env_lines_with_export_and_comments(tmp_path, monkeypatch):
+    import os
+
+    from topstep_bot.config import load_env_file
+    from topstep_bot.wizard import remove_env_keys, update_env_file
+
+    env = tmp_path / ".env"
+    env.write_text('export TOPSTEPX_API_KEY=a  # old\nTSB_QUOTED="a # b"\nTOPSTEPX_API_KEY=dup\n', encoding="utf-8")
+    for key in ("TOPSTEPX_API_KEY", "TSB_QUOTED"):
+        monkeypatch.delenv(key, raising=False)
+    load_env_file(env)
+    assert os.environ["TOPSTEPX_API_KEY"] == "a" and os.environ["TSB_QUOTED"] == "a # b"
+    update_env_file(env, {"TOPSTEPX_API_KEY": "b"})
+    lines = env.read_text(encoding="utf-8").splitlines()
+    assert [ln for ln in lines if "API_KEY" in ln] == ["TOPSTEPX_API_KEY=b"]
+    assert remove_env_keys(env, {"TSB_QUOTED"}) and "TSB_QUOTED" not in env.read_text(encoding="utf-8")
+
+
+def test_atomic_write_survives_a_locked_moment_and_leaves_nothing_behind(tmp_path, monkeypatch):
+    import os
+
+    from topstep_bot.config import atomic_write_text
+
+    path = tmp_path / "config.yaml"
+    atomic_write_text(path, "mode: paper\n")
+    assert path.read_text(encoding="utf-8") == "mode: paper\n" and not list(tmp_path.glob("*.part"))
+    real, calls = os.replace, []
+
+    def flaky(src, dst):
+        calls.append(src)
+        if len(calls) == 1:
+            raise PermissionError(13, "Permission denied")
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    atomic_write_text(path, "mode: live\n")
+    assert len(calls) == 2 and path.read_text(encoding="utf-8") == "mode: live\n" and not list(tmp_path.glob("*.part"))
+
+
+def test_a_locked_file_is_a_plain_not_saved(tmp_path, monkeypatch):
+    import os
+
+    from topstep_bot.wizard import update_env_file
+
+    def locked(src, dst):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "replace", locked)
+    monkeypatch.setattr("topstep_bot.config.clock.sleep", lambda s: None)
+    with pytest.raises(ValueError, match=r"^Not saved: \.env is read-only"):
+        update_env_file(tmp_path / ".env", {"TOPSTEPX_USERNAME": "me"})

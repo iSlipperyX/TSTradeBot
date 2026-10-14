@@ -38,11 +38,13 @@ from topstep_bot.config import (
     ConfigError,
     Login,
     anchor_folders,
+    atomic_write_text,
     config_from_text,
     load_config,
     load_env_file,
     login_env_names,
     login_key,
+    read_text_any,
 )
 from topstep_bot.config_edit import REMOVE, set_section, set_values
 from topstep_bot.instruments import CLASSES, SPECS
@@ -83,13 +85,24 @@ def load_for_server(config_path: str | None) -> tuple[BotConfig, str | None]:
     The dashboard must open even when config.yaml is missing or broken, so a problem is returned
     (and shown on the Setup tab) instead of raised; the defaults stand in until it is fixed."""
     path = Path(config_path or "config.yaml")
-    if not path.exists():  # not set up yet: that's what the Setup tab is for, not a problem
-        load_env_file(path.parent / ".env")
-        return anchor_folders(BotConfig(), path), None
     try:
+        if not path.exists():  # not set up yet: that's what the Setup tab is for, not a problem
+            load_env_file(path.parent / ".env")
+            return anchor_folders(BotConfig(), path), None
         return load_config(path), None
-    except ConfigError as exc:
+    except Exception as exc:  # noqa: BLE001 - the dashboard must open whatever is in the file
         return anchor_folders(BotConfig(), path), str(exc)
+
+
+def save_file(path: Path, text: str, original: str | None = None) -> None:
+    """Write config.yaml (keeping the old one as config.yaml.bak) without ever leaving half a file;
+    a read-only or locked file is a plain "Not saved" message, not an internal error."""
+    try:
+        if original is not None:
+            path.with_name(path.name + ".bak").write_text(original, encoding="utf-8")
+        atomic_write_text(path, text)
+    except OSError as exc:  # PermissionError, or a Windows sharing violation
+        raise ValueError(f"Not saved: {path.name} is read-only or open in another program ({exc})") from None
 
 
 GOALS = ("pass", "profit", "learn")
@@ -476,7 +489,7 @@ class SetupService:
         if v["account_name"] is None and v["account_id"] is not None:
             v["account_name"] = next((a["name"] for a in self.accounts if a["id"] == v["account_id"]), None)
         path = self.config_path
-        original = path.read_text(encoding="utf-8") if path.exists() else None
+        original = read_text_any(path) if path.exists() else None
         fresh = original is None or bool(body.get("fresh"))
         if fresh:
             text = set_values(self._fresh_text(v), {("risk", "max_trades_per_day"): v["max_trades"],
@@ -497,9 +510,7 @@ class SetupService:
             config_from_text(text, path.name)
         except ConfigError as exc:
             raise ValueError(f"Not saved: {_problems(exc)}") from None
-        if original is not None:
-            path.with_name(path.name + ".bak").write_text(original, encoding="utf-8")
-        path.write_text(text, encoding="utf-8")
+        save_file(path, text, original)
         self._reload()
         market = (f"auto from {'every market' if v['every_market'] else 'the micros'} (else {v['symbol']})"
                   if v["auto_pick"] else ", ".join([v["symbol"], *v["markets"]]))
@@ -566,7 +577,7 @@ class SetupService:
             raise ValueError("config.yaml has a problem: fix it first (see the top of this tab).")
         if not self.config_path.exists():
             raise ValueError("Finish the setup below and press Save first; then you can add more accounts.")
-        return self.config_path.read_text(encoding="utf-8")
+        return read_text_any(self.config_path)
 
     def _validate(self, text: str) -> None:
         try:
@@ -576,8 +587,7 @@ class SetupService:
 
     def _write(self, original: str, text: str) -> None:
         self._validate(text)
-        self.config_path.with_name(self.config_path.name + ".bak").write_text(original, encoding="utf-8")
-        self.config_path.write_text(text, encoding="utf-8")
+        save_file(self.config_path, text, original)
         self._reload()
         self.ctl.sync_accounts()
         self.report_at = 0.0  # check again with the new list
@@ -907,9 +917,9 @@ class SetupService:
             return
         cfg.telegram.control_enabled = on
         if self.config_path.exists() and self.config_error is None:
-            text = set_values(self.config_path.read_text(encoding="utf-8"), {("telegram", "control_enabled"): on})
+            text = set_values(read_text_any(self.config_path), {("telegram", "control_enabled"): on})
             config_from_text(text, self.config_path.name)
-            self.config_path.write_text(text, encoding="utf-8")
+            save_file(self.config_path, text)
 
     async def telegram_remove(self) -> str:
         self._set_secrets({"telegram_bot_token": None, "telegram_chat_id": None})
@@ -1016,13 +1026,13 @@ class SetupService:
     def _set_config(self, values: dict) -> None:
         """Change a few settings in config.yaml (keeping the rest as written) and use them at once."""
         path = self.config_path
-        original = path.read_text(encoding="utf-8") if path.exists() else ""
+        original = read_text_any(path) if path.exists() else ""
         text = set_values(original, values)
         try:
             config_from_text(text, path.name)
         except ConfigError as exc:
             raise ValueError(f"Not saved: {_problems(exc)}") from None
-        path.write_text(text, encoding="utf-8")
+        save_file(path, text)
         self._reload()
 
     async def autostart(self, body: dict) -> str:
