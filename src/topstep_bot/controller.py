@@ -1169,7 +1169,7 @@ class Controller:
         await self.phone.start()
         if start_bot:
             # After an update restart, only the accounts whose bots were running come back.
-            plan = load_state(self.cfg).get("restart") or {}
+            plan = self.updates.restart_plan()  # read before updates.start() clears it
             only = set(plan["bots"]) if self.multi and isinstance(plan.get("bots"), list) else None
             await self.start_bots(only=only)
         await self.updates.start()

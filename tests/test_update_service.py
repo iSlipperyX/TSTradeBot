@@ -358,3 +358,53 @@ def test_updates_config_defaults_and_validation():
     with pytest.raises(ValueError):
         BotConfig.model_validate({"updates": {"repo": "not a repo"}})
     assert Secrets(github_token="x").github_token == "x"
+
+
+TWO_ACCOUNTS = {"accounts": [{"name": "c1", "account_id": 1}, {"name": "c2", "account_id": 2}], "research": {"enabled": False}}
+
+
+def test_after_an_update_only_the_accounts_that_were_running_come_back(tmp_path):
+    async def go():
+        old = make(tmp_path, **TWO_ACCOUNTS)
+        attach(old)
+        old.updates._save(restart={"mode": None, "bot": True, "bots": ["c1"], "at": 0, "announce": ""})
+        for b in old.bots.values():
+            await b.close()
+
+        ctl = make(tmp_path, **TWO_ACCOUNTS)  # the new version, on the same folder
+        ctl.updates.updater = None  # no online check
+        seen = []
+
+        async def start_bots(only=None, **kw):
+            seen.append(only)
+
+        async def nothing(*a, **kw):
+            return None
+
+        ctl.start_bots = start_bots
+        ctl.server.start = ctl.server.stop = nothing
+        ctl.phone.start = ctl.phone.close = nothing
+        ctl.lab.start_background = lambda: []
+        ctl._exit.set()
+        try:
+            await ctl.run(start_bot=True, open_browser=False)
+        finally:
+            for b in ctl.bots.values():
+                await b.close()
+        return seen
+    assert run(go()) == [{"c1"}]
+    assert not load_state(tmp_path / "data").get("restart")
+
+
+def test_the_update_message_names_the_accounts_that_come_back(tmp_path):
+    async def body(ctl, http):
+        service, stub, _ = attach(ctl)
+        c1 = ctl.bots["c1"]
+        await c1.start("test")
+        await until(lambda: c1.state == "running")
+        r = (await http.post("/api/updates/install", json={"when": "now"})).json()
+        assert r["ok"]
+        await until(lambda: ctl._exit.is_set())
+        plan = load_state(tmp_path / "data")["restart"]
+        assert plan["bots"] == ["c1"] and plan["announce"].endswith("Back running: c1.") and "c2" not in plan["announce"]
+    scenario(tmp_path, body, **TWO_ACCOUNTS)
