@@ -120,6 +120,13 @@ class UpdateService:
                 state[key] = value
         save_state(self.state_dir, state)
 
+    def restart_plan(self) -> dict:
+        """What the last install left for the new version (updates.json, not controller.json): whether to start the
+        bot and which accounts. The controller reads it before start() clears it."""
+        state = load_state(self.state_dir)
+        plan = state.get("restart") if isinstance(state, dict) else None
+        return plan if isinstance(plan, dict) else {}
+
     def _require(self) -> Updater:
         if self.updater is None:
             raise ValueError(UNSUPPORTED)
@@ -219,8 +226,9 @@ class UpdateService:
         self._unschedule()
         # Each account's mode is already remembered (controller.json "modes"); a single account passes its mode on.
         mode = None if self.ctl.multi else bot.mode
-        self._save(restart={"mode": mode, "bot": restart_bot, "bots": [b.account for b in to_restart], "at": time.time(),
-                            "announce": updated_text(info, record["to"])})
+        names = [b.account for b in to_restart]
+        self._save(restart={"mode": mode, "bot": restart_bot, "bots": names, "at": time.time(),
+                            "announce": updated_text(info, record["to"], names if self.ctl.multi else None)})
         self.busy, self.message = "restarting", "Update installed - restarting with the new version."
         bot._event("info", f"Update installed ({label}); restarting the controller with the new version")
         asyncio.get_running_loop().call_later(RESTART_DELAY, lambda: spawn(self._restart(), name="update-restart"))
@@ -304,7 +312,7 @@ class UpdateService:
 
     async def start(self) -> None:
         """On controller start: announce a finished update, then check now and then on a schedule."""
-        restart = load_state(self.state_dir).get("restart")
+        restart = self.restart_plan()
         if restart:
             self._save(restart=None)
             self.info, self.first_check_delay = None, min(self.first_check_delay, 5.0)  # confirm the new version soon
@@ -360,15 +368,19 @@ class UpdateService:
         log.info("Scheduled update: %s", message)
 
 
-def updated_text(info: UpdateInfo, sha: str) -> str:
-    """The message after a restart into a new version: what you now have."""
+def updated_text(info: UpdateInfo, sha: str, bots: list[str] | None = None) -> str:
+    """The message after a restart into a new version: what you now have, and (with several accounts) which
+    accounts come back running."""
     titles = [c.title for c in info.changes[:3]]
     more = (info.change_count if info.exact else len(info.changes)) - len(titles)
     version = f" (version {info.new_version})" if info.new_version and info.new_version != info.version else ""
     text = f"✅ Topstep Bot updated to {sha[:7]}{version}"
     if titles:
         text += ": " + "; ".join(titles) + (f"; and {more} more" if more > 0 else "")
-    return text + "."
+    text += "."
+    if bots:
+        text += f" Back running: {', '.join(bots)}."
+    return text
 
 
 # ------------------------------------------------------------------------------ restart after an update

@@ -285,6 +285,49 @@ def test_a_new_version_that_fails_to_start_is_rolled_back(tmp_path, monkeypatch)
     assert "restored" in load_state(tmp_path)["restart"]["announce"]
 
 
+TWO_ACCOUNTS = {"accounts": [{"name": "c1", "account_id": 1}, {"name": "c2", "account_id": 2}], "research": {"enabled": False}}
+
+
+def test_after_an_update_only_the_accounts_that_were_running_come_back(tmp_path):
+    """The restart plan is saved in updates.json, but the controller looked for it in controller.json, found none
+    and started every account: one the owner had stopped that morning came back too, in its remembered mode."""
+    async def go():
+        installer = make(tmp_path, **TWO_ACCOUNTS)
+        attach(installer)[0]._save(restart={"mode": None, "bot": True, "bots": ["c1"], "at": 0, "announce": ""})
+        await installer.bot.close()
+        ctl = make(tmp_path, **TWO_ACCOUNTS)  # the new version's controller
+        ctl.updates.updater = None  # nothing to check online; start() still clears the plan like the real one
+        seen = []
+
+        async def start_bots(source="controller start", only=None):
+            seen.append(only)
+
+        async def nothing(*a, **k):
+            return None
+        ctl.start_bots = start_bots
+        ctl.server.start = ctl.server.stop = ctl.phone.start = ctl.phone.close = nothing
+        ctl.lab.start_background = lambda: []
+        ctl._exit.set()
+        await ctl.run(start_bot=True, open_browser=False)
+        assert seen == [{"c1"}]
+        assert "restart" not in load_state(tmp_path / "data")  # read first, then cleared
+    run(go())
+
+
+def test_the_update_message_names_the_accounts_that_come_back(tmp_path):
+    async def body(ctl, http):
+        service, _, _ = attach(ctl)
+        await ctl.bots["c1"].start("test")  # c2 stays stopped
+        await until(lambda: ctl.bots["c1"].state == "running")
+        r = (await http.post("/api/updates/install", json={"when": "now"})).json()
+        assert r["ok"], r
+        plan = load_state(tmp_path / "data")["restart"]
+        assert plan["bots"] == ["c1"]
+        assert plan["announce"].endswith("Back running: c1.") and "c2" not in plan["announce"]
+        await until(lambda: ctl._exit.is_set())
+    scenario(tmp_path, body, **TWO_ACCOUNTS)
+
+
 # ------------------------------------------------------------------------------ the menu / CLI
 
 def test_cli_update_shows_changes_and_leaves_a_running_bot_to_the_dashboard(tmp_path, monkeypatch, capsys, restore_logging):
