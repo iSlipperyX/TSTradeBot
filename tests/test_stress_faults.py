@@ -429,6 +429,7 @@ def test_an_outage_is_one_log_line_and_a_bug_keeps_its_traceback(caplog):
         except Exception as caught:  # noqa: BLE001
             live.log_failure("Clock loop error", caught)
     outage, bug = caplog.records[-2:]
-    assert outage.levelname == "WARNING" and outage.exc_info is None
+    # (once logging is set up, the redacting filter moves the traceback from exc_info to exc_text)
+    assert outage.levelname == "WARNING" and outage.exc_info is None and not outage.exc_text
     assert outage.getMessage() == "Clock loop error: [Errno 11001] getaddrinfo failed (connection problem; trying again)"
-    assert bug.levelname == "ERROR" and bug.exc_info is not None
+    assert bug.levelname == "ERROR" and (bug.exc_info is not None or "KeyError" in (bug.exc_text or ""))
