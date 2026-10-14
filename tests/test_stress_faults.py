@@ -267,7 +267,7 @@ async def chaos(seed: int, steps: int = 2000, max_size: int = 3) -> dict:
             "closed": len(closed), "errors": sum(broker.errors.values())}
 
 
-@pytest.mark.parametrize("seed", range(10))
+@pytest.mark.parametrize("seed", [*range(100), 30003, 30027, 30089, 30098, 30153, 30235, 31078, 31282, 31314])
 def test_chaos_never_doubles_reverses_or_leaves_anything_behind(seed):
     result = run(chaos(seed))
     assert result["errors"] > 100 and result["closed"] > 20  # it really was a rough session
