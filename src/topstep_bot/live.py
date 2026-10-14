@@ -75,6 +75,15 @@ def unreachable(exc: BaseException) -> bool:
         429, *range(500, 600))
 
 
+def log_failure(what: str, exc: BaseException) -> None:
+    """Log a failed step from inside its ``except``: a connection problem is one line (the bot retries and the
+    outage is reported elsewhere); anything else keeps its traceback, which is what a bug report needs."""
+    if unreachable(exc):
+        log.warning("%s: %s (connection problem; trying again)", what, str(exc) or type(exc).__name__)
+    else:
+        log.exception(what)
+
+
 class SetupError(Exception):
     """A configuration/account problem the user needs to fix (shown without a traceback)."""
 
@@ -674,8 +683,8 @@ class Lane:
             if core.schedule.news:
                 try:
                     await core.schedule.news.refresh()
-                except Exception:  # noqa: BLE001 - keep the last calendar; trading goes on
-                    log.exception("Economic calendar refresh failed")
+                except Exception as exc:  # noqa: BLE001 - keep the last calendar; trading goes on
+                    log_failure("Economic calendar refresh failed", exc)
 
     # --------------------------------------------------------------- prices and bars
 
@@ -706,8 +715,8 @@ class Lane:
                         break
                 except ProjectXError as exc:
                     log.warning("Bar fetch failed (%s): %s", self.symbol, exc)
-                except Exception:  # noqa: BLE001
-                    log.exception("Bar fetch error (%s)", self.symbol)
+                except Exception as exc:  # noqa: BLE001
+                    log_failure(f"Bar fetch error ({self.symbol})", exc)
                 await asyncio.sleep(4)
 
     async def _fetch_new_bars(self, tf: int) -> bool:
@@ -1498,8 +1507,8 @@ class LiveRunner:
                 self._maybe_check_in(now)
                 self._maybe_daily_restart(now)
                 await self._drop_closed_markets()
-            except Exception:  # noqa: BLE001 - keep the clock alive
-                log.exception("Clock loop error")
+            except Exception as exc:  # noqa: BLE001 - keep the clock alive
+                log_failure("Clock loop error", exc)
 
     async def _lane_tick(self, lane: Lane, now: datetime) -> None:
         core = lane.core
@@ -1510,8 +1519,8 @@ class LiveRunner:
             if lane.price_stale(now) and not core.orders.is_flat and now.second % 10 == 0:
                 await lane.poll_price()
             lane.sync_positions()
-        except Exception:  # noqa: BLE001 - one market's problem must not stop the others' clocks
-            log.exception("Clock error (%s)", lane.symbol)
+        except Exception as exc:  # noqa: BLE001 - one market's problem must not stop the others' clocks
+            log_failure(f"Clock error ({lane.symbol})", exc)
 
     async def _drop_closed_markets(self) -> None:
         # Only once its first reconcile has looked at TopstepX: a lane opened after a restart starts "flat"
@@ -1542,8 +1551,8 @@ class LiveRunner:
             for lane in list(self.lanes.values()):
                 try:
                     await lane.news_step(refresh)
-                except Exception:  # noqa: BLE001 - news is a bonus; trading goes on
-                    log.exception("News refresh failed (%s)", lane.symbol)
+                except Exception as exc:  # noqa: BLE001 - news is a bonus; trading goes on
+                    log_failure(f"News refresh failed ({lane.symbol})", exc)
             await asyncio.sleep(60)
 
     async def _learn_loop(self) -> None:

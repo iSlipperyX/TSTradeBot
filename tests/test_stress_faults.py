@@ -413,3 +413,22 @@ def test_a_bot_started_during_a_topstepx_outage_waits_for_it_instead_of_crashing
             await asyncio.wait_for(task, 5)
 
     run(go())
+
+
+def test_an_outage_is_one_log_line_and_a_bug_keeps_its_traceback(caplog):
+    import logging
+
+    import httpx
+
+    from topstep_bot import live
+
+    caplog.set_level(logging.WARNING, logger="topstep_bot.live")
+    for exc in (httpx.ConnectError("[Errno 11001] getaddrinfo failed"), KeyError("bug")):
+        try:
+            raise exc
+        except Exception as caught:  # noqa: BLE001
+            live.log_failure("Clock loop error", caught)
+    outage, bug = caplog.records[-2:]
+    assert outage.levelname == "WARNING" and outage.exc_info is None
+    assert outage.getMessage() == "Clock loop error: [Errno 11001] getaddrinfo failed (connection problem; trying again)"
+    assert bug.levelname == "ERROR" and bug.exc_info is not None
