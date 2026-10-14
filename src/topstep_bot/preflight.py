@@ -84,7 +84,7 @@ async def run_preflight(
     """Run every check. ``ask_mll(prompt) -> str`` lets an interactive caller teach the bot the MLL."""
     from topstep_bot.api.rest import ProjectXClient
     from topstep_bot.journal import Journal
-    from topstep_bot.live import SetupError, resolve_contract, select_account
+    from topstep_bot.live import SetupError, mll_floor_for, resolve_contract, select_account
     from topstep_bot.models import BarUnit
     from topstep_bot.sessions import SessionSchedule, session_open_for
 
@@ -202,11 +202,7 @@ async def run_preflight(
         label = account.name
         journal = Journal(cfg.journal_path_for("live"))
         try:
-            floor = cfg.account.mll_floor_override
-            source = "config (mll_floor_override)"
-            if floor is None:
-                floor = journal.get_state(f"mll_floor:{label}")
-                source = "learned earlier"
+            floor, source = mll_floor_for(journal, label, cfg.account.mll_floor_override)
             if floor is None and abs(account.balance - start) < 0.01:
                 floor = start - mll
                 source = "fresh account"

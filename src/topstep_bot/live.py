@@ -37,6 +37,7 @@ from pathlib import Path
 
 import httpx
 
+from topstep_bot import fmt
 from topstep_bot.api.realtime import MarketStream
 from topstep_bot.api.rest import ProjectXClient, ProjectXError
 from topstep_bot.bars import floor_time
@@ -112,6 +113,31 @@ async def select_account(client: ProjectXClient, cfg: BotConfig) -> Account:
         names = ", ".join(f"{a.name} (id {a.id})" for a in accounts)
         raise SetupError(f"Configured account not found. Available: {names}")
     return match[0]
+
+
+def mll_floor_for(journal: Journal, label: str, override: float | None) -> tuple[float | None, str]:
+    """The Max Loss Limit floor to start with, and a one-line note saying where it came from.
+
+    The journal holds the bot's own trailing floor, which only ever moves up. ``account.mll_floor_override`` in
+    config.yaml is a one-time sync: the first time the bot sees a given number it adopts it (and records that it
+    did), then follows its own floor, so a number typed long ago can never replace a higher, learned floor on a
+    later start. Typing a different number syncs again."""
+    floor_key, applied_key = f"mll_floor:{label}", f"mll_floor_override_applied:{label}"
+    saved = journal.get_state(floor_key)
+    if override is None:
+        if saved is None:
+            return None, "not known yet, the bot will work it out from the balance"
+        return saved, "from the journal"
+    if journal.get_state(applied_key) != override:
+        journal.set_state(floor_key, override)
+        journal.set_state(applied_key, override)
+        journal.set_state(f"mll_floor_override_applied_at:{label}", datetime.now(UTC).date().isoformat())
+        return override, f"override {fmt.money(override)} applied (one-time sync)"
+    when = journal.get_state(f"mll_floor_override_applied_at:{label}")
+    spent = f"override {fmt.money(override)} was applied" + (f" on {when}" if when else " earlier")
+    if saved is None:
+        return None, f"not known yet, the bot will work it out from the balance ({spent})"
+    return saved, f"from the journal; {spent}"
 
 
 async def resolve_contract(client: ProjectXClient, cfg: BotConfig) -> Contract:
@@ -855,9 +881,8 @@ class LiveRunner:
             self.wallet = PaperWallet(paper_balance)
             acct = Account(1, label, self.wallet.balance, can_trade=True, simulated=True)
         plan = PLANS[cfg.account.plan]
-        floor = self.journal.get_state(f"mll_floor:{label}")
-        if cfg.account.mll_floor_override is not None:
-            floor = cfg.account.mll_floor_override
+        floor, floor_note = mll_floor_for(self.journal, label, cfg.account.mll_floor_override)
+        log.info("Maximum Loss Limit floor %s: %s", fmt.money(floor), floor_note)
         self.tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
         self.book = AccountBook(shared=True)
 

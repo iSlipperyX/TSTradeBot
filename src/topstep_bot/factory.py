@@ -53,7 +53,7 @@ def build_core(
     whole account."""
     plan = PLANS[cfg.account.plan]
     schedule = SessionSchedule(market_session(cfg.session, contract.root or contract.name))
-    floor = cfg.account.mll_floor_override if cfg.account.mll_floor_override is not None else mll_floor
+    floor = mll_floor if mll_floor is not None else cfg.account.mll_floor_override  # the journal's floor wins
     if tracker is None:
         tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
     fees = fees_for(cfg, contract)
