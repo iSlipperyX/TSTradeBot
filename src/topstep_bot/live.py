@@ -859,7 +859,9 @@ class LiveRunner:
     def lane_broker(self, contract: Contract) -> Broker:
         """The broker one market trades through: the shared TopstepX connection, or a paper broker on the shared wallet."""
         if self.hub is not None:
-            return self.hub.lane()
+            lane = self.hub.lane()
+            lane.market = contract.symbol_id or contract.id
+            return lane
         assert self.wallet is not None
         return PaperBroker(contract, self.wallet.balance, slippage_ticks=self.cfg.risk.slippage_ticks,
                            fees_round_turn=fees_for(self.cfg, contract), account_name=self.label, live=True,
@@ -1527,8 +1529,8 @@ class LiveRunner:
             await self._safe_reconcile()
 
     async def _safe_reconcile(self) -> None:
-        for lane in list(self.lanes.values()):
-            await lane.reconcile()
+        # Together: one market waiting on a slow answer must not hold up another market's check.
+        await asyncio.gather(*(lane.reconcile() for lane in list(self.lanes.values())))
 
     async def _news_loop(self) -> None:
         """Refresh the calendars every 6 hours and the headlines every few minutes."""

@@ -481,3 +481,61 @@ def test_a_position_in_a_market_with_no_lane_is_flattened_at_start(tmp_path):
             runner.journal.close()
 
     run(go())
+
+
+def test_one_slow_market_does_not_hold_up_another_markets_events():
+    import time
+
+    from topstep_bot.broker.shared import BrokerHub
+    from topstep_bot.execution import OrderManager
+    from topstep_bot.models import Position
+
+    async def go():
+        inner = PaperBroker(offline_contract("MNQ"), 50_000)
+        hub = BrokerHub(inner)
+        clock = lambda: ct(2026, 3, 3, 9, 0)  # noqa: E731
+        a = OrderManager(hub.lane(), offline_contract("MNQ"), fees_round_turn=1.0, clock=clock)
+        b = OrderManager(hub.lane(), offline_contract("MES"), fees_round_turn=1.0, clock=clock)
+        started = asyncio.Event()
+        slow_original, seen_original = a.broker.on_position, b.broker.on_position
+
+        async def slow(p):
+            await asyncio.sleep(1)  # e.g. waiting on TopstepX while holding its lock
+            await slow_original(p)
+
+        async def seen(p):
+            started.set()
+            await seen_original(p)
+
+        a.broker.on_position, b.broker.on_position = slow, seen
+        t0 = time.monotonic()
+        await inner._emit(inner.on_position, Position(7, a.contract.id, 1, 100.0))
+        await inner._emit(inner.on_position, Position(7, b.contract.id, -1, 100.0))
+        await asyncio.wait_for(started.wait(), 0.05)
+        assert time.monotonic() - t0 < 0.05
+        for lane in (a.broker, b.broker):
+            hub.drop(lane)
+            assert lane._pump is None and lane._events.empty()
+    run(go())
+
+
+def test_reconcile_checks_every_market_together():
+    import time
+    import types
+
+    ran = []
+
+    class SlowLane:
+        def __init__(self, name):
+            self.name = name
+
+        async def reconcile(self):
+            await asyncio.sleep(1)
+            ran.append(self.name)
+
+    async def go():
+        t0 = time.monotonic()
+        await LiveRunner._safe_reconcile(types.SimpleNamespace(lanes={"MNQ": SlowLane("MNQ"), "MES": SlowLane("MES")}))
+        return time.monotonic() - t0
+    took = run(go())
+    assert sorted(ran) == ["MES", "MNQ"] and took < 1.5
