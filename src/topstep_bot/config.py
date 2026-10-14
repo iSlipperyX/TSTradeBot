@@ -1028,12 +1028,12 @@ def env_key(raw: str) -> str | None:
 
 def read_text_any(path: Path) -> str:
     """config.yaml or .env as text, whichever way Windows saved it: UTF-8 with or without a BOM, or the
-    UTF-16 that PowerShell's > writes. Anything else is a ConfigError in plain words."""
+    UTF-16 that PowerShell's > writes. Line endings become \\n, as read_text gives them (Windows files end
+    lines with \\r\\n). Anything else is a ConfigError in plain words."""
     data = Path(path).read_bytes()
     try:
-        if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-            return data.decode("utf-16")
-        return data.decode("utf-8-sig")
+        text = data.decode("utf-16") if data.startswith((b"\xff\xfe", b"\xfe\xff")) else data.decode("utf-8-sig")
+        return text.replace("\r\n", "\n").replace("\r", "\n")
     except UnicodeDecodeError:
         raise ConfigError(f"{Path(path).name} is not saved as UTF-8 (PowerShell's > writes UTF-16): save it as UTF-8") from None
 
@@ -1042,7 +1042,7 @@ def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
     """Write a file so a crash or power cut leaves the old file or the new one, never half of one."""
     path = Path(path)
     part = path.with_name(path.name + ".part")
-    with open(part, "w", encoding=encoding, newline="") as f:  # newline="": the same bytes as write_text
+    with open(part, "w", encoding=encoding) as f:  # text mode: \n becomes \r\n on Windows, as write_text does
         f.write(text)
         f.flush()
         os.fsync(f.fileno())

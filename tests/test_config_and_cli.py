@@ -327,3 +327,17 @@ def test_a_locked_file_is_a_plain_not_saved(tmp_path, monkeypatch):
     monkeypatch.setattr("topstep_bot.config.clock.sleep", lambda s: None)
     with pytest.raises(ValueError, match=r"^Not saved: \.env is read-only"):
         update_env_file(tmp_path / ".env", {"TOPSTEPX_USERNAME": "me"})
+
+
+def test_a_windows_file_keeps_its_lines_through_a_save(tmp_path):
+    from topstep_bot.config import atomic_write_text, read_text_any
+    from topstep_bot.training import save_strategy
+
+    path = tmp_path / "config.yaml"
+    path.write_bytes(b"# mine\r\nmode: paper\r\n\r\nrisk:\r\n  risk_per_trade: 120   # keep me\r\n")  # Notepad's line endings
+    assert read_text_any(path) == "# mine\nmode: paper\n\nrisk:\n  risk_per_trade: 120   # keep me\n"
+    save_strategy(path, "orb", {})
+    text = read_text_any(path)
+    assert "\r" not in text and "\n\n\n" not in text and "risk_per_trade: 120   # keep me" in text
+    atomic_write_text(path, "a\nb\n")
+    assert path.read_text(encoding="utf-8") == "a\nb\n"
