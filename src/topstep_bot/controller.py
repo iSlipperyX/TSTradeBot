@@ -286,8 +286,12 @@ class BotProcess:
             return
         intent, self._intent = self._intent, None
         if intent == "stop":
-            self.state = "stopped"
-            self._event("info", f"{self.who} stopped ({reason})")
+            self.state = "stopped"  # not restarted: the owner must look at the account, a restart would not help
+            if note.get("open_position"):
+                self._event("error", f"{self.who} stopped with an OPEN POSITION at TopstepX - CHECK YOUR ACCOUNT "
+                                     f"({reason})", alert=True)
+            else:
+                self._event("info", f"{self.who} stopped ({reason})")
         elif intent == "restart":
             self.state = "restarting"
         elif intent == "hang":

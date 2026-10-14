@@ -88,6 +88,7 @@ class Controls:
     restart_requested: bool = False  # quiet daily maintenance restart (exit code 75)
     failure: str | None = None  # the bot stopped itself after an internal error (exit code 1)
     stop_reason: str = ""
+    open_position: bool = False  # it stopped with a position it could not close (the controller alerts)
 
     def request_stop(self, reason: str) -> None:
         if not self.stop_reason:
@@ -1280,9 +1281,10 @@ class LiveRunner:
                 try:
                     await c.orders.flatten_all("bot shutdown")
                 except Exception as exc:  # noqa: BLE001
-                    c.event("critical", f"Could not flatten on shutdown: {exc} - CHECK YOUR ACCOUNT")
+                    c.event("critical", f"Could not flatten on shutdown: {exc} - CHECK YOUR ACCOUNT", "error")
             if open_cores:
                 await asyncio.sleep(2)
+                await self._report_left_open()
         for task in self._tasks:
             task.cancel()
         for lane in list(self.lanes.values()):
@@ -1298,6 +1300,30 @@ class LiveRunner:
         await self.notifier.stop()
         await self.client.close()
         self.journal.close()
+
+    async def _report_left_open(self) -> None:
+        """After the shutdown flatten: if anything is still open (TopstepX refused or never answered the
+        close), the bot still exits - but says so loudly, and the exit note tells the controller to alert."""
+        still = [c for c in self.cores() if not c.orders.is_flat]
+        names = [c.contract.name for c in still]
+        if self.cfg.mode == "live" and self._shared_broker is not None:
+            try:
+                positions = await asyncio.wait_for(self._shared_broker.positions(), 5)
+            except Exception as exc:  # noqa: BLE001 - no answer: what the bot itself knows decides
+                log.warning("Could not check positions at shutdown: %s", exc)
+            else:  # TopstepX answered: its list decides
+                by_id = {c.contract.id: c for c in self.cores()}
+                open_ = [p for p in positions if p.size != 0]
+                still = [by_id[p.contract_id] for p in open_ if p.contract_id in by_id]
+                names = [by_id[p.contract_id].contract.name if p.contract_id in by_id else p.contract_id for p in open_]
+        if not names:
+            return
+        self.controls.open_position = True
+        self.controls.stop_reason = (f"stopped with an OPEN POSITION at TopstepX ({', '.join(names)}) - CHECK YOUR "
+                                     f"ACCOUNT ({self.controls.stop_reason or 'stop'})")
+        for c in still or self.cores()[:1]:
+            c.event("critical", self.controls.stop_reason + " - once it is closed, cancel any order of this market "
+                    "left in TopstepX by hand", "error")
 
     def _loop_ended(self, task: asyncio.Task) -> None:
         """A background loop must run until shutdown. If one dies, stop (and flatten) rather than keep

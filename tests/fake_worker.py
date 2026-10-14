@@ -5,6 +5,7 @@ Behaviour is driven by the environment / actions:
   FAKE_HANG=1        never write a heartbeat
   FAKE_EXIT=<code>   exit immediately with that code (e.g. 2 = config error, 3 = crash)
   FAKE_EXIT_ACCOUNT  only that account exits (with FAKE_EXIT)
+  FAKE_OPEN_ON_STOP=1  the stop could not close the position (exit note says so, exit code 0)
   action "stop"      graceful stop: exit note + exit code 0
   action "crash"     exit with code 3
   action "maint"     exit with code 75 (daily maintenance restart)
@@ -46,7 +47,8 @@ async def main() -> int:
             await asyncio.sleep(float(os.environ.get("FAKE_TRAIN_SECONDS", "0")))
             return "trained"
         if name == "stop":
-            write_exit_note(0, f"stop requested from {payload.get('source')}")
+            write_exit_note(0, f"stop requested from {payload.get('source')}",
+                            open_position=os.environ.get("FAKE_OPEN_ON_STOP") == "1")
             done.set_result(0)
             return "stopping"
         if name in ("crash", "maint"):

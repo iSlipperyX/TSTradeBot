@@ -757,7 +757,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                           f"Details: {log_dir} (errors.log)")
         return 1
     code = RESTART_EXIT_CODE if controls.restart_requested else 0
-    write_exit_note(code, reason)
+    write_exit_note(code, reason, open_position=controls.open_position)
     if not supervised:
         console.print(f"Stopped ({reason}). Logs: {log_dir}")
     return code

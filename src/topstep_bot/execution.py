@@ -90,6 +90,7 @@ class ManagedTrade:
     # Closes sent because a stop or target filled (one per order is enough), and when the last close went out.
     close_sent_for: set[int] = field(default_factory=set)
     filled_orders: set[int] = field(default_factory=set)  # our stop/target orders that reported fills
+    close_refused: bool = False  # TopstepX refused the close: the position is certainly open, both legs kept
     last_close_at: datetime | None = None
     exit_price: float | None = None
     exit_reason: str = ""
@@ -703,6 +704,7 @@ class OrderManager:
             t.entry_price, t.filled_size = t.entry_price or pos.avg_price, t.filled_size or abs(pos.size)
         if t.state == TradeState.OPEN:
             t.exit_reason = "position on the wrong side"
+            await self._safe_cancel(t.target_order_id)  # on the wrong side too: it would add to the position
             await self._exit_locked(t, t.exit_reason)
         else:  # already exiting: the close that was sent did not end it
             await self._safe_cancel(t.target_order_id)
@@ -758,10 +760,29 @@ class OrderManager:
         if t.exit_ref is None:
             t.exit_ref = self.last_price
         t.exit_reason = t.exit_reason or reason
-        await self._safe_cancel(t.target_order_id)
-        # Never ask the broker here (the lock is held): say what the bot knows.
-        await self._close_now(t, first=True, failed=("critical", "protective stop left in place" if t.stop_order_id is not None
-                                                     else "NO protective stop is working - retrying"))
+        # The close goes first. Refused by TopstepX, the position is certainly still there: the stop AND the
+        # target stay (nothing else would manage the profit side). Gone through or timed out (it may have
+        # gone through), the target is cancelled - working on a flat account it would open a new position.
+        now = self.clock()
+        try:
+            self._count_action()
+            await self.broker.close_position(self.contract.id)
+        except Exception as exc:  # noqa: BLE001 - reconcile retries the close
+            if may_have_reached_broker(exc):
+                t.last_close_at = now
+                await self._safe_cancel(t.target_order_id)
+                # Never ask the broker here (the lock is held): say what the bot knows.
+                self._event("critical", f"Close position failed ({exc}); " + ("protective stop left in place"
+                            if t.stop_order_id is not None else "NO protective stop is working - retrying"))
+            else:
+                t.close_refused = True
+                self._event("critical", f"Close position REFUSED by TopstepX ({exc}); the position is still open "
+                            + ("with its stop and target" if t.target_order_id is not None else "with its stop")
+                            + (" working" if t.stop_order_id is not None else " - NO protective stop is working")
+                            + "; retrying")
+        else:
+            t.last_close_at = now
+            await self._safe_cancel(t.target_order_id)
         # The protective stop is deliberately kept until the broker reports the position flat
         # (handle_position / reconcile cancel it then), so the trade is never unprotected.
 
@@ -790,6 +811,9 @@ class OrderManager:
         t.last_close_at = t.exit_sent_at = now
         if order_id is not None:
             t.close_sent_for.add(order_id)
+        if t.close_refused:  # the target was kept while the position could not be closed; it can go now
+            t.close_refused = False
+            await self._safe_cancel(t.target_order_id)
         return True
 
     async def flatten_all(self, reason: str) -> None:
@@ -797,12 +821,15 @@ class OrderManager:
         async with self._lock:
             self._version += 1
             await self._exit_locked(self.trade, reason)
-            keep = self.trade.stop_order_id if self.trade else None
+            t = self.trade
+            keep = {t.stop_order_id} if t else set()
+            if t is not None and t.close_refused:
+                keep.add(t.target_order_id)  # the position is still there: its target still manages it
             try:
                 for order in await self.broker.open_orders():
                     # Leave market orders alone (one may be the closing order) and our protective stop
                     # (cancelled once the position is confirmed flat).
-                    if order.contract_id == self.contract.id and order.type != OrderType.MARKET and order.id != keep:
+                    if order.contract_id == self.contract.id and order.type != OrderType.MARKET and order.id not in keep:
                         await self._safe_cancel(order.id)
             except Exception as exc:  # noqa: BLE001
                 self._event("error", f"Could not list open orders while flattening: {exc}")
