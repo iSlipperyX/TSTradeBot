@@ -449,7 +449,7 @@ def test_ask_explains_the_new_parts_from_the_guide(question, section, setting):
 def test_version_4_0_is_documented_honestly():
     from topstep_bot import __version__
 
-    assert __version__ == "4.0.0" and 'version = "4.0.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert __version__.startswith("4.0.") and f'version = "{__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     notes = re.search(r"^## 4\.0\.0\b.*?$\n(.*?)(?=^## |\Z)", changelog, re.M | re.S).group(1)
     assert "### Honest notes" in notes and "no bot can guarantee" in notes.lower()
@@ -462,3 +462,10 @@ def test_version_4_0_is_documented_honestly():
     # the old tabs are gone from the guide's directions (history notes and the table of where they went aside)
     for old in ("Ideas", "Market", "Simulations", "AI Coach"):
         assert not re.search(rf"\b{old} tab\b", guide_text.split("**New in 3.0")[1]), old
+
+
+def test_version_4_0_1_is_documented_honestly():
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    notes = re.search(r"^## 4\.0\.1\b.*?$\n(.*?)(?=^## |\Z)", changelog, re.M | re.S).group(1)
+    assert "### Settings to look at" in notes and "mll_floor_override" in notes
+    assert "### Honest notes" in notes and "no bot can guarantee" in notes.lower()

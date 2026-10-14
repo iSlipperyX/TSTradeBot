@@ -3,6 +3,68 @@
 Every version of the bot, newest first. The release workflow publishes each version's section as its
 GitHub release notes.
 
+## 4.0.1 — safer under a bad connection, with several markets and with several accounts
+
+A fix release: nothing about how the bot picks or sizes trades changed.
+
+### Orders under a bad connection
+
+- A stop, target or close whose answer was lost no longer turns into a second stop or a forgotten
+  exit: the bot checks TopstepX before trying again, and only ever keeps one stop per trade.
+- A trade that closes in pieces is booked once, with the right exit price and size.
+- A close that TopstepX refuses keeps both the stop and the target working until a close goes through,
+  and says so as a critical alert.
+- No new entry is sent while an earlier entry's outcome is still unknown.
+- Each market now handles its own broker messages, so a market waiting on a slow answer no longer
+  holds up another market's stop. The bot checks every market together, and a failed cancel, change or
+  close is tried again one second later instead of waiting up to about 14 seconds.
+- A network outage now writes one short line to the log instead of a long error report.
+
+### Stopping, restarting and updating
+
+- A Stop that could not close a position says the position is still open (dashboard, Telegram and the
+  log), instead of looking like a normal stop.
+- A market dropped while it still had a trade is remembered across a restart, keeps managing that trade,
+  and goes once it is flat. A position the bot finds that no market owns is handled by
+  `execution.orphan_position_policy`.
+- After an update, only the accounts that were running come back, and the message names them.
+- The emergency `topstep-bot flatten` command keeps going when one call fails, closes positions before
+  cancelling orders, checks again, and ends with **Flat**, **STILL OPEN** or **NOT CHECKED** for each
+  account. It does not halt a running bot: use **Flatten & halt** or `/flatten` for that.
+
+### Settings and config files
+
+- `account.mll_floor_override` is now a one-time sync: a new number is used once, then the bot follows
+  its own trailing floor. A number left in config.yaml can no longer give the bot more room than Topstep
+  allows on a later start. A number lower than the bot's own floor is used with a warning (after a
+  Topstep reset that is right; otherwise check it).
+- The coach's and the Simulation Lab's **Apply** change only the account being reviewed, never raise
+  another account's risk, and keep the strategy's own settings when the strategy stays the same.
+- config.yaml: a section written twice, or a time typed as a bare number (`8`, `830`), is now a clear
+  message instead of being quietly ignored or read as a different time. Unquoted `14:30` still works.
+- config.yaml and `.env` saved by PowerShell (UTF-16) or with a BOM are read; `export KEY=value` and a
+  comment after a value work in `.env`. Saves are written so a crash or power cut never leaves half a
+  file, and a read-only or locked file says **Not saved** in plain words.
+- Phone dashboard: the market list, **Switch** and **Download every market** now work on the phone;
+  anything that stays on the PC says "Only available on the PC dashboard" instead of "not found".
+
+### Settings to look at
+
+- **`account.mll_floor_override`**: if it is in your config.yaml, check it matches the Maximum Loss
+  Limit on your Topstep dashboard, or remove it and let the bot follow its own floor.
+- **`risk.slippage_ticks`**: 8 to 10 ticks is more realistic than the default for the index micros on
+  a fast day, so paper results and sizing don't look better than live.
+- Until you have watched this version for a few days: one account and one market, keep
+  `execution.orphan_position_policy: flatten`, and after a Stop with a trade open, look at TopstepX.
+
+### Honest notes
+
+- Every fix was tested against a simulated TopstepX that loses messages and times out, not against the
+  real one. In 4,000 simulated bad-connection days 5 still end with a stop left working for a short
+  while after the position closed: that is the price of keeping the stop until TopstepX confirms the
+  position is flat, which is a choice for you to make (it is the safer side).
+- No bot can guarantee passing the Combine or making money.
+
 ## 4.0.0 — several markets, a probability calculator and a simpler dashboard
 
 ### Several markets at once
