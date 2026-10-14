@@ -101,6 +101,7 @@ class LabService:
         self.error: str | None = None
         self.taught: list[dict] = []
         self.started: float | None = None
+        self._coverage: dict[str, tuple[float, Any, list]] = {}  # account -> (when, data.last_run, rows)
 
     @property
     def running(self) -> bool:
@@ -145,7 +146,13 @@ class LabService:
         if account and account != "all":
             bot = self.ctl.pick(account)[0]
         cfg = self.ctl.account_cfg(bot.account)
-        return {"markets": coverage(cfg), "current": current_symbol(cfg), "usual": cfg.instrument.symbol,
+        # The history summary reads 51 files: reuse it for 30 s, unless a download has finished since.
+        # The rest stays live (it changes with a switch and differs per account).
+        when, last_run, rows = self._coverage.get(bot.account, (0.0, None, []))
+        if time.time() - when >= 30 or last_run != self.data.last_run:
+            rows = coverage(cfg)
+            self._coverage[bot.account] = (time.time(), self.data.last_run, rows)
+        return {"markets": rows, "current": current_symbol(cfg), "usual": cfg.instrument.symbol,
                 "today": load_today(cfg), "data": {**self.data.status(), "note": self.data_note}}
 
     # ---------------------------------------------------------------- price history

@@ -1173,7 +1173,9 @@ button.src:hover:not(:disabled) { border-color:var(--accent); background:var(--s
       <p class="hint" id="ph-hint">Opens this dashboard inside Telegram on your phone when you're away from the PC. Only your own Telegram
         account can open it: Telegram signs you in and everyone else is refused. The bot keeps running and trading on this PC from your own
         internet connection; a secure Cloudflare link carries only the dashboard to your phone, with no router changes. On the phone you can
-        do everything you can here except switch to LIVE and turn phone access on. In Telegram, /dashboard opens it and /dashboard off turns it off.</p>
+        run, pause, flatten and switch markets, read the logs, ask questions, run simulations and the coach, and switch back to Paper.
+        Keys, accounts and Telegram (the Setup tab), switching to LIVE, turning phone access on, the coach's key, settings and Apply,
+        and saving a playbook stay on the PC. In Telegram, /dashboard opens it and /dashboard off turns it off.</p>
     </div>
     <div class="panel" style="margin-top:14px" id="updates">
       <div class="row"><h2 style="margin:0">Updates</h2><span class="spacer"></span><button class="small" id="upd-check">Check now</button></div>
@@ -1538,6 +1540,8 @@ async function post(path, body) {
   let data = {}; try { data = await r.json(); } catch (e) { data = {ok: r.ok}; }
   // Cloudflare stops waiting after 100 seconds; a long job (training, learning) carries on at the PC
   if (r.status === 524) data = {ok: true, message: "Still working on it at the PC - this page shows when it is done."};
+  // The phone link serves only some routes (phone_access.py); on the PC a 404 means a real mismatch and stays "not found"
+  if (PHONE && r.status === 404) data = {ok: false, pc_only: true, message: "Only available on the PC dashboard."};
   if (!r.ok && !data.message) data = {ok: false, message: `The controller refused that request (${r.status}). Reload this page and try again.`};
   return data;
 }
@@ -2353,12 +2357,17 @@ async function loadMarkets(force) {
   mkBusy = true;
   try {
     const d = await post("markets");
-    if (d.ok !== false) { MK = d; MK.account = accName(); mkAt = Date.now(); renderMarketPick(); if (LAB) shown("simulations", renderLab); }
+    if (d.pc_only) MK = {refused: true, markets: []};  // remembered like an answer, so it asks once a minute, not every 2 s
+    else if (d.ok !== false) MK = d;
+    else return;  // a lost connection: ask again next time, or the list would freeze after one outage
+    MK.account = accName(); mkAt = Date.now(); renderMarketPick(); if (LAB) shown("simulations", renderLab);
   } finally { mkBusy = false; }
 }
 const runningMarkets = () => (S && S.bot && S.bot.markets) || null;
 function renderMarketPick() {
   if (!MK) return;
+  if (MK.refused) { tk("market").innerHTML = ""; tk("switch").hidden = tk("add").hidden = tk("usual").hidden = true;
+    tk("markethelp").textContent = "The market list is only available on the PC."; return; }
   const mv = runningMarkets(), lanes = mv ? mv.lanes.map(l => l.symbol) : [];
   const current = (mv && mv.focus) || MK.current;
   const sel = tk("market"), keep = sel.dataset.touched ? sel.value : current, groups = {};
@@ -3705,6 +3714,8 @@ function renderLabData(d) {
   const notes = [dl.note, dl.last_run ? `Last download ${when(dl.last_run)}.` : "", d.nightly && d.nightly.on ? `Every weekday at ${d.nightly.time} CT the bot refreshes every market and runs the lab on all of them.` : ""];
   $("lab-dl-note").textContent = notes.filter(Boolean).join(" ");
   if (!MK) { $("lab-mk-sum").textContent = "Loading the market list…"; loadMarkets(false); return; }
+  if (MK.refused) { $("lab-mk-sum").textContent = "The market list is only available on the PC."; $("lab-mk-count").textContent = "";
+    $("lab-mk").querySelector("tbody").innerHTML = ""; return; }
   const ms = MK.markets, have = ms.filter(m => m.days > 0);
   $("lab-mk-count").textContent = ms.length;
   $("lab-mk-sum").textContent = `History on this PC for ${have.length} of ${ms.length} markets Topstep permits`

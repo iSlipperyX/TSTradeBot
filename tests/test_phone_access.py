@@ -465,3 +465,47 @@ def test_telegram_set_up_again_signs_everyone_out(tmp_path):
         await ctl.restart_telegram()
         assert ctl.phone.state == "off" and ctl.phone.enabled  # off until Telegram is back; the choice is kept
     scenario(tmp_path, body)
+
+
+# Routes the page calls that stay on the PC on purpose: keys, accounts and Telegram (the Setup tab), turning phone
+# access on, and the coach's key, settings and Apply (and saving a playbook).
+PC_ONLY = {"setup/accounts/check", "setup/accounts/remove", "setup/accounts/save", "setup/ai", "setup/autostart",
+           "setup/discord", "setup/github_token", "setup/keys/add", "setup/keys/remove", "setup/login", "setup/save",
+           "setup/state", "setup/telegram/control", "setup/telegram/find", "setup/telegram/remove", "setup/telegram/save",
+           "setup/telegram/test", "phone/on", "lab/apply", "coach/key", "coach/key/remove", "coach/settings",
+           "coach/proposal", "coach/lesson/forget"}
+
+
+def test_every_route_the_page_calls_is_served_on_the_phone_or_pc_only_on_purpose(tmp_path):
+    import re
+    from importlib import resources
+
+    from topstep_bot.phone_access import REMOTE_ROUTES
+
+    html = resources.files("topstep_bot.dashboard").joinpath("index.html").read_text(encoding="utf-8")
+    paths = set(re.findall(r'\b(?:post|run)\("([^"]+)"', html))
+    ctl = make(tmp_path)
+    wild = [p[:-1] for _, p in REMOTE_ROUTES if p.endswith("*")]
+    pc_only = set()
+    for path in sorted(paths):
+        route = "/api/" + path
+        assert ctl.server._route("POST", route) is not None, route  # the page never calls a route that doesn't exist
+        if ("POST", route) not in REMOTE_ROUTES and not any(route.startswith(w) for w in wild):
+            pc_only.add(path)
+    assert pc_only == PC_ONLY  # a new route must be put on the phone, or here, on purpose
+    assert not {"markets", "market/switch", "lab/download"} & PC_ONLY
+
+
+def test_the_phone_gets_the_market_list_switch_and_download(tmp_path):
+    async def body(ctl, pc):
+        await turn_on(ctl, pc)
+        async with phone_client(ctl) as phone:
+            token = (await sign_in(phone)).json()["token"]
+        ctl.lab.data.running = True  # "Already downloading": no real login or download in a test
+        async with phone_client(ctl, token) as phone:
+            r = await phone.post("/api/markets", json={})
+            assert r.status_code == 200 and len(r.json()["markets"]) == 51
+            assert (await phone.post("/api/market/switch", json={})).status_code == 200
+            r = await phone.post("/api/lab/download", json={})
+            assert r.status_code == 200 and "Already downloading" in r.json()["message"]
+    scenario(tmp_path, body)

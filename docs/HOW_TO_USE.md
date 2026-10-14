@@ -1231,8 +1231,11 @@ the PC or the bot restarts, phone access comes back on by itself and sends a fre
 **Turn it off** with **Turn off** on the Settings tab (on the PC or the phone) or `/dashboard off`.
 The link stops at once.
 
-What you can do from the phone: everything on the dashboard **except** switching to **LIVE** and
-turning phone access on. Those two only work at the PC. Switching back to Paper works from the phone.
+What you can do from the phone: run, pause, flatten and switch markets, read the logs, ask
+questions, run simulations and the coach, and switch back to Paper. Keys, accounts and Telegram
+(the Setup tab), switching to **LIVE**, turning phone access on, the coach's key, settings and
+Apply, and saving a playbook stay on the PC. The phone says "Only available on the PC dashboard"
+when you try one of those.
 Confirmations appear as a box at the bottom of the screen; every action is listed in Activity as
 *phone (Telegram)*.
 
