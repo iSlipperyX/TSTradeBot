@@ -157,16 +157,20 @@ def load_today(cfg: BotConfig, now: datetime | None = None) -> dict | None:
     if (now or datetime.now(UTC)) >= until or data.get("symbol") not in SPECS:
         return None
     data["markets"] = [m for m in data.get("markets") or [data["symbol"]] if m in SPECS] or [data["symbol"]]
+    # Markets dropped while they held a trade: a restart must manage them until they are flat.
+    data["closing"] = [m for m in data.get("closing") or [] if m in SPECS and m not in data["markets"]]
     return data
 
 
 def set_today(cfg: BotConfig, symbol: str, source: str, now: datetime | None = None,
-              markets: list[str] | None = None) -> dict:
-    """Trade ``symbol`` (and, trading several at once, all of ``markets``) for the rest of the trading day."""
+              markets: list[str] | None = None, *, closing: list[str] | None = None) -> dict:
+    """Trade ``symbol`` (and, trading several at once, all of ``markets``) for the rest of the trading day.
+    ``closing``: markets being dropped that still hold a trade (taken up again by a restart until flat)."""
     now = now or datetime.now(UTC)
     day, until = _switch_day(cfg, now)
     data = {"symbol": symbol.upper(), "day": day, "until": until.isoformat(), "at": now.isoformat(timespec="minutes"),
-            "source": source, "markets": [m.upper() for m in (markets or [symbol])]}
+            "source": source, "markets": [m.upper() for m in (markets or [symbol])],
+            "closing": [m.upper() for m in (closing or [])]}
     path = today_path(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=1), encoding="utf-8")

@@ -185,6 +185,7 @@ class Lane:
         self.market: MarketStream | None = None
         self.positions: PositionBook | None = None  # hedge guard
         self.closing: str | None = None  # dropping this market once it is flat (no new trades meanwhile)
+        self.reconciled = False  # its view has been checked against TopstepX at least once
         self._last_bar_ts: datetime | None = None
         self._last_price_at: datetime | None = None
         self._tasks: list[asyncio.Task] = []
@@ -748,6 +749,8 @@ class Lane:
             await self.core.orders.reconcile()
         except Exception as exc:  # noqa: BLE001
             log.warning("Reconcile failed (%s): %s", self.symbol, exc)
+        else:
+            self.reconciled = True
 
 
 # ======================================================================== the account
@@ -790,6 +793,7 @@ class LiveRunner:
         self.market_pick = None  # market_pick.Pick when instrument.auto_pick chose the market
         self.market_today: dict | None = None  # the market(s) you switched the account to for today
         self._floor_warning: str | None = None  # said once the first market is open (see mll_floor_for)
+        self._closing_at_start: set[str] = set()  # markets dropped in a trade before a restart (market_today.json)
 
     @staticmethod
     def now() -> datetime:
@@ -923,11 +927,16 @@ class LiveRunner:
 
         for i, symbol in enumerate(symbols):
             try:
-                await self._open_lane(symbol, primary=i == 0, balance=acct.balance, today=today)
+                lane = await self._open_lane(symbol, primary=i == 0, balance=acct.balance, today=today)
             except Exception as exc:
                 if i == 0 or unreachable(exc):
                     raise
                 log.warning("Could not add %s: %s", symbol, exc)
+                continue
+            if symbol in self._closing_at_start:
+                self._mark_closing(lane, "dropped before the restart")
+        ignored_roots = await self._unmanaged_positions(today, acct.balance) if cfg.mode == "live" else set()
+        self._remove_stale_position_files(ignored_roots)
         self.focus = symbols[0]
         if self._floor_warning and self.core is not None:
             self.core.event("warning", self._floor_warning)
@@ -963,6 +972,77 @@ class LiveRunner:
         if self.book is not None and lane.core is not None:
             self.book.unregister(lane.core.risk.lane)
 
+    @staticmethod
+    def _mark_closing(lane: Lane, why: str) -> None:
+        lane.closing = why
+        if lane.core:
+            lane.core.closing = f"{lane.symbol} is being dropped ({why})"
+
+    async def _unmanaged_positions(self, today: date, balance: float) -> set[str]:
+        """Safety net at start-up (live): a position at TopstepX in a market no lane trades (market_today.json
+        missing or old, or the controller switched markets while the bot was stopped) would be managed by
+        nobody - its stop could fill and its target open a new position. Follow orphan_position_policy.
+        Returns the roots of positions left alone (``ignore``), whose hedge-guard files must stay."""
+        from topstep_bot import market_pick as mp
+        from topstep_bot.instruments import SPECS
+
+        ignored: set[str] = set()
+        try:
+            positions = await self.client.search_open_positions(self.account.id)
+            ours = {ln.contract.id for ln in self.lanes.values() if ln.contract}
+            for p in positions:
+                if not p.size or p.contract_id in ours:
+                    continue
+                market = p.contract_id.split(".")[3] if p.contract_id.count(".") >= 4 else p.contract_id
+                policy = self.cfg.execution.orphan_position_policy
+                self.core.event("critical", f"{market}: a position of {p.size} at TopstepX is in a market the bot is "
+                                            f"not trading - " + {"flatten": "closing it now",
+                                                                 "adopt": "managing it until it is closed",
+                                                                 "ignore": "leaving it alone (orphan_position_policy: "
+                                                                           "ignore) - CHECK YOUR ACCOUNT"}.get(policy, policy),
+                                "error")
+                if policy == "flatten":
+                    try:
+                        await self.client.close_position(self.account.id, p.contract_id)
+                    except Exception as exc:  # noqa: BLE001 - say so; the owner must look
+                        self.core.event("critical", f"{market}: could not close it ({exc}) - CHECK YOUR ACCOUNT", "error")
+                    for o in [o for o in await self.client.search_open_orders(self.account.id) if o.contract_id == p.contract_id]:
+                        try:
+                            await self.client.cancel_order(self.account.id, o.id)
+                        except Exception as exc:  # noqa: BLE001 - one failed cancel must not stop the others
+                            self.core.event("warning", f"{market}: could not cancel order {o.id} ({exc})")
+                elif policy == "adopt":
+                    twin = next((s for s in self.lanes if mp.same_product(market, s)), None)
+                    why = ("it is not a market the bot knows" if market not in SPECS else
+                           f"{twin} is the same product" if twin else None)
+                    if why is None:
+                        try:
+                            lane = await self._open_lane(market, primary=False, balance=balance, today=today)
+                        except Exception as exc:  # noqa: BLE001
+                            why = f"it could not be opened ({exc})"
+                        else:
+                            self._mark_closing(lane, "position found at start-up")
+                    if why:
+                        self.core.event("critical", f"{market}: not managed because {why} - CHECK YOUR ACCOUNT", "error")
+                else:
+                    ignored.add(market)
+        except Exception as exc:  # noqa: BLE001 - a failed look-up must not stop the start
+            log.warning("Could not check for positions in markets the bot is not trading: %s", exc)
+            if self.core:
+                self.core.event("warning", f"Could not check TopstepX for positions in other markets ({exc})")
+        return ignored
+
+    def _remove_stale_position_files(self, keep_roots: set[str]) -> None:
+        """This account's hedge-guard files for markets it no longer trades (a market dropped in a trade
+        before a crash leaves one: Lane.stop only releases it when flat). Other accounts' files stay."""
+        folder = self.cfg.data_path / "positions"
+        account = self.cfg.active_account or "main"
+        roots = {(ln.contract.root if ln.contract else None) or ln.symbol for ln in self.lanes.values()} | keep_roots
+        for path in folder.glob(f"{account}~*.json"):
+            if path.stem.split("~", 1)[1] not in roots:
+                with contextlib.suppress(OSError):
+                    path.unlink()
+
     def _legacy_position_file(self) -> None:
         """Before markets had their own hedge-guard files, the account had one: remove it so it can't block anything."""
         with contextlib.suppress(OSError):
@@ -979,7 +1059,11 @@ class LiveRunner:
             self.market_today = today
             log.info("Trading %s today: switched by %s at %s", ", ".join(today["markets"]), today.get("source", "you"),
                      today.get("at"))
-            return list(dict.fromkeys([today["symbol"], *today["markets"]]))[:MAX_MARKETS]
+            symbols = list(dict.fromkeys([today["symbol"], *today["markets"]]))[:MAX_MARKETS]
+            # Markets dropped while in a trade come back, to be managed until flat (they don't count
+            # toward MAX_MARKETS and take no new trades).
+            self._closing_at_start = {m for m in today.get("closing") or [] if m not in symbols}
+            return symbols + [m for m in today.get("closing") or [] if m not in symbols]
         if cfg.instrument.auto_pick:
             await self._pick_market()
         return mp.lane_symbols(cfg, cfg.instrument.symbol, self.market_pick)
@@ -1177,7 +1261,8 @@ class LiveRunner:
         if not live:
             return
         try:
-            self.market_today = mp.set_today(self.cfg, live[0], source, self.now(), markets=live)
+            self.market_today = mp.set_today(self.cfg, live[0], source, self.now(), markets=live,
+                                             closing=[s for s, ln in self.lanes.items() if ln.closing])
         except OSError as exc:
             log.warning("Could not save today's markets: %s", exc)
 
@@ -1427,10 +1512,13 @@ class LiveRunner:
             log.exception("Clock error (%s)", lane.symbol)
 
     async def _drop_closed_markets(self) -> None:
-        for lane in [ln for ln in self.lanes.values() if ln.closing and ln.core and ln.core.orders.is_flat]:
+        # Only once its first reconcile has looked at TopstepX: a lane opened after a restart starts "flat"
+        # until it recovers its trade.
+        for lane in [ln for ln in self.lanes.values() if ln.closing and ln.reconciled and ln.core and ln.core.orders.is_flat]:
             async with self._lane_lock:
                 if lane.symbol in self.lanes and len(self.lanes) > 1:
                     await self._drop(lane)
+                    self._save_markets(lane.closing or "closed")  # market_today.json stops listing it
                     self.core.event("info", f"Stopped trading {lane.symbol} ({lane.closing}); its trade is closed.")
 
     async def _reconcile_loop(self) -> None:
