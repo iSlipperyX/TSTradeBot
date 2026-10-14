@@ -1131,6 +1131,12 @@ account:
 For an Express Funded Account after your first payout, Topstep sets the MLL to $0 — set
 `mll_floor_override: 0`.
 
+This is a one-time sync. The bot records the number the first time it sees it and from then on follows
+its own trailing floor, so leaving the line in the file never pulls the floor back down on a later
+start. To sync again, type the new number. A number that was already in the file before version 4.0.1
+is ignored with a warning when the bot has learned a floor of its own (it may be months old). A new
+number lower than the bot's floor is applied once, with a warning naming both.
+
 Topstep changes its rules from time to time. Check help.topstep.com and your TopstepX Risk Settings,
 and adjust the config if anything differs: a lower position limit goes in `risk.max_contracts`, a
 different Daily Loss Limit in `account.topstep_daily_loss_limit` (a dollar amount).
@@ -1917,7 +1923,7 @@ account:
   account_id: null             # which TopstepX account (set by setup)
   account_name: null           # alternative to account_id
   starting_balance: null       # default: plan size (combine/practice) or 0 (express)
-  mll_floor_override: null     # sync with Topstep's dashboard
+  mll_floor_override: null     # one-time sync with Topstep's dashboard (applied once per new number)
   topstep_daily_loss_limit: null  # true = your plan's optional DLL ($1,000/$2,000/$3,000), or a dollar amount
   payout_path: standard        # Express Funded payout path: standard | consistency
   login: null                  # which stored API key (section 30); default: the main key
@@ -2300,7 +2306,7 @@ not one per try.
 not be read, for example after a power cut or a sync tool (OneDrive, Dropbox) overwrote it. The bot
 kept it as `….damaged-<time>` and started a new one, so it still runs. The journal is where the bot
 remembers your trailing Maximum Loss Limit: compare the MLL the dashboard shows with the one on
-TopstepX and, if they differ, set `account.mll_floor_override` to TopstepX's value. In live mode new
+TopstepX and, if they differ, type TopstepX's value as `account.mll_floor_override` (applied once). In live mode new
 trades stay paused until you press **Resume**. Keep the data folder out of synced folders.
 
 **"Could not cancel order ... will check again" / "Entry skipped: earlier order(s) ... may still be
@@ -2317,7 +2323,9 @@ problem. The bot closes it rather than protect it with orders meant for the othe
 **A position the bot didn't open was closed** — That is `orphan_position_policy: flatten`. Don't
 trade manually on the bot's account, or change the policy.
 
-**The bot's MLL floor differs from Topstep's** — Set `account.mll_floor_override` to Topstep's value.
+**The bot's MLL floor differs from Topstep's** — Type Topstep's value as `account.mll_floor_override`.
+The bot applies a new number once and then follows its own trailing floor; to sync again, change the
+number.
 
 **"Native brackets rejected"** in the log — You set `use_native_brackets: true` without enabling
 "Auto OCO Brackets" in TopstepX. The bot falls back to placing its own stop; set the option back

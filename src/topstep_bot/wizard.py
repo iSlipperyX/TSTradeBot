@@ -139,7 +139,7 @@ account:
 {account_line}
 {dll_line}
   payout_path: {payout_path}         # Express Funded payout path: standard (5 winning days) or consistency
-  # mll_floor_override: 48500    # copy your current Max Loss Limit from the Topstep dashboard to sync the bot
+  # mll_floor_override: 48500    # one-time sync: type the Max Loss Limit from your Topstep dashboard; applied once
 
 instrument:
   symbol: {symbol}                # MNQ, MES, NQ, ES, M2K, RTY, MYM, YM, MGC, GC, MCL, CL

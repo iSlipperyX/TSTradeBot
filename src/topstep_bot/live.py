@@ -37,6 +37,7 @@ from pathlib import Path
 
 import httpx
 
+from topstep_bot import fmt
 from topstep_bot.api.realtime import MarketStream
 from topstep_bot.api.rest import ProjectXClient, ProjectXError
 from topstep_bot.bars import floor_time
@@ -113,6 +114,41 @@ async def select_account(client: ProjectXClient, cfg: BotConfig) -> Account:
         names = ", ".join(f"{a.name} (id {a.id})" for a in accounts)
         raise SetupError(f"Configured account not found. Available: {names}")
     return match[0]
+
+
+def mll_floor_for(journal: Journal, label: str, override: float | None,
+                  today: date | None = None) -> tuple[float | None, str]:
+    """The trailing Maximum Loss Limit floor to start with, and a note saying where it came from.
+
+    ``account.mll_floor_override`` is a one-time sync, never a standing value: a number the bot has not
+    seen before is applied once and remembered; after that the bot follows its own trailing floor (which
+    only moves up). A number that was already in config.yaml before the bot remembered overrides is
+    ignored when the bot has a floor of its own - it may be months old, and putting it back would give the
+    bot more room than Topstep allows. To re-sync, type a different number. The note never repeats the
+    floor itself (callers print it next to the note)."""
+    saved = journal.get_state(f"mll_floor:{label}")
+    if override is None:
+        return saved, "learned earlier" if saved is not None else "not known yet"
+    seen = journal.get_state(f"mll_floor_override_applied:{label}")
+    seen_at = journal.get_state(f"mll_floor_override_applied_at:{label}")
+
+    def remember() -> None:
+        journal.set_state(f"mll_floor_override_applied:{label}", override)
+        journal.set_state(f"mll_floor_override_applied_at:{label}", (today or date.today()).isoformat())
+
+    if seen is None and saved is not None:
+        remember()
+        return saved, (f"mll_floor_override {fmt.money(override)} was already in config.yaml before this version; the "
+                       f"bot keeps its learned floor. To force a sync, change the number.")
+    if seen is not None and float(seen) == float(override):
+        note = f"its own trailing floor since mll_floor_override was applied on {seen_at or 'an earlier start'}"
+        return (saved if saved is not None else override), note
+    journal.set_state(f"mll_floor:{label}", override)
+    remember()
+    if saved is not None and override < saved:
+        return override, (f"mll_floor_override {fmt.money(override)} applied once; it LOWERED the bot's floor from "
+                          f"{fmt.money(saved)} - check it matches the MLL in your Topstep dashboard")
+    return override, f"mll_floor_override {fmt.money(override)} applied once (synced from config.yaml)"
 
 
 async def resolve_contract(client: ProjectXClient, cfg: BotConfig) -> Contract:
@@ -753,6 +789,7 @@ class LiveRunner:
         self._checked_in: date | None = None
         self.market_pick = None  # market_pick.Pick when instrument.auto_pick chose the market
         self.market_today: dict | None = None  # the market(s) you switched the account to for today
+        self._floor_warning: str | None = None  # said once the first market is open (see mll_floor_for)
 
     @staticmethod
     def now() -> datetime:
@@ -856,10 +893,11 @@ class LiveRunner:
             self.wallet = PaperWallet(paper_balance)
             acct = Account(1, label, self.wallet.balance, can_trade=True, simulated=True)
         plan = PLANS[cfg.account.plan]
-        floor = self.journal.get_state(f"mll_floor:{label}")
-        if cfg.account.mll_floor_override is not None:
-            floor = cfg.account.mll_floor_override
+        floor, note = mll_floor_for(self.journal, label, cfg.account.mll_floor_override)
         self.tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
+        log.info("Maximum Loss Limit floor %s (%s)", fmt.money(self.tracker.floor), note)
+        if "already in config.yaml" in note or "LOWERED" in note:
+            self._floor_warning = f"Maximum Loss Limit floor {fmt.money(self.tracker.floor)}: {note}"
         self.book = AccountBook(shared=True)
 
         # Today's closed trades so far, so a mid-day restart keeps the day's P&L, trade count,
@@ -891,6 +929,8 @@ class LiveRunner:
                     raise
                 log.warning("Could not add %s: %s", symbol, exc)
         self.focus = symbols[0]
+        if self._floor_warning and self.core is not None:
+            self.core.event("warning", self._floor_warning)
         self._report_damaged_journal()
         self._apply_ramp_up()
         return self.core
@@ -951,8 +991,8 @@ class LiveRunner:
         core = self.core
         text = (f"The trade journal was damaged and has been set aside as {self.journal_damaged.name}; a new one was "
                 f"started. The bot's record of the trailing Maximum Loss Limit is gone (it now assumes "
-                f"${core.tracker.floor:,.2f}): compare it with the MLL on TopstepX and, if it differs, set "
-                "account.mll_floor_override in config.yaml.")
+                f"${core.tracker.floor:,.2f}): compare it with the MLL on TopstepX and, if it differs, type TopstepX's "
+                "value as account.mll_floor_override in config.yaml (the bot applies a new number once).")
         if self.cfg.mode == "live":
             core.risk.paused = True
             text += " New trades are paused until you resume them."

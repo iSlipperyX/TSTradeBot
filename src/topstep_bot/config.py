@@ -77,7 +77,8 @@ class AccountConfig(_Section):
     starting_balance: float | None = None
     mll_floor_override: float | None = Field(
         default=None,
-        description="Current Maximum Loss Limit floor shown in your Topstep dashboard. Set it to sync the bot.",
+        description="A one-time sync of the Maximum Loss Limit floor shown in your Topstep dashboard: the bot applies a "
+                    "new number once, then follows its own trailing floor. To sync again, type the new number.",
     )
     topstep_daily_loss_limit: float | None = Field(
         default=None,

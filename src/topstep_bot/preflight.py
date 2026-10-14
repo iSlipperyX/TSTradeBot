@@ -202,11 +202,9 @@ async def run_preflight(
         label = account.name
         journal = Journal(cfg.journal_path_for("live"))
         try:
-            floor = cfg.account.mll_floor_override
-            source = "config (mll_floor_override)"
-            if floor is None:
-                floor = journal.get_state(f"mll_floor:{label}")
-                source = "learned earlier"
+            from topstep_bot.live import mll_floor_for
+
+            floor, source = mll_floor_for(journal, label, cfg.account.mll_floor_override)
             if floor is None and abs(account.balance - start) < 0.01:
                 floor = start - mll
                 source = "fresh account"
@@ -224,8 +222,8 @@ async def run_preflight(
                     journal.set_state(f"mll_floor:{label}", floor)
                     source = "entered now (saved)"
             if floor is None:
-                rep.add(WARN, "Max Loss Limit", "unknown - the bot will estimate it from the balance. Set "
-                        "account.mll_floor_override to the value in your Topstep dashboard to be safe")
+                rep.add(WARN, "Max Loss Limit", "unknown - the bot will estimate it from the balance. Type the value in "
+                        "your Topstep dashboard as account.mll_floor_override to be safe (it is applied once)")
             else:
                 tracker = LossLimitTracker(start, mll, floor=floor)
                 room = tracker.room(account.balance)
