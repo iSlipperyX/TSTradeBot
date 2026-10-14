@@ -432,7 +432,7 @@ the preflight, the journal and so on. To open it, open a Command Prompt in the b
 | 5 | train | **Teaches the bot** which strategy works at which time of day, from recent real data ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
 | 6 | paper | **Starts the bot in PAPER mode** (simulated orders on real prices) with the dashboard and Telegram |
 | 7 | live | **Starts the bot in LIVE mode** (real orders) with the dashboard and Telegram |
-| 8 | flatten | **Emergency:** cancels all orders and closes all positions on the account |
+| 8 | flatten | **Emergency:** closes every position, then cancels every order, on each account; checks again and lists anything still open. It does not stop a running bot (use Flatten & halt for that). |
 | 9 | journal | Recent trades and daily results |
 | 10 | strategies | Describes each strategy and its parameters |
 | 11 | demo | Backtest on synthetic data, no account needed |
@@ -875,7 +875,7 @@ cooldown. If it finds a position protected by one of its own stops (for example 
 | Restart the bot | **Restart** or Telegram `/restart` — it flattens first. |
 | Close everything, including the dashboard | Close the Topstep Bot window, or press **Ctrl+C** in it. |
 | Kill switch without the dashboard | Create an empty file named `KILL` in the bot folder. The bot flattens and halts within a second. Delete the file before the next start. |
-| Panic button when nothing is running | Menu **8 (flatten)** — cancels every order and closes every position on the account. |
+| Panic button when nothing is running | Menu **8 (flatten)** — closes every position and cancels every order on each account at TopstepX, keeps going if one call fails, then checks again and lists anything **STILL OPEN** or **NOT CHECKED**. It does not halt a running bot: use **Flatten & halt** or `/flatten` for that. |
 | Last resort | Close the position in TopstepX yourself. |
 
 Whenever the bot stops, it flattens any open position first (`execution.flatten_on_shutdown`).
@@ -1131,6 +1131,12 @@ account:
 For an Express Funded Account after your first payout, Topstep sets the MLL to $0 — set
 `mll_floor_override: 0`.
 
+This is a one-time sync. The bot records the number the first time it sees it and from then on follows
+its own trailing floor, so leaving the line in the file never pulls the floor back down on a later
+start. To sync again, type the new number. A number that was already in the file before version 4.0.1
+is ignored with a warning when the bot has learned a floor of its own (it may be months old). A new
+number lower than the bot's floor is applied once, with a warning naming both.
+
 Topstep changes its rules from time to time. Check help.topstep.com and your TopstepX Risk Settings,
 and adjust the config if anything differs: a lower position limit goes in `risk.max_contracts`, a
 different Daily Loss Limit in `account.topstep_daily_loss_limit` (a dollar amount).
@@ -1225,8 +1231,11 @@ the PC or the bot restarts, phone access comes back on by itself and sends a fre
 **Turn it off** with **Turn off** on the Settings tab (on the PC or the phone) or `/dashboard off`.
 The link stops at once.
 
-What you can do from the phone: everything on the dashboard **except** switching to **LIVE** and
-turning phone access on. Those two only work at the PC. Switching back to Paper works from the phone.
+What you can do from the phone: run, pause, flatten and switch markets, read the logs, ask
+questions, run simulations and the coach, and switch back to Paper. Keys, accounts and Telegram
+(the Setup tab), switching to **LIVE**, turning phone access on, the coach's key, settings and
+Apply, and saving a playbook stay on the PC. The phone says "Only available on the PC dashboard"
+when you try one of those.
 Confirmations appear as a box at the bottom of the screen; every action is listed in Activity as
 *phone (Telegram)*.
 
@@ -1917,7 +1926,7 @@ account:
   account_id: null             # which TopstepX account (set by setup)
   account_name: null           # alternative to account_id
   starting_balance: null       # default: plan size (combine/practice) or 0 (express)
-  mll_floor_override: null     # sync with Topstep's dashboard
+  mll_floor_override: null     # one-time sync with Topstep's dashboard (applied once per new number)
   topstep_daily_loss_limit: null  # true = your plan's optional DLL ($1,000/$2,000/$3,000), or a dollar amount
   payout_path: standard        # Express Funded payout path: standard | consistency
   login: null                  # which stored API key (section 30); default: the main key
@@ -2151,7 +2160,7 @@ different config file.
 | `topstep-bot download [--days N] [--tf M]` | Save history to `data/` |
 | `topstep-bot start [--mode paper\|live] [--yes] [--no-bot] [--no-browser]` | Start the dashboard + Telegram **and** the bot, which runs 24/7 (`service` does the same) |
 | `topstep-bot run [--mode paper\|live] [--yes]` | Run only the trading bot, without dashboard (normally started for you by `start`) |
-| `topstep-bot flatten [--yes]` | Emergency: cancel all orders, close all positions |
+| `topstep-bot flatten [--yes]` | Emergency: close all positions, then cancel all orders, on every account; reports anything still open. Does not halt a running bot. |
 | `topstep-bot journal [--mode paper\|live] [--limit N]` | Recent trades and daily results |
 | `topstep-bot telegram-test` | Check the Telegram token and chat ID with a test message |
 | `topstep-bot preflight [--days N] [--skip-backtest]` | Check everything before trading live |
@@ -2300,7 +2309,7 @@ not one per try.
 not be read, for example after a power cut or a sync tool (OneDrive, Dropbox) overwrote it. The bot
 kept it as `….damaged-<time>` and started a new one, so it still runs. The journal is where the bot
 remembers your trailing Maximum Loss Limit: compare the MLL the dashboard shows with the one on
-TopstepX and, if they differ, set `account.mll_floor_override` to TopstepX's value. In live mode new
+TopstepX and, if they differ, type TopstepX's value as `account.mll_floor_override` (applied once). In live mode new
 trades stay paused until you press **Resume**. Keep the data folder out of synced folders.
 
 **"Could not cancel order ... will check again" / "Entry skipped: earlier order(s) ... may still be
@@ -2317,7 +2326,9 @@ problem. The bot closes it rather than protect it with orders meant for the othe
 **A position the bot didn't open was closed** — That is `orphan_position_policy: flatten`. Don't
 trade manually on the bot's account, or change the policy.
 
-**The bot's MLL floor differs from Topstep's** — Set `account.mll_floor_override` to Topstep's value.
+**The bot's MLL floor differs from Topstep's** — Type Topstep's value as `account.mll_floor_override`.
+The bot applies a new number once and then follows its own trailing floor; to sync again, change the
+number.
 
 **"Native brackets rejected"** in the log — You set `use_native_brackets: true` without enabling
 "Auto OCO Brackets" in TopstepX. The bot falls back to placing its own stop; set the option back

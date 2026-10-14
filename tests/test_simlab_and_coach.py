@@ -280,13 +280,19 @@ def test_claude_keys_never_reach_a_log():
 
 # ------------------------------------------------------------------------------- dashboard routes
 
-def scenario(tmp_path, monkeypatch, body):
+TWO_ACCOUNTS = [{"name": "c1", "account_id": 1, "risk": {"risk_per_trade": 300}}, {"name": "c2", "account_id": 2}]
+
+
+def scenario(tmp_path, monkeypatch, body, accounts=None, strategy=None):
     cfg_src = lab_cfg(tmp_path, days=30)
     path = tmp_path / "config.yaml"
-    path.write_text(yaml.safe_dump({"mode": "paper", "data_dir": cfg_src.data_dir, "log_dir": str(tmp_path / "logs"),
-                                    "account": {"plan": "50K", "stage": "combine", "account_id": 7},
-                                    "instrument": {"symbol": "M2K"}, "strategy": {"name": "orb"},
-                                    "risk": {"risk_per_trade": 150}, "research": {"enabled": False}}), encoding="utf-8")
+    raw = {"mode": "paper", "data_dir": cfg_src.data_dir, "log_dir": str(tmp_path / "logs"),
+           "account": {"plan": "50K", "stage": "combine", "account_id": 7},
+           "instrument": {"symbol": "M2K"}, "strategy": strategy or {"name": "orb"},
+           "risk": {"risk_per_trade": 150}, "research": {"enabled": False}}
+    if accounts:
+        raw["accounts"] = accounts
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     (tmp_path / ".env").write_text("TOPSTEPX_USERNAME=me\n", encoding="utf-8")
     monkeypatch.setattr(controller_mod, "notify", lambda *a: None)
     monkeypatch.delenv(coach_mod.ENV_KEY, raising=False)
@@ -301,7 +307,8 @@ def scenario(tmp_path, monkeypatch, body):
         finally:
             await http.aclose()
             await ctl.server.stop()
-            await ctl.bot.close()
+            for b in ctl.bots.values():
+                await b.close()
     run(go())
 
 
@@ -380,3 +387,65 @@ def test_a_request_refused_over_refusal_fallbacks_is_sent_again_without_them(tmp
     fake.beta.messages.create = picky
     session = run(c.run())
     assert session["report"] == "Done." and "fallbacks" not in fake.calls[0]
+
+
+async def apply(http, prop):
+    return (await http.post("/api/coach/proposal", json={"id": prop["id"], "action": "apply"})).json()
+
+
+@pytest.mark.parametrize("setting,shared,own,lower,lowest", [("risk_per_trade", 150, 300, 200, 100),
+                                                             ("max_trades_per_day", 4, 8, 6, 3)])
+def test_coach_apply_changes_only_the_reviewed_account(tmp_path, monkeypatch, setting, shared, own, lower, lowest):
+    accounts = [{"name": "c1", "account_id": 1, "risk": {setting: own}}, {"name": "c2", "account_id": 2}]
+
+    async def body(ctl, http, path):
+        def values():
+            cfg = load_config(path)
+            return getattr(cfg.for_account("c1").risk, setting), getattr(cfg.for_account("c2").risk, setting), getattr(cfg.risk, setting)
+        assert ctl.bot.account == "c1"
+        r = await apply(http, ctl.coach.coach.add_proposal({"kind": "risk", "setting": setting, "value": lower, "reason": "r"}, "s"))
+        assert r["ok"] and r["message"].startswith("Applied on c1") and values() == (lower, shared, shared)
+        # Below the shared value: writing the shared section would have left c1 where it was and lowered c2.
+        r = await apply(http, ctl.coach.coach.add_proposal({"kind": "risk", "setting": setting, "value": lowest, "reason": "r"}, "s"))
+        assert r["ok"] and values() == (lowest, shared, shared)
+        assert isinstance(load_config(path).profile("c1").risk[setting], int) or setting != "max_trades_per_day"
+    scenario(tmp_path, monkeypatch, body, accounts=accounts, strategy={"name": "orb", "params": {"range_minutes": 30}})
+
+
+def test_coach_lowers_every_account_through_the_shared_setting_only_when_none_has_its_own(tmp_path, monkeypatch):
+    accounts = [{"name": "c1", "account_id": 1}, {"name": "c2", "account_id": 2}]
+
+    async def body(ctl, http, path):
+        r = await apply(http, ctl.coach.coach.add_proposal({"kind": "risk", "setting": "risk_per_trade", "value": 100, "reason": "r"}, "s"))
+        cfg = load_config(path)
+        assert r["ok"] and "every account" in r["message"] and cfg.risk.risk_per_trade == 100
+        assert cfg.for_account("c2").risk.risk_per_trade == 100 and not cfg.profile("c1").risk
+    scenario(tmp_path, monkeypatch, body, accounts=accounts)
+
+
+def test_a_playbook_apply_keeps_the_strategy_settings_and_stays_on_its_account(tmp_path, monkeypatch):
+    async def single(ctl, http, path):
+        r = await apply(http, ctl.coach.coach.add_proposal({"kind": "playbook", "symbol": "MNQ", "strategy": "orb", "reason": "r"}, "s"))
+        cfg = load_config(path)
+        assert r["ok"] and cfg.instrument.symbol == "MNQ" and cfg.strategy.params == {"range_minutes": 30}
+    scenario(tmp_path, monkeypatch, single, strategy={"name": "orb", "params": {"range_minutes": 30}})
+
+    async def several(ctl, http, path):
+        r = await apply(http, ctl.coach.coach.add_proposal({"kind": "playbook", "symbol": "MNQ", "strategy": "orb", "reason": "r"}, "s"))
+        cfg = load_config(path)
+        assert r["ok"] and "on c1" in r["message"]
+        assert cfg.instrument.symbol == "M2K" and cfg.for_account("c2").instrument.symbol == "M2K"  # c2 untouched
+        c1 = cfg.for_account("c1")
+        assert c1.instrument.symbol == "MNQ" and c1.strategy.params == {"range_minutes": 30}
+    (tmp_path / "config.yaml.bak").unlink(missing_ok=True)
+    scenario(tmp_path, monkeypatch, several, accounts=[{"name": "c1", "account_id": 1}, {"name": "c2", "account_id": 2}],
+             strategy={"name": "orb", "params": {"range_minutes": 30}})
+
+
+def test_a_playbook_for_an_account_that_copies_another_is_refused(tmp_path, monkeypatch):
+    async def body(ctl, http, path):
+        assert ctl.bot.account == "c1"
+        r = await apply(http, ctl.coach.coach.add_proposal({"kind": "playbook", "symbol": "MNQ", "strategy": "orb", "reason": "r"}, "s"))
+        assert not r["ok"] and "c1 copies c2's calls" in r["message"]
+        assert load_config(path).for_account("c1").instrument.symbol == "M2K"
+    scenario(tmp_path, monkeypatch, body, accounts=[{"name": "c1", "account_id": 1, "follow": "c2"}, {"name": "c2", "account_id": 2}])

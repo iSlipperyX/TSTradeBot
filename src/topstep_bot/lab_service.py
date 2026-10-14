@@ -15,11 +15,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from topstep_bot.config_edit import set_values
+from topstep_bot.config_edit import set_section, set_values
 
 if TYPE_CHECKING:
     from topstep_bot.controller import Controller
@@ -37,10 +38,52 @@ def _apply_config(ctl: Controller, changes: dict[tuple[str | None, str], Any]) -
     setup = ctl.setup
     original = setup._require_file()
     setup._write(original, set_values(original, changes))
+    return _running_note(ctl)
+
+
+def _apply_account(ctl: Controller, name: str, change: Callable[[dict], None]) -> str:
+    """Change one account's entry in config.yaml's ``accounts:`` list, the way the Setup tab does."""
+    setup = ctl.setup
+    original = setup._require_file()
+    entries = setup._raw_accounts(original)
+    entry = next((e for e in entries if str(e.get("name", "")).lower() == name), None)
+    if entry is None:
+        raise ValueError(f"{name} has no entry in config.yaml; change it on the Setup tab")
+    change(entry)
+    setup._write(original, set_section(original, "accounts", entries))
+    return _running_note(ctl)
+
+
+def _running_note(ctl: Controller) -> str:
     if any(b.running for b in ctl.bots.values()):
-        setup.saved_at = time.time()
+        ctl.setup.saved_at = time.time()
         return " The bot is still running with the old settings: restart it to use the new ones."
     return " It takes effect when the bot starts."
+
+
+def _apply_playbook(ctl: Controller, symbol: str, strategy: str) -> tuple[str, str]:
+    """Set the market and strategy of the account the lab and the coach work with; (note, where it changed).
+
+    The strategy's own settings are kept when the strategy does not change. With several accounts only
+    the reviewed account's entry changes, never the shared settings the other accounts use."""
+    if not ctl.multi:
+        changes: dict[tuple[str | None, str], Any] = {("instrument", "symbol"): symbol, ("instrument", "auto_pick"): False,
+                                                      ("strategy", "name"): strategy}
+        if _shared_cfg(ctl).strategy.name != strategy:
+            changes[("strategy", "params")] = {}
+        return _apply_config(ctl, changes), ""
+    name = ctl.bot.account
+    leader = ctl.cfg.profile(name).follow
+    if leader:
+        raise ValueError(f"{name} copies {leader}'s calls; change it on the Setup tab")
+
+    def change(e: dict) -> None:
+        instrument = e.setdefault("instrument", {})
+        instrument["symbol"], instrument["auto_pick"] = symbol, False
+        own = e.get("strategy") or {}
+        # Its own settings stay with its own strategy; without a strategy of its own the shared settings apply.
+        e["strategy"] = {"name": strategy, **({"params": own["params"]} if own.get("name") == strategy and own.get("params") else {})}
+    return _apply_account(ctl, name, change), name
 
 
 class LabService:
@@ -58,6 +101,7 @@ class LabService:
         self.error: str | None = None
         self.taught: list[dict] = []
         self.started: float | None = None
+        self._coverage: dict[str, tuple[float, Any, list]] = {}  # account -> (when, data.last_run, rows)
 
     @property
     def running(self) -> bool:
@@ -102,7 +146,13 @@ class LabService:
         if account and account != "all":
             bot = self.ctl.pick(account)[0]
         cfg = self.ctl.account_cfg(bot.account)
-        return {"markets": coverage(cfg), "current": current_symbol(cfg), "usual": cfg.instrument.symbol,
+        # The history summary reads 51 files: reuse it for 30 s, unless a download has finished since.
+        # The rest stays live (it changes with a switch and differs per account).
+        when, last_run, rows = self._coverage.get(bot.account, (0.0, None, []))
+        if time.time() - when >= 30 or last_run != self.data.last_run:
+            rows = coverage(cfg)
+            self._coverage[bot.account] = (time.time(), self.data.last_run, rows)
+        return {"markets": rows, "current": current_symbol(cfg), "usual": cfg.instrument.symbol,
                 "today": load_today(cfg), "data": {**self.data.status(), "note": self.data_note}}
 
     # ---------------------------------------------------------------- price history
@@ -254,10 +304,10 @@ class LabService:
         strategy = str(body.get("strategy", "")).strip()
         if strategy not in STRATEGIES:
             raise ValueError(f"Unknown strategy '{strategy}'.")
-        note = _apply_config(self.ctl, {("instrument", "symbol"): symbol, ("instrument", "auto_pick"): False,
-                                        ("strategy", "name"): strategy, ("strategy", "params"): {}})
-        self.ctl.bot._event("info", f"Playbook set to {symbol} with {STRATEGIES[strategy].title} ({source}, from the Simulation Lab)")
-        return f"Saved: the bot trades {symbol} with {STRATEGIES[strategy].title}.{note}"
+        note, where = _apply_playbook(self.ctl, symbol, strategy)
+        on = f" on {where}" if where else ""
+        self.ctl.bot._event("info", f"Playbook set{on} to {symbol} with {STRATEGIES[strategy].title} ({source}, from the Simulation Lab)")
+        return f"Saved{on}: the bot trades {symbol} with {STRATEGIES[strategy].title}.{note}"
 
 
 class CoachService:
@@ -380,22 +430,54 @@ class CoachService:
         if action != "apply":
             raise ValueError("action must be apply or dismiss")
         cfg = self.coach.cfg
+        where = ""  # with several accounts: the account whose entry changed, or every account
         if prop["kind"] == "playbook":
-            note = _apply_config(self.ctl, {("instrument", "symbol"): prop["symbol"], ("instrument", "auto_pick"): False,
-                                            ("strategy", "name"): prop["strategy"], ("strategy", "params"): {}})
+            note, where = _apply_playbook(self.ctl, prop["symbol"], prop["strategy"])
             what = f"the bot trades {prop['symbol']} with {STRATEGIES[prop['strategy']].title}"
         else:
-            current = {"risk_per_trade": cfg.risk.risk_per_trade, "personal_daily_loss_limit": cfg.risk.personal_daily_loss_limit,
-                       "max_trades_per_day": cfg.risk.max_trades_per_day}[prop["setting"]]
+            setting = prop["setting"]
+            current = getattr(cfg.risk, setting)
             if prop["value"] >= current:
                 self.coach.set_proposal_status(pid, "dismissed")
                 raise ValueError("That would no longer lower risk (the setting changed since): dismissed.")
-            value = int(prop["value"]) if prop["setting"] == "max_trades_per_day" else prop["value"]
-            note = _apply_config(self.ctl, {("risk", prop["setting"]): value})
+            value = int(prop["value"]) if setting == "max_trades_per_day" else prop["value"]
+            note, where = self._apply_risk(pid, setting, value)
             what = prop["title"]
         self.coach.set_proposal_status(pid, "applied")
-        self.ctl.bot._event("info", f"Coach proposal applied ({source}): {prop['title']}")
-        return f"Applied: {what}.{note}"
+        on = f" on {where}" if where else ""
+        self.ctl.bot._event("info", f"Coach proposal applied{on} ({source}): {prop['title']}")
+        return f"Applied{on}: {what}.{note}"
+
+    def _apply_risk(self, pid: str, setting: str, value: float) -> tuple[str, str]:
+        """Lower one risk setting of the reviewed account; (note, where it changed).
+
+        With several accounts the shared ``risk:`` section changes only when that lowers it for every
+        account (each account without its own value then gets the new one); otherwise the reviewed
+        account's own entry changes, so another account's risk can never go up."""
+        from topstep_bot.controller import account_list
+
+        ctl = self.ctl
+        if not ctl.multi:
+            return _apply_config(ctl, {("risk", setting): value}), ""
+        name = ctl.bot.account
+        shared = getattr(ctl.cfg.risk, setting)
+        own = setting in ctl.cfg.profile(name).risk
+        if not own and value < shared and all(value < getattr(ctl.account_cfg(n).risk, setting) for n in account_list(ctl.cfg)):
+            return _apply_config(ctl, {("risk", setting): value}), "every account without its own setting"
+
+        def change(e: dict) -> None:
+            risk = e.setdefault("risk", {})
+            if value == shared:
+                risk.pop(setting, None)  # the same as the shared setting: inherit it, as the Setup tab does
+            else:
+                risk[setting] = value
+            if not risk:
+                e.pop("risk")
+        try:
+            return _apply_account(ctl, name, change), name
+        except ValueError:
+            self.coach.set_proposal_status(pid, "dismissed")
+            raise
 
     def forget(self, body: dict) -> str:
         return "Lesson removed." if self.coach.forget_lesson(str(body.get("id", ""))) else "No such lesson."

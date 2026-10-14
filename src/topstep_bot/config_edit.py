@@ -57,9 +57,12 @@ def _indent(line: str) -> int:
 
 def _section(lines: list[str], name: str) -> tuple[int, int] | None:
     """(index of 'name:', index after the section's last line) for a top-level section."""
-    start = next((i for i, line in enumerate(lines) if (m := _TOP_KEY.match(line)) and m.group(1) == name), None)
-    if start is None:
+    found = [i for i, line in enumerate(lines) if (m := _TOP_KEY.match(line)) and m.group(1) == name]
+    if not found:
         return None
+    if len(found) > 1:  # YAML keeps the last copy: editing the first would say "Saved" and change nothing
+        raise ValueError(f"Not saved: {name}: appears twice in config.yaml - keep one")
+    start = found[0]
     end = start + 1
     while end < len(lines) and not _TOP_KEY.match(lines[end]):
         end += 1

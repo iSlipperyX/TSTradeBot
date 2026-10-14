@@ -10,7 +10,7 @@ account:
   # account_id: 123456          # set by 'topstep-bot setup'
   # topstep_daily_loss_limit: true  # set this if you added Topstep's optional $1,000 Daily Loss Limit
   payout_path: standard         # Express Funded payout path: standard (5 winning days) or consistency
-  # mll_floor_override: 48500    # copy your current Max Loss Limit from the Topstep dashboard to sync the bot
+  # mll_floor_override: 48500    # one-time sync: type the Max Loss Limit from your Topstep dashboard; applied once
 
 instrument:
   symbol: MNQ                # any of the 51 markets Topstep permits: 'topstep-bot markets' lists them

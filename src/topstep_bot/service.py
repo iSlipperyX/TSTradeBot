@@ -29,16 +29,17 @@ CONFIG_ERROR_EXIT_CODE = 2
 ENV_EXIT_FILE = "TOPSTEP_BOT_EXIT_FILE"
 
 
-def write_exit_note(code: int, reason: str) -> None:
-    """Tell the controller why the bot is exiting (shown on the dashboard and in Telegram)."""
+def write_exit_note(code: int, reason: str, open_position: bool = False) -> None:
+    """Tell the controller why the bot is exiting (shown on the dashboard and in Telegram). ``open_position``:
+    it exits with a position it could not close, and the controller alerts."""
     path = os.environ.get(ENV_EXIT_FILE)
     if not path:
         return
+    note = {"code": code, "reason": reason, "at": datetime.now().isoformat(timespec="seconds")}
+    if open_position:
+        note["open_position"] = True
     try:
-        Path(path).write_text(
-            json.dumps({"code": code, "reason": reason, "at": datetime.now().isoformat(timespec="seconds")}),
-            encoding="utf-8",
-        )
+        Path(path).write_text(json.dumps(note), encoding="utf-8")
     except OSError as exc:
         log.debug("could not write exit note: %s", exc)
 

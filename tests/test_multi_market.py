@@ -394,3 +394,148 @@ def test_actions_name_a_market(tmp_path):
             await asyncio.wait_for(task, 20)
 
     run(go())
+
+
+def test_a_market_dropped_in_a_trade_is_managed_again_after_a_restart(tmp_path):
+    from topstep_bot import market_pick as mp
+
+    async def go():
+        fake = FakeDesk()
+        mes_id = CONTRACTS["MES"]["id"]
+        async with websockets.serve(fake.hub, "127.0.0.1", 0) as srv:
+            port = srv.sockets[0].getsockname()[1]
+            runner = make_desk(fake, port, "live", tmp_path)
+            runner.cfg.execution.flatten_on_shutdown = False
+
+            async def on_ready(core):
+                for c in runner.cores():
+                    c.schedule.must_be_flat = lambda ts: False
+
+            task = asyncio.create_task(runner.run(on_ready))
+            await _wait(lambda: "MES" in runner.lanes and runner.lanes["MES"].core is not None, 30)
+            mes = runner.lanes["MES"].core
+            price = fake.price[mes_id]
+            await mes.orders.enter(OrderSide.BUY, 1, price - 10, None, "test", ref_price=price)
+            await _wait(lambda: mes.orders.trade and mes.orders.trade.state == TradeState.OPEN
+                        and mes.orders.trade.stop_order_id)
+            stop_id = mes.orders.trade.stop_order_id
+            await runner.remove_market("MES", "test")  # no flatten: it stays until its trade is closed
+            today = mp.load_today(runner.cfg)
+            assert today["closing"] == ["MES"] and today["markets"] == ["MNQ"]
+            runner.controls.stop.set()  # the PC "crashes" before the trade is closed
+            await asyncio.wait_for(task, 20)
+            assert fake.position[mes_id] == 1 and fake.orders[stop_id]["status"] == 1
+
+            r2 = make_desk(fake, port, "live", tmp_path, markets=())
+
+            async def on_ready2(core):
+                for c in r2.cores():
+                    c.schedule.must_be_flat = lambda ts: False
+
+            task = asyncio.create_task(r2.run(on_ready2))
+            await _wait(lambda: "MES" in r2.lanes and r2.lanes["MES"].core is not None, 30)
+            lane = r2.lanes["MES"]
+            assert lane.closing and lane.core.closing  # managed, but takes no new trades
+            await _wait(lambda: lane.core.orders.trade is not None and lane.core.orders.trade.stop_order_id == stop_id)
+            fake.position[mes_id] = 0  # its stop fills (or it is closed by hand)
+            fake._push_position(mes_id)
+            await _wait(lambda: "MES" not in r2.lanes)
+            assert mp.load_today(r2.cfg)["closing"] == []
+            r2.controls.stop.set()
+            await asyncio.wait_for(task, 20)
+
+    run(go())
+
+
+def test_a_position_in_a_market_with_no_lane_is_flattened_at_start(tmp_path):
+    from topstep_bot import market_pick as mp
+
+    async def go():
+        fake = FakeDesk()
+        mgc_id = CONTRACTS["MGC"]["id"]
+        async with websockets.serve(fake.hub, "127.0.0.1", 0) as srv:
+            port = srv.sockets[0].getsockname()[1]
+            runner = make_desk(fake, port, "live", tmp_path)
+            until = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+            path = runner.cfg.account_dir / mp.TODAY_FILE
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"symbol": "MNQ", "markets": ["MNQ", "MES"], "until": until}), encoding="utf-8")
+            fake.position[mgc_id] = 1
+            fake.orders[55] = {"id": 55, "accountId": 7, "contractId": mgc_id, "type": 4, "side": 1, "size": 1, "status": 1,
+                               "stopPrice": fake.price[mgc_id] - 5, "limitPrice": None, "customTag": None, "fillVolume": 0}
+            stale = runner.cfg.data_path / "positions" / "main~MGC.json"
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_text("{}", encoding="utf-8")
+            other = runner.cfg.data_path / "positions" / "c2~MGC.json"
+            other.write_text("{}", encoding="utf-8")
+            await runner.prepare()
+            close = ("/api/Position/closeContract", {"accountId": 7, "contractId": mgc_id})
+            cancel = ("/api/Order/cancel", {"accountId": 7, "orderId": 55})
+            assert close in fake.calls and cancel in fake.calls and fake.calls.index(close) < fake.calls.index(cancel)
+            assert fake.position[mgc_id] == 0 and "MGC" not in runner.lanes
+            assert any(e["level"] == "critical" and "MGC" in e["message"] for e in runner.core.events)
+            assert not stale.exists() and other.exists()  # this account's stale hedge-guard file only
+            for lane in list(runner.lanes.values()):
+                await lane.stop()
+            await runner.client.close()
+            runner.journal.close()
+
+    run(go())
+
+
+def test_one_slow_market_does_not_hold_up_another_markets_events():
+    import time
+
+    from topstep_bot.broker.shared import BrokerHub
+    from topstep_bot.execution import OrderManager
+    from topstep_bot.models import Position
+
+    async def go():
+        inner = PaperBroker(offline_contract("MNQ"), 50_000)
+        hub = BrokerHub(inner)
+        clock = lambda: ct(2026, 3, 3, 9, 0)  # noqa: E731
+        a = OrderManager(hub.lane(), offline_contract("MNQ"), fees_round_turn=1.0, clock=clock)
+        b = OrderManager(hub.lane(), offline_contract("MES"), fees_round_turn=1.0, clock=clock)
+        started = asyncio.Event()
+        slow_original, seen_original = a.broker.on_position, b.broker.on_position
+
+        async def slow(p):
+            await asyncio.sleep(1)  # e.g. waiting on TopstepX while holding its lock
+            await slow_original(p)
+
+        async def seen(p):
+            started.set()
+            await seen_original(p)
+
+        a.broker.on_position, b.broker.on_position = slow, seen
+        t0 = time.monotonic()
+        await inner._emit(inner.on_position, Position(7, a.contract.id, 1, 100.0))
+        await inner._emit(inner.on_position, Position(7, b.contract.id, -1, 100.0))
+        await asyncio.wait_for(started.wait(), 0.05)
+        assert time.monotonic() - t0 < 0.05
+        for lane in (a.broker, b.broker):
+            hub.drop(lane)
+            assert lane._pump is None and lane._events.empty()
+    run(go())
+
+
+def test_reconcile_checks_every_market_together():
+    import time
+    import types
+
+    ran = []
+
+    class SlowLane:
+        def __init__(self, name):
+            self.name = name
+
+        async def reconcile(self):
+            await asyncio.sleep(1)
+            ran.append(self.name)
+
+    async def go():
+        t0 = time.monotonic()
+        await LiveRunner._safe_reconcile(types.SimpleNamespace(lanes={"MNQ": SlowLane("MNQ"), "MES": SlowLane("MES")}))
+        return time.monotonic() - t0
+    took = run(go())
+    assert sorted(ran) == ["MES", "MNQ"] and took < 1.5

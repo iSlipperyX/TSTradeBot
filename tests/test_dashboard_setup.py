@@ -254,3 +254,21 @@ def test_a_second_start_just_opens_the_dashboard(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(controller_mod, "run_controller", lambda *a, **k: pytest.fail("a second server was started"))
     assert cli.main([]) == 0
     assert opened == ["http://127.0.0.1:8765/"] and "already running" in capsys.readouterr().out
+
+
+
+def test_saving_over_a_locked_config_says_not_saved(tmp_path, clean_env, monkeypatch):
+    import os
+
+    async def body(ctl, http, path):
+        def locked(src, dst):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(os, "replace", locked)
+        monkeypatch.setattr("topstep_bot.config.clock.sleep", lambda s: None)
+        resp = await http.post("/api/setup/save", json={**FORM, "account_id": 101})
+        r = resp.json()
+        assert resp.status_code == 200 and not r["ok"]
+        assert r["message"].startswith("Not saved: config.yaml is read-only or open in another program")
+        assert path.read_text(encoding="utf-8") == "mode: paper\n"
+    setup_scenario(tmp_path, body, config_text="mode: paper\n")

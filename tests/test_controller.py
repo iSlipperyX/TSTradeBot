@@ -23,7 +23,7 @@ FAKE = [sys.executable, str(Path(__file__).parent / "fake_worker.py")]
 def fast(monkeypatch):
     monkeypatch.setattr(controller_mod, "BACKOFF", (0.1, 0.1, 0.1))
     monkeypatch.setattr(controller_mod, "notify", lambda *a: None)
-    for var in ("FAKE_EXIT", "FAKE_EXIT_ACCOUNT", "FAKE_HANG", "FAKE_POSITION", "FAKE_TRAIN_SECONDS"):
+    for var in ("FAKE_EXIT", "FAKE_EXIT_ACCOUNT", "FAKE_HANG", "FAKE_POSITION", "FAKE_TRAIN_SECONDS", "FAKE_OPEN_ON_STOP"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -79,6 +79,23 @@ def test_start_status_and_stop_keep_dashboard_up(tmp_path):
         assert s["bot"] is None and s["controller"]["last_exit"]["reason"] == "stop requested from dashboard"
         assert {e["key"] for e in s["clock"]["events"]} >= {"market", "flatten", "topstep"}  # timers work bot-down too
         assert (await http.get("/")).status_code == 200
+    scenario(tmp_path, body)
+
+
+def test_a_stop_that_left_a_position_open_alerts_the_owner(tmp_path, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(controller_mod, "notify", lambda secrets, text: alerts.append(text))
+    monkeypatch.setenv("FAKE_OPEN_ON_STOP", "1")
+
+    async def body(ctl, http):
+        await ctl.bot.start("test")
+        await until(lambda: ctl.bot.state == "running")
+        await ctl.bot.stop("test")
+        assert ctl.bot.state == "stopped"  # not restarted: a restart would not close it
+        newest = ctl.events[0]
+        assert newest["level"] == "error" and "OPEN POSITION" in newest["message"]
+        await until(lambda: alerts)
+        assert "OPEN POSITION" in alerts[0]
     scenario(tmp_path, body)
 
 

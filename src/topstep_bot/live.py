@@ -37,6 +37,7 @@ from pathlib import Path
 
 import httpx
 
+from topstep_bot import fmt
 from topstep_bot.api.realtime import MarketStream
 from topstep_bot.api.rest import ProjectXClient, ProjectXError
 from topstep_bot.bars import floor_time
@@ -74,6 +75,15 @@ def unreachable(exc: BaseException) -> bool:
         429, *range(500, 600))
 
 
+def log_failure(what: str, exc: BaseException) -> None:
+    """Log a failed step from inside its ``except``: a connection problem is one line (the bot retries and the
+    outage is reported elsewhere); anything else keeps its traceback, which is what a bug report needs."""
+    if unreachable(exc):
+        log.warning("%s: %s (connection problem; trying again)", what, str(exc) or type(exc).__name__)
+    else:
+        log.exception(what)
+
+
 class SetupError(Exception):
     """A configuration/account problem the user needs to fix (shown without a traceback)."""
 
@@ -88,6 +98,7 @@ class Controls:
     restart_requested: bool = False  # quiet daily maintenance restart (exit code 75)
     failure: str | None = None  # the bot stopped itself after an internal error (exit code 1)
     stop_reason: str = ""
+    open_position: bool = False  # it stopped with a position it could not close (the controller alerts)
 
     def request_stop(self, reason: str) -> None:
         if not self.stop_reason:
@@ -112,6 +123,41 @@ async def select_account(client: ProjectXClient, cfg: BotConfig) -> Account:
         names = ", ".join(f"{a.name} (id {a.id})" for a in accounts)
         raise SetupError(f"Configured account not found. Available: {names}")
     return match[0]
+
+
+def mll_floor_for(journal: Journal, label: str, override: float | None,
+                  today: date | None = None) -> tuple[float | None, str]:
+    """The trailing Maximum Loss Limit floor to start with, and a note saying where it came from.
+
+    ``account.mll_floor_override`` is a one-time sync, never a standing value: a number the bot has not
+    seen before is applied once and remembered; after that the bot follows its own trailing floor (which
+    only moves up). A number that was already in config.yaml before the bot remembered overrides is
+    ignored when the bot has a floor of its own - it may be months old, and putting it back would give the
+    bot more room than Topstep allows. To re-sync, type a different number. The note never repeats the
+    floor itself (callers print it next to the note)."""
+    saved = journal.get_state(f"mll_floor:{label}")
+    if override is None:
+        return saved, "learned earlier" if saved is not None else "not known yet"
+    seen = journal.get_state(f"mll_floor_override_applied:{label}")
+    seen_at = journal.get_state(f"mll_floor_override_applied_at:{label}")
+
+    def remember() -> None:
+        journal.set_state(f"mll_floor_override_applied:{label}", override)
+        journal.set_state(f"mll_floor_override_applied_at:{label}", (today or date.today()).isoformat())
+
+    if seen is None and saved is not None:
+        remember()
+        return saved, (f"mll_floor_override {fmt.money(override)} was already in config.yaml before this version; the "
+                       f"bot keeps its learned floor. To force a sync, change the number.")
+    if seen is not None and float(seen) == float(override):
+        note = f"its own trailing floor since mll_floor_override was applied on {seen_at or 'an earlier start'}"
+        return (saved if saved is not None else override), note
+    journal.set_state(f"mll_floor:{label}", override)
+    remember()
+    if saved is not None and override < saved:
+        return override, (f"mll_floor_override {fmt.money(override)} applied once; it LOWERED the bot's floor from "
+                          f"{fmt.money(saved)} - check it matches the MLL in your Topstep dashboard")
+    return override, f"mll_floor_override {fmt.money(override)} applied once (synced from config.yaml)"
 
 
 async def resolve_contract(client: ProjectXClient, cfg: BotConfig) -> Contract:
@@ -148,6 +194,7 @@ class Lane:
         self.market: MarketStream | None = None
         self.positions: PositionBook | None = None  # hedge guard
         self.closing: str | None = None  # dropping this market once it is flat (no new trades meanwhile)
+        self.reconciled = False  # its view has been checked against TopstepX at least once
         self._last_bar_ts: datetime | None = None
         self._last_price_at: datetime | None = None
         self._tasks: list[asyncio.Task] = []
@@ -636,8 +683,8 @@ class Lane:
             if core.schedule.news:
                 try:
                     await core.schedule.news.refresh()
-                except Exception:  # noqa: BLE001 - keep the last calendar; trading goes on
-                    log.exception("Economic calendar refresh failed")
+                except Exception as exc:  # noqa: BLE001 - keep the last calendar; trading goes on
+                    log_failure("Economic calendar refresh failed", exc)
 
     # --------------------------------------------------------------- prices and bars
 
@@ -668,8 +715,8 @@ class Lane:
                         break
                 except ProjectXError as exc:
                     log.warning("Bar fetch failed (%s): %s", self.symbol, exc)
-                except Exception:  # noqa: BLE001
-                    log.exception("Bar fetch error (%s)", self.symbol)
+                except Exception as exc:  # noqa: BLE001
+                    log_failure(f"Bar fetch error ({self.symbol})", exc)
                 await asyncio.sleep(4)
 
     async def _fetch_new_bars(self, tf: int) -> bool:
@@ -711,6 +758,8 @@ class Lane:
             await self.core.orders.reconcile()
         except Exception as exc:  # noqa: BLE001
             log.warning("Reconcile failed (%s): %s", self.symbol, exc)
+        else:
+            self.reconciled = True
 
 
 # ======================================================================== the account
@@ -752,6 +801,8 @@ class LiveRunner:
         self._checked_in: date | None = None
         self.market_pick = None  # market_pick.Pick when instrument.auto_pick chose the market
         self.market_today: dict | None = None  # the market(s) you switched the account to for today
+        self._floor_warning: str | None = None  # said once the first market is open (see mll_floor_for)
+        self._closing_at_start: set[str] = set()  # markets dropped in a trade before a restart (market_today.json)
 
     @staticmethod
     def now() -> datetime:
@@ -817,7 +868,9 @@ class LiveRunner:
     def lane_broker(self, contract: Contract) -> Broker:
         """The broker one market trades through: the shared TopstepX connection, or a paper broker on the shared wallet."""
         if self.hub is not None:
-            return self.hub.lane()
+            lane = self.hub.lane()
+            lane.market = contract.symbol_id or contract.id
+            return lane
         assert self.wallet is not None
         return PaperBroker(contract, self.wallet.balance, slippage_ticks=self.cfg.risk.slippage_ticks,
                            fees_round_turn=fees_for(self.cfg, contract), account_name=self.label, live=True,
@@ -855,10 +908,11 @@ class LiveRunner:
             self.wallet = PaperWallet(paper_balance)
             acct = Account(1, label, self.wallet.balance, can_trade=True, simulated=True)
         plan = PLANS[cfg.account.plan]
-        floor = self.journal.get_state(f"mll_floor:{label}")
-        if cfg.account.mll_floor_override is not None:
-            floor = cfg.account.mll_floor_override
+        floor, note = mll_floor_for(self.journal, label, cfg.account.mll_floor_override)
         self.tracker = LossLimitTracker(starting_balance(cfg), plan.max_loss_limit, floor=floor)
+        log.info("Maximum Loss Limit floor %s (%s)", fmt.money(self.tracker.floor), note)
+        if "already in config.yaml" in note or "LOWERED" in note:
+            self._floor_warning = f"Maximum Loss Limit floor {fmt.money(self.tracker.floor)}: {note}"
         self.book = AccountBook(shared=True)
 
         # Today's closed trades so far, so a mid-day restart keeps the day's P&L, trade count,
@@ -884,12 +938,19 @@ class LiveRunner:
 
         for i, symbol in enumerate(symbols):
             try:
-                await self._open_lane(symbol, primary=i == 0, balance=acct.balance, today=today)
+                lane = await self._open_lane(symbol, primary=i == 0, balance=acct.balance, today=today)
             except Exception as exc:
                 if i == 0 or unreachable(exc):
                     raise
                 log.warning("Could not add %s: %s", symbol, exc)
+                continue
+            if symbol in self._closing_at_start:
+                self._mark_closing(lane, "dropped before the restart")
+        ignored_roots = await self._unmanaged_positions(today, acct.balance) if cfg.mode == "live" else set()
+        self._remove_stale_position_files(ignored_roots)
         self.focus = symbols[0]
+        if self._floor_warning and self.core is not None:
+            self.core.event("warning", self._floor_warning)
         self._report_damaged_journal()
         self._apply_ramp_up()
         return self.core
@@ -922,6 +983,77 @@ class LiveRunner:
         if self.book is not None and lane.core is not None:
             self.book.unregister(lane.core.risk.lane)
 
+    @staticmethod
+    def _mark_closing(lane: Lane, why: str) -> None:
+        lane.closing = why
+        if lane.core:
+            lane.core.closing = f"{lane.symbol} is being dropped ({why})"
+
+    async def _unmanaged_positions(self, today: date, balance: float) -> set[str]:
+        """Safety net at start-up (live): a position at TopstepX in a market no lane trades (market_today.json
+        missing or old, or the controller switched markets while the bot was stopped) would be managed by
+        nobody - its stop could fill and its target open a new position. Follow orphan_position_policy.
+        Returns the roots of positions left alone (``ignore``), whose hedge-guard files must stay."""
+        from topstep_bot import market_pick as mp
+        from topstep_bot.instruments import SPECS
+
+        ignored: set[str] = set()
+        try:
+            positions = await self.client.search_open_positions(self.account.id)
+            ours = {ln.contract.id for ln in self.lanes.values() if ln.contract}
+            for p in positions:
+                if not p.size or p.contract_id in ours:
+                    continue
+                market = p.contract_id.split(".")[3] if p.contract_id.count(".") >= 4 else p.contract_id
+                policy = self.cfg.execution.orphan_position_policy
+                self.core.event("critical", f"{market}: a position of {p.size} at TopstepX is in a market the bot is "
+                                            f"not trading - " + {"flatten": "closing it now",
+                                                                 "adopt": "managing it until it is closed",
+                                                                 "ignore": "leaving it alone (orphan_position_policy: "
+                                                                           "ignore) - CHECK YOUR ACCOUNT"}.get(policy, policy),
+                                "error")
+                if policy == "flatten":
+                    try:
+                        await self.client.close_position(self.account.id, p.contract_id)
+                    except Exception as exc:  # noqa: BLE001 - say so; the owner must look
+                        self.core.event("critical", f"{market}: could not close it ({exc}) - CHECK YOUR ACCOUNT", "error")
+                    for o in [o for o in await self.client.search_open_orders(self.account.id) if o.contract_id == p.contract_id]:
+                        try:
+                            await self.client.cancel_order(self.account.id, o.id)
+                        except Exception as exc:  # noqa: BLE001 - one failed cancel must not stop the others
+                            self.core.event("warning", f"{market}: could not cancel order {o.id} ({exc})")
+                elif policy == "adopt":
+                    twin = next((s for s in self.lanes if mp.same_product(market, s)), None)
+                    why = ("it is not a market the bot knows" if market not in SPECS else
+                           f"{twin} is the same product" if twin else None)
+                    if why is None:
+                        try:
+                            lane = await self._open_lane(market, primary=False, balance=balance, today=today)
+                        except Exception as exc:  # noqa: BLE001
+                            why = f"it could not be opened ({exc})"
+                        else:
+                            self._mark_closing(lane, "position found at start-up")
+                    if why:
+                        self.core.event("critical", f"{market}: not managed because {why} - CHECK YOUR ACCOUNT", "error")
+                else:
+                    ignored.add(market)
+        except Exception as exc:  # noqa: BLE001 - a failed look-up must not stop the start
+            log.warning("Could not check for positions in markets the bot is not trading: %s", exc)
+            if self.core:
+                self.core.event("warning", f"Could not check TopstepX for positions in other markets ({exc})")
+        return ignored
+
+    def _remove_stale_position_files(self, keep_roots: set[str]) -> None:
+        """This account's hedge-guard files for markets it no longer trades (a market dropped in a trade
+        before a crash leaves one: Lane.stop only releases it when flat). Other accounts' files stay."""
+        folder = self.cfg.data_path / "positions"
+        account = self.cfg.active_account or "main"
+        roots = {(ln.contract.root if ln.contract else None) or ln.symbol for ln in self.lanes.values()} | keep_roots
+        for path in folder.glob(f"{account}~*.json"):
+            if path.stem.split("~", 1)[1] not in roots:
+                with contextlib.suppress(OSError):
+                    path.unlink()
+
     def _legacy_position_file(self) -> None:
         """Before markets had their own hedge-guard files, the account had one: remove it so it can't block anything."""
         with contextlib.suppress(OSError):
@@ -938,7 +1070,11 @@ class LiveRunner:
             self.market_today = today
             log.info("Trading %s today: switched by %s at %s", ", ".join(today["markets"]), today.get("source", "you"),
                      today.get("at"))
-            return list(dict.fromkeys([today["symbol"], *today["markets"]]))[:MAX_MARKETS]
+            symbols = list(dict.fromkeys([today["symbol"], *today["markets"]]))[:MAX_MARKETS]
+            # Markets dropped while in a trade come back, to be managed until flat (they don't count
+            # toward MAX_MARKETS and take no new trades).
+            self._closing_at_start = {m for m in today.get("closing") or [] if m not in symbols}
+            return symbols + [m for m in today.get("closing") or [] if m not in symbols]
         if cfg.instrument.auto_pick:
             await self._pick_market()
         return mp.lane_symbols(cfg, cfg.instrument.symbol, self.market_pick)
@@ -950,8 +1086,8 @@ class LiveRunner:
         core = self.core
         text = (f"The trade journal was damaged and has been set aside as {self.journal_damaged.name}; a new one was "
                 f"started. The bot's record of the trailing Maximum Loss Limit is gone (it now assumes "
-                f"${core.tracker.floor:,.2f}): compare it with the MLL on TopstepX and, if it differs, set "
-                "account.mll_floor_override in config.yaml.")
+                f"${core.tracker.floor:,.2f}): compare it with the MLL on TopstepX and, if it differs, type TopstepX's "
+                "value as account.mll_floor_override in config.yaml (the bot applies a new number once).")
         if self.cfg.mode == "live":
             core.risk.paused = True
             text += " New trades are paused until you resume them."
@@ -1136,7 +1272,8 @@ class LiveRunner:
         if not live:
             return
         try:
-            self.market_today = mp.set_today(self.cfg, live[0], source, self.now(), markets=live)
+            self.market_today = mp.set_today(self.cfg, live[0], source, self.now(), markets=live,
+                                             closing=[s for s, ln in self.lanes.items() if ln.closing])
         except OSError as exc:
             log.warning("Could not save today's markets: %s", exc)
 
@@ -1280,9 +1417,10 @@ class LiveRunner:
                 try:
                     await c.orders.flatten_all("bot shutdown")
                 except Exception as exc:  # noqa: BLE001
-                    c.event("critical", f"Could not flatten on shutdown: {exc} - CHECK YOUR ACCOUNT")
+                    c.event("critical", f"Could not flatten on shutdown: {exc} - CHECK YOUR ACCOUNT", "error")
             if open_cores:
                 await asyncio.sleep(2)
+                await self._report_left_open()
         for task in self._tasks:
             task.cancel()
         for lane in list(self.lanes.values()):
@@ -1298,6 +1436,30 @@ class LiveRunner:
         await self.notifier.stop()
         await self.client.close()
         self.journal.close()
+
+    async def _report_left_open(self) -> None:
+        """After the shutdown flatten: if anything is still open (TopstepX refused or never answered the
+        close), the bot still exits - but says so loudly, and the exit note tells the controller to alert."""
+        still = [c for c in self.cores() if not c.orders.is_flat]
+        names = [c.contract.name for c in still]
+        if self.cfg.mode == "live" and self._shared_broker is not None:
+            try:
+                positions = await asyncio.wait_for(self._shared_broker.positions(), 5)
+            except Exception as exc:  # noqa: BLE001 - no answer: what the bot itself knows decides
+                log.warning("Could not check positions at shutdown: %s", exc)
+            else:  # TopstepX answered: its list decides
+                by_id = {c.contract.id: c for c in self.cores()}
+                open_ = [p for p in positions if p.size != 0]
+                still = [by_id[p.contract_id] for p in open_ if p.contract_id in by_id]
+                names = [by_id[p.contract_id].contract.name if p.contract_id in by_id else p.contract_id for p in open_]
+        if not names:
+            return
+        self.controls.open_position = True
+        self.controls.stop_reason = (f"stopped with an OPEN POSITION at TopstepX ({', '.join(names)}) - CHECK YOUR "
+                                     f"ACCOUNT ({self.controls.stop_reason or 'stop'})")
+        for c in still or self.cores()[:1]:
+            c.event("critical", self.controls.stop_reason + " - once it is closed, cancel any order of this market "
+                    "left in TopstepX by hand", "error")
 
     def _loop_ended(self, task: asyncio.Task) -> None:
         """A background loop must run until shutdown. If one dies, stop (and flatten) rather than keep
@@ -1345,8 +1507,8 @@ class LiveRunner:
                 self._maybe_check_in(now)
                 self._maybe_daily_restart(now)
                 await self._drop_closed_markets()
-            except Exception:  # noqa: BLE001 - keep the clock alive
-                log.exception("Clock loop error")
+            except Exception as exc:  # noqa: BLE001 - keep the clock alive
+                log_failure("Clock loop error", exc)
 
     async def _lane_tick(self, lane: Lane, now: datetime) -> None:
         core = lane.core
@@ -1357,14 +1519,17 @@ class LiveRunner:
             if lane.price_stale(now) and not core.orders.is_flat and now.second % 10 == 0:
                 await lane.poll_price()
             lane.sync_positions()
-        except Exception:  # noqa: BLE001 - one market's problem must not stop the others' clocks
-            log.exception("Clock error (%s)", lane.symbol)
+        except Exception as exc:  # noqa: BLE001 - one market's problem must not stop the others' clocks
+            log_failure(f"Clock error ({lane.symbol})", exc)
 
     async def _drop_closed_markets(self) -> None:
-        for lane in [ln for ln in self.lanes.values() if ln.closing and ln.core and ln.core.orders.is_flat]:
+        # Only once its first reconcile has looked at TopstepX: a lane opened after a restart starts "flat"
+        # until it recovers its trade.
+        for lane in [ln for ln in self.lanes.values() if ln.closing and ln.reconciled and ln.core and ln.core.orders.is_flat]:
             async with self._lane_lock:
                 if lane.symbol in self.lanes and len(self.lanes) > 1:
                     await self._drop(lane)
+                    self._save_markets(lane.closing or "closed")  # market_today.json stops listing it
                     self.core.event("info", f"Stopped trading {lane.symbol} ({lane.closing}); its trade is closed.")
 
     async def _reconcile_loop(self) -> None:
@@ -1373,8 +1538,8 @@ class LiveRunner:
             await self._safe_reconcile()
 
     async def _safe_reconcile(self) -> None:
-        for lane in list(self.lanes.values()):
-            await lane.reconcile()
+        # Together: one market waiting on a slow answer must not hold up another market's check.
+        await asyncio.gather(*(lane.reconcile() for lane in list(self.lanes.values())))
 
     async def _news_loop(self) -> None:
         """Refresh the calendars every 6 hours and the headlines every few minutes."""
@@ -1386,8 +1551,8 @@ class LiveRunner:
             for lane in list(self.lanes.values()):
                 try:
                     await lane.news_step(refresh)
-                except Exception:  # noqa: BLE001 - news is a bonus; trading goes on
-                    log.exception("News refresh failed (%s)", lane.symbol)
+                except Exception as exc:  # noqa: BLE001 - news is a bonus; trading goes on
+                    log_failure(f"News refresh failed ({lane.symbol})", exc)
             await asyncio.sleep(60)
 
     async def _learn_loop(self) -> None:

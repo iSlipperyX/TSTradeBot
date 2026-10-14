@@ -6,6 +6,8 @@ Every field has a safe default, so a minimal config only needs the plan, symbol 
 from __future__ import annotations
 
 import os
+import re
+import time as clock
 from datetime import date, time
 from pathlib import Path
 from typing import Any, Literal
@@ -39,12 +41,14 @@ class _Section(BaseModel):
 
 
 def _parse_hhmm(value: Any) -> time:
+    """A clock time written like "08:30". Unquoted 8:30 or 14:30 also works (the loader keeps it as text:
+    YAML 1.1 would read it as minutes); a bare number such as 8 or 830 is refused rather than guessed."""
     if isinstance(value, time):
         return value
-    if isinstance(value, int):  # YAML 1.1 reads unquoted 08:30 as sexagesimal minutes
-        return time(value // 60, value % 60)
-    parts = str(value).strip().split(":")
-    return time(int(parts[0]), int(parts[1]))
+    if isinstance(value, str) and re.fullmatch(r"\d{1,2}:\d{2}", value.strip()):
+        hours, minutes = (int(p) for p in value.strip().split(":"))
+        return time(hours, minutes)  # raises "hour must be in 0..23" itself
+    raise ValueError('must look like "08:30" (in quotes)')
 
 
 class TimeWindow(_Section):
@@ -77,7 +81,8 @@ class AccountConfig(_Section):
     starting_balance: float | None = None
     mll_floor_override: float | None = Field(
         default=None,
-        description="Current Maximum Loss Limit floor shown in your Topstep dashboard. Set it to sync the bot.",
+        description="A one-time sync of the Maximum Loss Limit floor shown in your Topstep dashboard: the bot applies a "
+                    "new number once, then follows its own trailing floor. To sync again, type the new number.",
     )
     topstep_daily_loss_limit: float | None = Field(
         default=None,
@@ -993,14 +998,62 @@ def load_env_file(path: Path = DEFAULT_ENV_PATH) -> None:
     """Minimal .env loader: KEY=VALUE lines, '#' comments. Existing env vars win."""
     if not path.exists():
         return
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip().removeprefix("export ").strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+    for raw in read_text_any(path).splitlines():
+        parsed = env_line(raw)
+        if parsed:
+            os.environ.setdefault(*parsed)
+
+
+def env_line(raw: str) -> tuple[str, str] | None:
+    """(key, value) of one .env line, or None for a blank line or a comment.
+
+    ``export KEY=value`` works, and an unquoted value ends at " #" (a comment after it); a quoted
+    value keeps its text, so KEY="a # b" is 'a # b'."""
+    line = raw.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        return None
+    key, value = line.split("=", 1)
+    key = key.strip().removeprefix("export ").strip()
+    value = value.strip()
+    if not value.startswith(('"', "'")) and " #" in value:
+        value = value.split(" #", 1)[0].strip()
+    return key, value.strip('"').strip("'")
+
+
+def env_key(raw: str) -> str | None:
+    """The key a .env line sets (``export `` removed), or None."""
+    parsed = env_line(raw)
+    return parsed[0] if parsed else None
+
+
+def read_text_any(path: Path) -> str:
+    """config.yaml or .env as text, whichever way Windows saved it: UTF-8 with or without a BOM, or the
+    UTF-16 that PowerShell's > writes. Line endings become \\n, as read_text gives them (Windows files end
+    lines with \\r\\n). Anything else is a ConfigError in plain words."""
+    data = Path(path).read_bytes()
+    try:
+        text = data.decode("utf-16") if data.startswith((b"\xff\xfe", b"\xfe\xff")) else data.decode("utf-8-sig")
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+    except UnicodeDecodeError:
+        raise ConfigError(f"{Path(path).name} is not saved as UTF-8 (PowerShell's > writes UTF-16): save it as UTF-8") from None
+
+
+def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write a file so a crash or power cut leaves the old file or the new one, never half of one."""
+    path = Path(path)
+    part = path.with_name(path.name + ".part")
+    with open(part, "w", encoding=encoding) as f:  # text mode: \n becomes \r\n on Windows, as write_text does
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    for attempt in range(5):  # Windows: a virus scanner or an editor may hold the file for a moment
+        try:
+            os.replace(part, path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            clock.sleep(0.05 * (attempt + 1))
 
 
 def load_secrets() -> Secrets:
@@ -1045,13 +1098,39 @@ def load_config(path: Path | str | None = None) -> BotConfig:
         if path:
             raise FileNotFoundError(f"Config file not found: {cfg_path}")
         return BotConfig()
-    return anchor_folders(config_from_text(cfg_path.read_text(encoding="utf-8"), cfg_path), cfg_path)
+    return anchor_folders(config_from_text(read_text_any(cfg_path), cfg_path), cfg_path)
+
+
+class _Loader(yaml.SafeLoader):
+    """yaml.safe_load that refuses a key written twice (YAML would quietly keep the last one, while the
+    Setup tab edits the first), and keeps an unquoted 14:30 as the text '14:30' (YAML 1.1 reads it as minutes)."""
+
+    def construct_mapping(self, node, deep=False):
+        seen: dict[Any, int] = {}
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            line = key_node.start_mark.line + 1
+            try:
+                first = seen.setdefault(key, line)
+            except TypeError:  # an unhashable key: let SafeLoader say what is wrong with it
+                continue
+            if first != line:
+                raise ConfigError(f"{key}: appears twice (lines {first} and {line}) - keep one")
+        return super().construct_mapping(node, deep)
+
+    def construct_yaml_int(self, node):
+        if ":" in node.value:
+            return node.value
+        return super().construct_yaml_int(node)
+
+
+_Loader.add_constructor("tag:yaml.org,2002:int", _Loader.construct_yaml_int)
 
 
 def config_from_text(text: str, name: Path | str = DEFAULT_CONFIG_PATH) -> BotConfig:
     """Parse and check config.yaml's contents (folders are left relative). Raises ConfigError."""
     try:
-        raw = yaml.safe_load(text) or {}
+        raw = yaml.load(text, Loader=_Loader) or {}  # noqa: S506 - _Loader is a SafeLoader
     except yaml.YAMLError as exc:
         raise ConfigError(f"{name} is not valid YAML (check indentation and quotes):\n  {exc}") from None
     if not isinstance(raw, dict):

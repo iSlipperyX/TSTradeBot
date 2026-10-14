@@ -107,6 +107,24 @@ def test_429_backs_off_and_retries(monkeypatch):
     assert slept and slept[0] >= 1
 
 
+def test_a_cancel_retries_once_a_second_later_not_for_a_quarter_minute(monkeypatch):
+    # cancel, modify and close are sent while a market's order manager holds its lock: keep the wait short.
+    api = FakeApi()
+    api.fail_next["/api/Order/cancel"] = [httpx.Response(500), httpx.Response(500)]
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    async def go():
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        async with client(api) as c:
+            with pytest.raises(ProjectXError):
+                await c.cancel_order(7, 1)
+    run(go())
+    assert [call[0] for call in api.calls].count("/api/Order/cancel") == 2 and slept == [1]
+
+
 def test_success_false_raises_with_code():
     api = FakeApi()
     api.fail_next["/api/Order/cancel"] = [httpx.Response(200, json={"success": False, "errorCode": 5, "errorMessage": "nope"})]

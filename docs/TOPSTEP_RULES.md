@@ -55,8 +55,9 @@ touching it ends the account. In an XFA the MLL moves to $0 after the first payo
 - Stops new trades when equity is within `mll_buffer` of the floor, and closes an open trade at
   once when it gets within half of it.
 - If the bot can't work out the floor (for example an account that was traded before), the
-  preflight check asks you for the value shown in your dashboard, or you can set
-  `account.mll_floor_override`.
+  preflight check asks you for the value shown in your dashboard, or you can type it as
+  `account.mll_floor_override`. That is a one-time sync: the bot applies a new number once, then
+  follows its own trailing floor.
 
 ### Daily Loss Limit (DLL)
 
@@ -180,7 +181,9 @@ one. If your TopstepX Risk Settings show different values:
 - **Different position limit** (for example a temporary product cap): set `risk.max_contracts` to
   the lower number in `config.yaml`. The bot never goes above it.
 - **Different Daily Loss Limit**: set `account.topstep_daily_loss_limit` to the dollar amount.
-- **Different MLL floor**: set `account.mll_floor_override` to the value in your dashboard.
+- **Different MLL floor**: type the value in your dashboard as `account.mll_floor_override`. The bot
+  applies a new number once and then trails from it; a number that was already in the file before it
+  remembered overrides is ignored with a warning. To sync again, change the number.
 - Anything else: update `risk/topstep.py` and run the tests (`pytest`); every rule has a test in
   `tests/test_topstep_compliance.py`.
 

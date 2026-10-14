@@ -36,6 +36,7 @@ class FakeTopstepX:
         self.next_id = 100
         self.calls: list[tuple[str, dict]] = []
         self.user_events: asyncio.Queue = asyncio.Queue()
+        self.refuse_close = False  # answer closeContract with TopstepX's "no" (success false)
 
     # ------------------------------------------------------------- REST
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -92,6 +93,8 @@ class FakeTopstepX:
             pos = [] if self.position == 0 else [{"id": 1, "accountId": 7, "contractId": CONTRACT["id"], "type": 1 if self.position > 0 else 2,
                                                    "size": abs(self.position), "averagePrice": self.price}]
             return httpx.Response(200, json={**ok, "positions": pos})
+        if path == "/api/Position/closeContract" and self.refuse_close:
+            return httpx.Response(200, json={"success": False, "errorCode": 5, "errorMessage": "refused"})
         if path == "/api/Position/closeContract":
             side = 1 if self.position > 0 else 0
             if self.position:
@@ -189,6 +192,40 @@ def test_live_mode_end_to_end(tmp_path):
         assert fake.position == 0
         assert all(o["status"] != 1 for o in fake.orders.values())  # nothing left working
         assert core.closed_trades and core.closed_trades[0].exit_reason == "bot shutdown"
+
+    run(go())
+
+
+def test_a_stop_whose_close_is_refused_says_the_position_is_still_open(tmp_path):
+    async def go():
+        fake = FakeTopstepX()
+        async with websockets.serve(fake.hub, "127.0.0.1", 0) as srv:
+            runner = make_runner(fake, srv.sockets[0].getsockname()[1], "live", tmp_path)
+            ready = asyncio.Event()
+
+            async def on_ready(core):
+                core.schedule.must_be_flat = lambda ts: False  # make the test independent of the time of day
+                ready.set()
+
+            task = asyncio.create_task(runner.run(on_ready))
+            await asyncio.wait_for(ready.wait(), 20)
+            core = runner.core
+            entry = fake.price
+            await core.orders.enter(OrderSide.BUY, 2, entry - 10, entry + 20, "integration", ref_price=entry)
+            for _ in range(100):
+                t = core.orders.trade
+                if t and t.state == TradeState.OPEN and t.stop_order_id and t.target_order_id:
+                    break
+                await asyncio.sleep(0.05)
+            fake.refuse_close = True
+            runner.controls.request_stop("test")
+            await asyncio.wait_for(task, 20)
+        assert "OPEN POSITION" in runner.controls.stop_reason and runner.controls.stop_reason.endswith("(test)")
+        assert runner.controls.open_position is True
+        assert fake.position == 2
+        working = [o for o in fake.orders.values() if o["status"] == 1]
+        assert sorted(o["type"] for o in working) == [1, 4]  # its stop and its target still manage it
+        assert any(e["level"] == "critical" and "OPEN POSITION" in e["message"] for e in core.events)
 
     run(go())
 

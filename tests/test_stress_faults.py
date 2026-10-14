@@ -267,7 +267,7 @@ async def chaos(seed: int, steps: int = 2000, max_size: int = 3) -> dict:
             "closed": len(closed), "errors": sum(broker.errors.values())}
 
 
-@pytest.mark.parametrize("seed", range(10))
+@pytest.mark.parametrize("seed", [*range(100), 30003, 30027, 30089, 30098, 30153, 30235, 31078, 31282, 31314])
 def test_chaos_never_doubles_reverses_or_leaves_anything_behind(seed):
     result = run(chaos(seed))
     assert result["errors"] > 100 and result["closed"] > 20  # it really was a rough session
@@ -413,3 +413,23 @@ def test_a_bot_started_during_a_topstepx_outage_waits_for_it_instead_of_crashing
             await asyncio.wait_for(task, 5)
 
     run(go())
+
+
+def test_an_outage_is_one_log_line_and_a_bug_keeps_its_traceback(caplog):
+    import logging
+
+    import httpx
+
+    from topstep_bot import live
+
+    caplog.set_level(logging.WARNING, logger="topstep_bot.live")
+    for exc in (httpx.ConnectError("[Errno 11001] getaddrinfo failed"), KeyError("bug")):
+        try:
+            raise exc
+        except Exception as caught:  # noqa: BLE001
+            live.log_failure("Clock loop error", caught)
+    outage, bug = caplog.records[-2:]
+    # (once logging is set up, the redacting filter moves the traceback from exc_info to exc_text)
+    assert outage.levelname == "WARNING" and outage.exc_info is None and not outage.exc_text
+    assert outage.getMessage() == "Clock loop error: [Errno 11001] getaddrinfo failed (connection problem; trying again)"
+    assert bug.levelname == "ERROR" and (bug.exc_info is not None or "KeyError" in (bug.exc_text or ""))

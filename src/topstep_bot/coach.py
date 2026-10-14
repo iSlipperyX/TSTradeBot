@@ -278,7 +278,7 @@ class Coach:
         prop: dict[str, Any] = {"id": pysecrets.token_hex(4), "at": datetime.now(UTC).isoformat(timespec="seconds"),
                                 "kind": kind, "reason": " ".join(str(body.get("reason", "")).split())[:500],
                                 "evidence": " ".join(str(body.get("evidence", "")).split())[:800], "status": "pending",
-                                "session": session}
+                                "session": session, "account": self.cfg.active_account}  # None with one account
         if kind == "playbook":
             symbol = str(body.get("symbol", "")).strip().upper()
             strategy = str(body.get("strategy", "")).strip()

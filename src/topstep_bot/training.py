@@ -32,7 +32,7 @@ from typing import Any
 
 import yaml
 
-from topstep_bot.config import BotConfig, load_config
+from topstep_bot.config import BotConfig, atomic_write_text, load_config, read_text_any
 from topstep_bot.models import Bar, Contract
 
 
@@ -481,7 +481,7 @@ def save_strategy(config_path: Path, strategy: str, params: dict, note: str = ""
 
     A backup is saved as config.yaml.bak; if the result doesn't load, the backup is restored."""
     path = Path(config_path)
-    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    original = read_text_any(path) if path.exists() else ""
     lines = original.splitlines(keepends=True)
     block = yaml.safe_dump({"strategy": {"name": strategy, "params": params}}, sort_keys=False,
                            default_flow_style=None, width=1000)
@@ -502,14 +502,14 @@ def save_strategy(config_path: Path, strategy: str, params: dict, note: str = ""
     backup = path.with_name(path.name + ".bak")
     if original:
         backup.write_text(original, encoding="utf-8")
-    path.write_text(new, encoding="utf-8")
+    atomic_write_text(path, new)
     try:
         cfg = load_config(path)
     except Exception:
         if original:
-            path.write_text(original, encoding="utf-8")
+            atomic_write_text(path, original)
         raise
     if cfg.strategy.name != strategy:
-        path.write_text(original, encoding="utf-8")
+        atomic_write_text(path, original)
         raise ValueError("Could not update the strategy in config.yaml - edit it by hand.")
     return backup

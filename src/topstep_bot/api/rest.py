@@ -152,7 +152,12 @@ class ProjectXClient:
 
     # --------------------------------------------------------------- transport
 
-    async def _post(self, path: str, body: dict, *, idempotent: bool = True, bars: bool = False) -> dict:
+    async def _post(self, path: str, body: dict, *, idempotent: bool = True, bars: bool = False,
+                    quick: bool = False) -> dict:
+        """``quick``: two tries a second apart on a network error or a 5xx (instead of four over about 14 s).
+        For cancel, modify and close, which the order manager sends while it holds its lock: a long wait
+        there leaves other events of that market waiting, and reconcile retries a failed cancel or close."""
+        tries, pause = (2, lambda attempt: 1) if quick else (4, lambda attempt: min(2 ** attempt, 15))
         limiter = self._bars_limiter if bars else self._general_limiter
         reauthed = False
         attempt = 0
@@ -163,9 +168,9 @@ class ProjectXClient:
             try:
                 resp = await self._http.post(path, json=body, headers={"Authorization": f"Bearer {token}"})
             except httpx.TransportError as exc:
-                if not idempotent or attempt >= 4:
+                if not idempotent or attempt >= tries:
                     raise
-                delay = min(2 ** attempt, 15)
+                delay = pause(attempt)
                 log.warning("Network error on %s (%s); retrying in %ss", path, exc, delay)
                 await asyncio.sleep(delay)
                 continue
@@ -180,8 +185,8 @@ class ProjectXClient:
                 log.warning("Rate limited on %s; backing off %ss", path, delay)
                 await asyncio.sleep(delay)
                 continue
-            if resp.status_code >= 500 and idempotent and attempt < 4:
-                await asyncio.sleep(min(2 ** attempt, 15))
+            if resp.status_code >= 500 and idempotent and attempt < tries:
+                await asyncio.sleep(pause(attempt))
                 continue
             if resp.status_code != 200:
                 raise ProjectXError(f"{path} failed: HTTP {resp.status_code} {resp.text[:200]}", resp.status_code)
@@ -300,8 +305,10 @@ class ProjectXClient:
         data = await self._post("/api/Order/place", body, idempotent=False)
         return int(data["orderId"])
 
-    async def cancel_order(self, account_id: int, order_id: int) -> None:
-        await self._post("/api/Order/cancel", {"accountId": account_id, "orderId": order_id})
+    async def cancel_order(self, account_id: int, order_id: int, *, quick: bool = False) -> None:
+        """Always a short retry (see ``_post``); ``quick``: none at all (the emergency flatten retries the whole pass)."""
+        await self._post("/api/Order/cancel", {"accountId": account_id, "orderId": order_id}, idempotent=not quick,
+                         quick=True)
 
     async def modify_order(
         self,
@@ -321,7 +328,7 @@ class ProjectXClient:
             "stopPrice": stop_price,
             "trailPrice": trail_price,
         }
-        await self._post("/api/Order/modify", body)
+        await self._post("/api/Order/modify", body, quick=True)  # a failed modify keeps the old stop working
 
     async def search_orders(self, account_id: int, start: datetime, end: datetime | None = None) -> list[Order]:
         body = {"accountId": account_id, "startTimestamp": parse.format_ts(start)}
@@ -340,8 +347,10 @@ class ProjectXClient:
         data = await self._post("/api/Position/searchOpen", {"accountId": account_id})
         return [parse.position(p) for p in data.get("positions") or []]
 
-    async def close_position(self, account_id: int, contract_id: str) -> None:
-        await self._post("/api/Position/closeContract", {"accountId": account_id, "contractId": contract_id})
+    async def close_position(self, account_id: int, contract_id: str, *, quick: bool = False) -> None:
+        """Always a short retry (see ``_post``); ``quick``: none at all (the emergency flatten retries the whole pass)."""
+        await self._post("/api/Position/closeContract", {"accountId": account_id, "contractId": contract_id},
+                         idempotent=not quick, quick=True)
 
     async def partial_close_position(self, account_id: int, contract_id: str, size: int) -> None:
         await self._post(
