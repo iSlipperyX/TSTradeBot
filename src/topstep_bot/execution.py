@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 MAX_STOP_FAILURES = 2
-EXIT_RETRY_AFTER = timedelta(seconds=10)
+EXIT_RETRY_AFTER = timedelta(seconds=2)
 # A close asked for by a position report or by reconcile is not sent again within this time of the last
 # one: the report often arrives milliseconds after a close went out, and a second close while the first
 # is still unfilled could reverse the position.
@@ -70,7 +70,8 @@ class ManagedTrade:
     state: TradeState = TradeState.PENDING
     entry_order_id: int | None = None
     entry_price: float | None = None
-    filled_size: int = 0
+    filled_size: int = 0  # contracts open now; partial exits move contracts from here to ``exited``
+    exited: int = 0  # contracts closed by partial exits while the trade stays open (entered = filled_size + exited)
     opened_at: datetime | None = None
     initial_stop: float = 0.0
     stop_order_id: int | None = None
@@ -88,6 +89,7 @@ class ManagedTrade:
     exit_reports: dict[int, tuple[float, int]] = field(default_factory=dict)
     # Closes sent because a stop or target filled (one per order is enough), and when the last close went out.
     close_sent_for: set[int] = field(default_factory=set)
+    filled_orders: set[int] = field(default_factory=set)  # our stop/target orders that reported fills
     last_close_at: datetime | None = None
     exit_price: float | None = None
     exit_reason: str = ""
@@ -115,6 +117,10 @@ class ManagedTrade:
     @property
     def signed_size(self) -> int:
         return self.filled_size * self.side.sign
+
+    @property
+    def entered(self) -> int:
+        return self.filled_size + self.exited
 
     def _exit_parts(self) -> list[tuple[float, int]]:
         parts = []
@@ -146,10 +152,14 @@ class ManagedTrade:
         self.exit_reports[order_id] = (price, qty)
         return True
 
-    def average_exit(self) -> float | None:
+    def average_exit(self, fallback: float | None) -> float | None:
+        """The average exit price over the entered size; contracts no report priced count at ``fallback``."""
         parts = [(p, q) for p, q in self._exit_parts() if q > 0]
+        missing = self.entered - sum(q for _, q in parts)
+        if missing > 0 and fallback is not None:
+            parts.append((fallback, missing))
         qty = sum(q for _, q in parts)
-        return sum(p * q for p, q in parts) / qty if qty else None
+        return sum(p * q for p, q in parts) / qty if qty else fallback
 
     @property
     def risk_points(self) -> float:
@@ -255,6 +265,9 @@ class OrderManager:
         # without holding the lock, and discards that view if anything changed while it was fetching
         # (otherwise a fill arriving mid-fetch looks like "position closed" or "stop missing").
         self._version = 0
+        # Two reconciles started together (start-up and reconnect run one each) would both act on the same
+        # snapshot and, for example, place two stops for one trade: they run one at a time.
+        self._reconcile_lock = asyncio.Lock()
         broker.on_order = self.handle_order
         broker.on_position = self.handle_position
         broker.on_fill = self.handle_fill
@@ -513,9 +526,11 @@ class OrderManager:
                         self.trade = None
                         self._event("warning", f"Entry order {order.status.name.lower()} - no position opened")
             elif role in ("stop", "target"):
-                if order.status == OrderStatus.FILLED and t.state in (TradeState.OPEN, TradeState.EXITING):
-                    t.note_exit(order.id, order.filled_price or self.last_price or 0.0, order.fill_volume or order.size)
-                    await self._exit_order_filled(t, order.id, role)
+                filled = order.fill_volume or (order.size if order.status == OrderStatus.FILLED else 0)
+                if filled and t.state in (TradeState.OPEN, TradeState.EXITING):
+                    t.filled_orders.add(order.id)
+                    t.note_exit(order.id, order.filled_price or self.last_price or 0.0, filled)
+                    await self._exit_order_filled(t, order.id, role, done=order.status.is_done)
                 elif order.status.is_working:
                     await self._adopt(t, order)
                 elif (
@@ -557,27 +572,61 @@ class OrderManager:
         self._event("warning", f"Cancelling duplicate order {order.id} of the current trade")
         await self._safe_cancel(order.id)
 
-    async def _exit_order_filled(self, t: ManagedTrade, order_id: int, role: str) -> None:
-        if not t.exit_reason:
-            t.exit_reason = "stop loss" if role == "stop" else "profit target"
-        if t.exit_ref is None:
-            t.exit_ref = t.stop_price if role == "stop" else t.target_price
+    async def _exit_order_filled(self, t: ManagedTrade, order_id: int, role: str, done: bool = False) -> None:
         sibling = t.target_order_id if role == "stop" else t.stop_order_id
         if t.state == TradeState.EXITING:
             # A close was already sent: if it filled too (its reports may be lost), this fill reversed the
             # position instead of closing it. Close whatever is there now; a flat report finishes the trade.
+            if not t.exit_reason:
+                t.exit_reason = "stop loss" if role == "stop" else "profit target"
             await self._safe_cancel(sibling)
             await self._close_now(t, order_id=order_id)
             return
-        if t.exited_size < t.filled_size:
-            return  # only part of it so far; the rest of the fill (or the order's own report) follows
+        if t.exited_size < t.entered:
+            # It closed part of the position (e.g. a target that filled 1 of 2): the trade goes on smaller.
+            await self._shrink(t, t.entered - t.exited_size)
+            if role == "stop" and done and order_id == t.stop_order_id:
+                # A stop smaller than the position (its resize failed) filled and is gone: protect the rest.
+                t.stop_order_id = None
+                await self._place_stop(t)
+            elif role == "target" and done and order_id == t.target_order_id:
+                t.target_order_id = None
+            return
+        if not t.exit_reason:
+            t.exit_reason = "stop loss" if role == "stop" else "profit target"
+        if t.exit_ref is None:
+            t.exit_ref = t.stop_price if role == "stop" else t.target_price
         await self._safe_cancel(sibling)
         await self._finalize(t)
+
+    async def _shrink(self, t: ManagedTrade, still_open: int) -> None:
+        """Part of the position was closed while the trade stays open: the stop (and the target, unless it
+        is the order that partly filled - its working rest already fits) now cover what is left. Left at
+        full size, the stop would sell more than is held and reverse the position when hit."""
+        if still_open >= t.filled_size or still_open <= 0:
+            return
+        self._event("info", f"Part of the position closed: {t.filled_size - still_open} of {t.filled_size} "
+                            f"contracts out, {still_open} still open")
+        t.exited += t.filled_size - still_open
+        t.filled_size = still_open
+        if self.use_native_brackets:
+            return
+        for oid in (t.stop_order_id, t.target_order_id):
+            if oid is None or oid in t.filled_orders:
+                continue
+            try:
+                self._count_action()
+                await self.broker.modify_order(oid, size=t.filled_size)
+            except Exception as exc:  # noqa: BLE001 - reconcile compares sizes again and retries
+                self._event("warning", f"Could not resize order {oid} to {t.filled_size}: {exc}")
 
     async def _closing_fill(self, t: ManagedTrade) -> None:
         """A close (ours or by hand) filled: once it covers the position, the position is flat even if its
         position update is late or lost. Cancel the protective stop now - left working it would reverse it."""
-        if not t.filled_size or t.exited_size < t.filled_size:
+        if not t.filled_size:
+            return
+        if t.exited_size < t.entered:
+            await self._shrink(t, t.entered - t.exited_size)  # part of it: protect what is left with smaller orders
             return
         await self._safe_cancel(t.stop_order_id)
         await self._safe_cancel(t.target_order_id)
@@ -599,6 +648,7 @@ class OrderManager:
             if not t.note_exit(fill.order_id, fill.price, fill.size, fill_id=fill.id):
                 return
             if fill.order_id in (t.stop_order_id, t.target_order_id):
+                t.filled_orders.add(fill.order_id)
                 await self._exit_order_filled(t, fill.order_id, "stop" if fill.order_id == t.stop_order_id else "target")
             else:
                 await self._closing_fill(t)  # e.g. a close-position market order
@@ -618,8 +668,12 @@ class OrderManager:
                 await self._wrong_side(t, pos)
             elif t.state == TradeState.PENDING and same_side:
                 await self._entry_filled(t, pos.avg_price, abs(pos.size))
-            elif t.state == TradeState.OPEN and same_side and abs(pos.size) > t.filled_size:
-                # The rest of a partially filled entry arrived: protect the whole position at once.
+            elif t.state == TradeState.OPEN and same_side and abs(pos.size) < t.filled_size:
+                # A partial exit (a target that filled part of its size, a close by hand of some contracts).
+                await self._shrink(t, abs(pos.size))
+            elif t.state == TradeState.OPEN and same_side and abs(pos.size) > t.entered:
+                # The rest of a partially filled entry arrived: protect the whole position at once. (A size
+                # between what is open and what was entered is a report from before a partial exit.)
                 self._event("info", f"Entry fill completed: {abs(pos.size)} contracts @ {pos.avg_price}")
                 t.filled_size = abs(pos.size)
                 t.entry_price = pos.avg_price
@@ -657,9 +711,10 @@ class OrderManager:
     async def _finalize(self, t: ManagedTrade) -> None:
         if t.state == TradeState.CLOSED:
             return
-        t.exit_price = t.average_exit()
-        if t.exit_price is None:
-            t.exit_price = self.last_price if self.last_price is not None else t.entry_price
+        # Partial exits are part of the trade: its size, P&L and fees are those of everything entered
+        # (otherwise a trade that shrank would under-report its loss to the daily-loss guard).
+        t.filled_size, t.exited = t.entered, 0
+        t.exit_price = t.average_exit(self.last_price if self.last_price is not None else t.entry_price)
         t.closed_at = self.clock()
         t.gross_pnl = self.contract.pnl(t.entry_price or 0.0, t.exit_price or 0.0, t.signed_size)
         t.fees = self.fees_round_turn * t.filled_size
@@ -704,7 +759,9 @@ class OrderManager:
             t.exit_ref = self.last_price
         t.exit_reason = t.exit_reason or reason
         await self._safe_cancel(t.target_order_id)
-        await self._close_now(t, first=True, failed=("critical", "protective stop left in place"))
+        # Never ask the broker here (the lock is held): say what the bot knows.
+        await self._close_now(t, first=True, failed=("critical", "protective stop left in place" if t.stop_order_id is not None
+                                                     else "NO protective stop is working - retrying"))
         # The protective stop is deliberately kept until the broker reports the position flat
         # (handle_position / reconcile cancel it then), so the trade is never unprotected.
 
@@ -774,6 +831,10 @@ class OrderManager:
     # ---------------------------------------------------------- reconciliation
 
     async def reconcile(self) -> None:
+        async with self._reconcile_lock:
+            await self._reconcile_once()
+
+    async def _reconcile_once(self) -> None:
         """Compare our view with the broker's and repair any difference.
 
         Open orders are listed before positions: a stop that fills in between then looks like "position
@@ -798,6 +859,11 @@ class OrderManager:
         async with self._lock:
             if self._version != version:
                 log.debug("Reconcile skipped: state changed while fetching the broker's view")
+                orders = positions = None
+            else:
+                self._version += 1  # what follows changes our state: any snapshot taken meanwhile is stale
+            if orders is None and positions is None:
+                pass
             elif orders is None:
                 await self._reconcile_positions(positions)
             elif positions is None:
@@ -831,16 +897,32 @@ class OrderManager:
         """Only the open orders came back: adopt or cancel what they show; an exiting trade whose stop is no
         longer working may have been reversed by it, so a close goes out as a precaution."""
         t = self.trade
-        await self._cancel_stale_orders(orders, t)
-        self._unconfirmed_tags.clear()
+        # Orders that are no longer working are not cleared from the leftovers here: one may have filled
+        # into a position that only the positions half (which failed) would show.
+        await self._cancel_stale_orders(orders, t, prune=False)
         if t is not None and t.state == TradeState.EXITING and t.stop_order_id not in {o.id for o in orders}:
             await self._close_now(t)
 
-    async def _retry_close(self, t: ManagedTrade) -> None:
-        if t.exit_sent_at is None or self.clock() - t.exit_sent_at > EXIT_RETRY_AFTER:
-            self._event("warning", "Position still open while exiting - retrying close")
-            t.exit_sent_at = self.clock()
-            await self._close_now(t)
+    async def _retry_close(self, t: ManagedTrade, stop_working: bool | None = None) -> None:
+        """The position is still open while exiting. With no stop working at TopstepX (its placement and
+        the close both failed), one is placed as insurance before the close is retried; if the close then
+        goes through, that stop is cancelled at once - with the close's reports lost it would otherwise be
+        an order on a flat account."""
+        if t.exit_sent_at is not None and self.clock() - t.exit_sent_at <= EXIT_RETRY_AFTER:
+            return
+        insurance = None
+        if stop_working is False and not self.use_native_brackets and t.stop_failures < MAX_STOP_FAILURES:
+            self._event("critical", "Exiting with NO protective stop working at TopstepX - placing one while the "
+                                    "close is retried")
+            await self._safe_cancel(t.stop_order_id)
+            t.stop_order_id = None
+            await self._place_stop(t)
+            insurance = t.stop_order_id
+        self._event("warning", "Position still open while exiting - retrying close")
+        t.exit_sent_at = self.clock()
+        if await self._close_now(t, first=True) and insurance is not None:
+            await self._safe_cancel(insurance)
+            t.stop_order_id = None
 
     async def _reconcile_both(self, positions: list[Position], orders: list[Order]) -> None:
         pos = self._own_position(positions)
@@ -871,17 +953,20 @@ class OrderManager:
         if pos is None:
             await self._flat_reported(t)
             return
-        if t.state == TradeState.EXITING:
-            await self._retry_close(t)
-            return
         working_ids = {o.id for o in orders}
+        if t.state == TradeState.EXITING:
+            await self._retry_close(t, stop_working=t.stop_order_id in working_ids)
+            return
         if self.use_native_brackets:
             for o in orders:
                 if o.side == t.side.opposite and o.type == OrderType.STOP:
                     t.stop_order_id = o.id
                 elif o.side == t.side.opposite and o.type == OrderType.LIMIT:
                     t.target_order_id = o.id
-        t.filled_size = abs(pos.size)
+        if abs(pos.size) < t.filled_size:
+            await self._shrink(t, abs(pos.size))
+        else:
+            t.filled_size = abs(pos.size)
         if t.stop_order_id not in working_ids:
             self._event("warning", "Protective stop missing at broker - re-placing")
             # Cancel the old one first: "not working" in a snapshot may only mean it was being changed.
@@ -889,15 +974,16 @@ class OrderManager:
             t.stop_order_id = None
             await self._place_stop(t)
             return
-        sizes = {o.id: o.size for o in orders}
+        sizes = {o.id: o.size - (o.fill_volume or 0) for o in orders}  # what is still working of each
         if any(sizes.get(oid, t.filled_size) != t.filled_size for oid in (t.stop_order_id, t.target_order_id)):
             await self._resize_protection(t, sizes)
 
-    async def _cancel_stale_orders(self, orders: list[Order], t: ManagedTrade | None) -> None:
+    async def _cancel_stale_orders(self, orders: list[Order], t: ManagedTrade | None, prune: bool = True) -> None:
         """Cancel working bot orders that don't belong to the current trade (e.g. a stop whose cancel failed),
-        and adopt the current trade's own stop or target if the bot never got its id."""
-        working = {o.id for o in orders}
-        self._leftovers &= working
+        and adopt the current trade's own stop or target if the bot never got its id. With ``prune`` (the
+        positions were listed too) the leftovers no longer working are forgotten."""
+        if prune:
+            self._leftovers &= {o.id for o in orders}
         for o in orders:
             match = _ANY_OWN_TAG.match(o.custom_tag or "")
             if match is None and o.id not in self._leftovers:
