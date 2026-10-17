@@ -70,6 +70,8 @@ class AccountBook:
         self.best_prior_day = 0.0  # best finished day of the Combine so far (Consistency Target)
         self.realized_today = 0.0
         self.day_peak = 0.0  # best realized P&L today (the aggressive mode's lock-in)
+        self.goal: float | None = None  # today's profit goal from the day plan (day_plan.py): trading stops once reached
+        self.goal_text = ""  # where it came from, for the lock message ("your goal", "last goal", "suggested goal")
         self._lanes: dict[str, Callable[[], Exposure]] = {}
 
     # ------------------------------------------------------------------ lanes

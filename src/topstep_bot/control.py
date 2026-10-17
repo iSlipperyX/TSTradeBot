@@ -348,6 +348,41 @@ class BotActions:
         rows = [r for r in core.journal.assistant_decisions(limit=200, day=day) if r.get("symbol") == core.contract.name]
         return {"items": rows[:max(1, min(100, limit))]}
 
+    # ------------------------------------------------------------------ the day plan and the trend
+
+    def plan_text(self) -> str:
+        from topstep_bot.day_plan import plan_text
+
+        plan = self.core.plan_view()
+        if plan is None:
+            return "The day plan runs with the live or paper bot."
+        return plan_text(plan)
+
+    def trend_text(self) -> str:
+        from topstep_bot.trend import view_text
+
+        return view_text(self.core.trend_view(), self.core.contract.name)
+
+    def set_goal(self, goal: float | None, source: str) -> str:
+        """Today's goal for this account (None = no goal today): saved, and used at once (day_plan.py)."""
+        from topstep_bot.day_plan import goal_day, save_goal
+
+        cfg = self.core.cfg
+        day = goal_day(cfg, self.core.clock())
+        save_goal(cfg, day, goal, source, self.core.clock())
+        self.goal_reload()
+        self.core.event("info", f"Goal for {day} set from {source}: {fmt.money(goal) if goal is not None else 'no goal'}")
+        return self.plan_text()
+
+    def goal_reload(self) -> str:
+        """The controller saved a goal: read it now instead of within the next few seconds."""
+        desk = self.desk
+        if desk is not None and desk.planner is not None:
+            desk.planner.reload(force=True)
+            desk._plan_tick()
+            return "Goal read."
+        return "No day plan here."
+
     # ------------------------------------------------------------------ markets (several at once)
 
     def _desk(self) -> LiveRunner:
@@ -436,11 +471,15 @@ class BotActions:
             return self.assistant_retry(payload)
         if name == "assistant_decisions":
             return self.assistant_decisions(int(payload.get("limit") or 30))
+        if name == "goal_reload":
+            return self.goal_reload()
+        if name == "plan":
+            return {"plan": self.core.plan_view()}
         texts = {"status_text": self.status_text, "ideas_text": self.ideas_text, "trades_text": self.trades_text,
                  "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text,
                  "brief_text": self.brief_text, "next_text": self.next_text, "market_text": self.market_text,
                  "funded_text": self.funded_text, "rules_text": self.rules_text, "markets_text": self.markets_text,
-                 "assistant_text": self.assistant_text}
+                 "assistant_text": self.assistant_text, "plan_text": self.plan_text, "trend_text": self.trend_text}
         if name in texts:
             return {"text": texts[name]()}
         if name == "insights":

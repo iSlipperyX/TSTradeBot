@@ -20,6 +20,7 @@ and a quiet day can have no trade at all. Every answer says what it is based on.
 from __future__ import annotations
 
 from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -126,6 +127,28 @@ def _minutes(hhmm: str) -> int | None:
         return None
 
 
+def takes_signal(core: TradingCore, today: date) -> Callable[[Observation], bool]:
+    """Would the bot trade this past signal with what it knows today? Its own strategy's signals; for the adaptive
+    strategy, signals of the strategies the knowledge base lets it trade at that time of day and regime."""
+    strat = core.strategy
+    subs = getattr(strat, "subs", None)
+    takes = getattr(strat, "would_take", None)
+    verdicts: dict[tuple[str, str, str], bool] = {}
+    names = {s.name for s in subs} if subs is not None else set()
+
+    def counts(o: Observation) -> bool:
+        if subs is None:
+            return o.strategy == strat.name
+        if takes is None:
+            return False
+        k = (o.strategy, o.slot, o.regime)
+        if k not in verdicts:
+            verdicts[k] = o.strategy in names and takes(o.strategy, o.slot, o.regime, today)
+        return verdicts[k]
+
+    return counts
+
+
 def signal_history(core: TradingCore, today: date) -> SignalHistory | None:
     """The signals the bot would take today, on each past day in the knowledge base (cached per change)."""
     kb = core.knowledge
@@ -141,19 +164,8 @@ def signal_history(core: TradingCore, today: date) -> SignalHistory | None:
     lo, hi = cfg.trade_start.hour * 60 + cfg.trade_start.minute, cfg.last_entry.hour * 60 + cfg.last_entry.minute
     blackouts = [(w.start.hour * 60 + w.start.minute, w.end.hour * 60 + w.end.minute) for w in cfg.blackout_windows]
     first = (today - timedelta(days=LOOKBACK_DAYS)).isoformat()
+    counts = takes_signal(core, today)
     subs = getattr(strat, "subs", None)
-    takes = getattr(strat, "would_take", None)
-    verdicts: dict[tuple[str, str, str], bool] = {}
-
-    def counts(o: Observation) -> bool:
-        if subs is None:
-            return o.strategy == strat.name
-        if takes is None:
-            return False
-        k = (o.strategy, o.slot, o.regime)
-        if k not in verdicts:
-            verdicts[k] = o.strategy in {s.name for s in subs} and takes(o.strategy, o.slot, o.regime, today)
-        return verdicts[k]
 
     days: set[date] = set()
     times: dict[date, list[int]] = {}

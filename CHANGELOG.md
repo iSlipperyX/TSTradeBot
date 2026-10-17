@@ -3,7 +3,45 @@
 Every version of the bot, newest first. The release workflow publishes each version's section as its
 GitHub release notes.
 
-## Unreleased — fixes from the first live week
+## 4.2.0 — trends and the daily plan
+
+### The bot reads the chart for trends
+
+- Every chart the bot trades gets a **trend reading** bar by bar: up, down or sideways, a score from -1 to
+  +1 built from the slope of the last two hours, the 20- and 50-bar averages, higher highs and lows, and
+  today's VWAP, plus how strong the move is (ADX), since when, and whether price is stretched.
+- Shown on the Overview's new **Trend** panel (with how often its up and down calls held an hour later,
+  and how the bot's signals did with and against the trend after costs), drawn on the **trade chart**
+  (the fitted trend line, a band and the swing highs and lows), and in Telegram `/trend` and the Ask tab.
+- Every signal is saved with the reading, so the knowledge base learns how each strategy does with and
+  against the trend. The AI trading assistant is told the trend too.
+- **Trend filter** (`trend.filter`): skips signals against a strong trend. With `auto`, the default, it
+  stays off until the **trend test** (run after the long-run memory learns) shows on the bot's own
+  history that skipping them made more, with 95% confidence over at least 60 days and 15 skipped trades.
+  `on` and `off` override it. Manual trades are never filtered.
+
+### A daily plan for each account
+
+- Each trading morning (08:00 CT by default) the bot asks on Telegram for every account's **profit goal**,
+  with buttons for a steadier, the suggested and a stretch goal, or type it (`400`, `c1 400 c2 1200`,
+  `none`). The Overview's new **Today's plan** box and `/goal` set it any time, with the bot running or
+  not. No answer: your last goal, or the suggestion.
+- **Suggested goal**: what is left to the Combine target over `day_plan.days_to_target` days (10), a
+  winning day on the standard payout path, or the payout goal under the 40% cap on the consistency path.
+- **The route**: the goal in trades (R), the open, midday and close with how many trades each usually
+  brings and how they did, the odds from replaying the bot's past days under today's rules (goal reached,
+  green days, red days, from where the day stands now), progress, and when the day stops. Also `/plan`
+  and on the Ask tab.
+- **The goal never raises risk.** Trades are sized by your risk settings as before, every limit and
+  Topstep rule still applies, and a goal above what one day may make is capped there. Reaching it ends
+  the day's new trades (`day_plan.stop_at_goal`), so the profit is kept.
+- New settings on the Setup tab (**Daily goal and trend**) and in `config.yaml` (`day_plan:`, `trend:`),
+  per account.
+
+A plan is not a promise: the odds are how the bot's own past days went, and no bot can guarantee a
+profit or a passed Combine.
+
+### Fixes from the first live week
 
 Found by reading the first live week's journals, knowledge files and logs (two Combine accounts,
 Oct 9–16). Nothing about how the bot picks or sizes trades changed.
@@ -30,6 +68,7 @@ Oct 9–16). Nothing about how the bot picks or sizes trades changed.
 
 One week of live trades is far too little to judge any strategy, and no bot can guarantee passing the
 Combine or making a profit.
+
 ## 4.1.0 — the AI trading assistant
 
 ### An AI trading assistant, off until you switch it on

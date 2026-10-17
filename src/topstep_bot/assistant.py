@@ -129,6 +129,14 @@ multiple of the money a trade risks (+1R = won what it risked). "net" values are
 costs real room on the account, so take a trade only when the evidence gives it an edge: strategy records at this \
 time of day and market regime, the probability calculator's after-cost estimates, live ideas and setups that are \
 forming, the market picture and the news timing. Thin evidence (few trades) proves little. Waiting is a good answer.
+- "trend" is the bot's reading of the chart: up, down or sideways, a score from -1 to +1, the ADX strength, what \
+the trend is doing now (stretched, pulling back, losing steam), how often price followed its calls an hour later, \
+and how the bot's own signals did with the trend and against it. Trading with a clear trend is usually the easier \
+side, but a stretched trend often pulls back; weigh it with the rest. When "trend.filter.on" is true, the bot refuses \
+trades against a strong trend.
+- "day_plan" is the owner's profit goal for today on this account and the route the bot planned to it: how much is \
+made and left, the trades left, and the stops. It never justifies a bigger or extra trade: chasing a goal is how \
+accounts are lost. Once the goal is reached the bot stops opening trades for the day.
 - When managing, don't micromanage: closing early or tightening hard turns winners into small losers. Act when \
 something has changed: news is close, the reason for the trade is gone, the market turned sharply against it, a \
 large open profit is at risk, or the session is about to end.
@@ -649,6 +657,15 @@ class Assistant:
             "evidence": self._evidence(now, price),
             "your_record": self._record(),
         }
+        try:
+            tv = core.trend_view()
+            out["trend"] = {"now": tv["reading"], "calls_followed": tv["calls"].get("all"),
+                            "signals_with_vs_against": tv["history"], "filter": tv["filter"]}
+        except Exception:  # noqa: BLE001 - a picture without the trend is still a picture
+            log.debug("AI assistant: no trend view", exc_info=True)
+        plan = core.plan_brief() if hasattr(core, "plan_brief") else None
+        if plan:
+            out["day_plan"] = plan
         if kind == "manage":
             out["trade"] = self._trade_view(core.orders.trade, price, now)
         else:
@@ -828,6 +845,9 @@ class Assistant:
         hedge = core.entry_guard(sign) if core.entry_guard else None
         if hedge:
             return "refused", f"Refused: {hedge}."
+        against = core.trend_block(side)
+        if against:
+            return "refused", f"Refused: {against}."
         reason = f"{TITLE}: {d.reason}"[:300]
         trade = await core.orders.enter(side, plan.size, plan.stop, plan.target, reason, ref_price=price,
                                         limit_price=plan.limit, planned_risk=plan.planned_risk, strategy=ASSISTANT)

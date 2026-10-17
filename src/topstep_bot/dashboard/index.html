@@ -220,6 +220,38 @@ tr.on td { background:var(--accent-soft); }
 .firststate.blocked { border-color:var(--warn); color:var(--warn); }
 .firststate.done { border-color:var(--good); color:var(--good); }
 
+/* today's plan + trend (Overview) */
+.goalbox { margin:12px 0 14px; padding:12px 13px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface2); }
+.goalbox label { display:block; font:600 10.5px var(--font-label); text-transform:uppercase; letter-spacing:.06em; color:var(--text2); margin-bottom:6px; }
+.goalrow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.goalrow .dollar { font:500 16px var(--font-num); color:var(--text2); }
+.goalrow input { width:120px; padding:6px 8px; font:500 15px var(--font-num); }
+.goalbox .chips { margin-top:9px; }
+.goalbox .chips button.on { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+.goalbox .hint { margin:8px 0 0; }
+.planhead { font-size:14.5px; font-weight:600; margin:2px 0 12px; line-height:1.45; }
+.route { list-style:none; margin:0 0 6px; padding:0; counter-reset:none; }
+.route li { position:relative; padding:0 0 12px 26px; font-size:13px; }
+.route li::before { content:""; position:absolute; left:5px; top:4px; width:10px; height:10px; border-radius:50%; border:2px solid var(--border2); background:var(--surface); box-sizing:border-box; }
+.route li::after { content:""; position:absolute; left:9px; top:16px; bottom:0; width:2px; background:var(--border); }
+.route li:last-child::after { display:none; }
+.route li.done::before { background:var(--good); border-color:var(--good); }
+.route li.now::before { background:var(--accent); border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.route li b { display:block; font-weight:600; }
+.route li span { color:var(--text2); font-size:12.5px; }
+.route li.done b, .route li.done span { color:var(--muted); }
+.trendtag { font:600 10.5px/1.6 var(--font-label); padding:0 7px; border-radius:3px; border:1px solid var(--border2); color:var(--text2);
+  text-transform:uppercase; letter-spacing:.05em; }
+.trendtag.up { border-color:var(--pos); color:var(--pos); }
+.trendtag.down { border-color:var(--neg); color:var(--neg); }
+.tgauge { margin:14px 0 12px; }
+.tgauge .tg-track { position:relative; height:8px; border-radius:4px;
+  background:linear-gradient(90deg, var(--neg) 0%, var(--track) 30%, var(--track) 70%, var(--pos) 100%); }
+.tgauge .tg-mid { position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:var(--border2); }
+.tgauge .tg-pt { position:absolute; top:50%; width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%; background:var(--surface);
+  border:3px solid var(--text); transition:left .4s; }
+.tgauge .tg-ends { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:5px; }
+
 /* AI assistant (Overview) */
 .aiswitches { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); margin:12px 0 4px; }
 .aiswitch { display:flex; gap:10px; align-items:flex-start; border:1px solid var(--border); border-radius:var(--r); padding:10px 12px;
@@ -695,6 +727,29 @@ button.src:hover:not(:disabled) { border-color:var(--accent); background:var(--s
           <h3>Strategy</h3>
           <dl id="strategy"></dl>
         </div>
+        <div class="panel" id="plan-panel">
+          <div class="firsthead"><h2 style="margin:0">Today's plan</h2><span class="firststate" id="plan-state"></span>
+            <span class="spacer"></span><span class="meta" id="plan-day"></span></div>
+          <div class="goalbox">
+            <label for="goal-in">Today's profit goal<span id="goal-for"></span></label>
+            <div class="goalrow"><span class="dollar">$</span>
+              <input id="goal-in" type="number" min="1" step="25" inputmode="decimal" placeholder="e.g. 400" aria-label="Today's profit goal in dollars">
+              <button class="small primary" id="goal-set">Set goal</button><button class="small" id="goal-none">No goal today</button></div>
+            <div class="chips" id="goal-chips"></div>
+            <p class="hint" id="goal-why"></p>
+          </div>
+          <div class="meter" id="plan-meter"><div class="mrow"><span>Progress to the goal</span><span id="plan-txt"></span></div>
+            <div class="track"><div class="fill" id="plan-bar"></div></div></div>
+          <p id="plan-head" class="planhead"></p>
+          <div id="plan-stats" class="stats"></div>
+          <div id="plan-route" hidden>
+            <h3>The route through the day</h3>
+            <ol id="plan-steps" class="route"></ol>
+            <h3>When the day stops</h3>
+            <ul id="plan-stops" class="basis"></ul>
+          </div>
+          <p class="hint" id="plan-caveat"></p>
+        </div>
         <div class="panel" id="ai-panel" hidden>
           <div class="firsthead"><h2 style="margin:0">AI assistant</h2><span class="firststate aistate" id="ai-state"></span>
             <span class="spacer"></span><span class="meta" id="ai-cost"></span></div>
@@ -747,6 +802,16 @@ button.src:hover:not(:disabled) { border-color:var(--accent); background:var(--s
         </div>
       </div>
       <div class="stack">
+        <div class="panel" id="trend-panel">
+          <div class="firsthead"><h2 style="margin:0">Trend</h2><span class="trendtag" id="trend-tag">–</span>
+            <span class="spacer"></span><span class="meta" id="trend-since"></span></div>
+          <div class="tgauge" title="The trend score: -1 a clean downtrend, 0 sideways, +1 a clean uptrend">
+            <div class="tg-track"><span class="tg-mid"></span><span class="tg-pt" id="trend-pt" style="left:50%"></span></div>
+            <div class="tg-ends"><span>Down</span><span>Sideways</span><span>Up</span></div></div>
+          <ul class="basis" id="trend-words"></ul>
+          <div class="stats" id="trend-stats" style="margin-top:12px"></div>
+          <p class="hint" id="trend-filter"></p>
+        </div>
         <div class="panel">
           <h2>Guardrails</h2>
           <div class="meter"><div class="mrow"><span>Room above Max Loss Limit</span><span id="mll-txt"></span></div><div class="track"><div class="fill" id="mll-bar"></div></div></div>
@@ -1492,6 +1557,33 @@ button.src:hover:not(:disabled) { border-color:var(--accent); background:var(--s
       <div class="msg" id="su-as-msg"></div>
     </div>
 
+    <div class="panel" style="margin-top:14px" id="su-dp-panel">
+      <h2 class="steptitle">Daily goal and trend <span class="meta" style="margin-left:8px;font-weight:500" id="su-dp-who"></span></h2>
+      <p class="hint" style="margin-top:2px">Each trading morning the bot asks for the day's profit goal (on Telegram, and in the Today's plan box on
+        the Overview tab) and plans a route to it from how its own past days went: which part of the day usually brings trades, how often a day
+        like this reached the goal, and when the day stops. The goal never makes a trade bigger: every risk rule and Topstep rule still applies,
+        and a goal above what one day may make is capped there. The bot also reads every chart for an up, down or sideways trend.
+        A plan, not a promise: no bot can guarantee a profit or a passed Combine.</p>
+      <div class="sfield"><span class="lbl">Morning question</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-dp-ask"><span>Ask for the day's profit goal every trading morning</span></label>
+          <span class="meta">at</span> <input type="time" id="su-dp-at" step="300" style="width:110px"> <span class="meta">Chicago time</span></div></div>
+      <div class="sfield"><label for="su-dp-unanswered">No answer</label>
+        <div class="ctl"><select id="su-dp-unanswered" style="width:min(100%,360px)">
+          <option value="last">Keep my last goal (or the suggestion)</option><option value="suggested">Use the bot's suggestion</option></select></div></div>
+      <div class="sfield"><span class="lbl">At the goal</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-dp-stop"><span>Stop opening trades once the day's goal is reached (keeps the profit)</span></label></div></div>
+      <div class="sfield"><label for="su-dp-days">Days to the target</label>
+        <div class="ctl"><input type="number" id="su-dp-days" min="3" max="60" step="1" style="width:90px"> <span class="meta">trading days: the suggested goal is what is left divided by this</span></div></div>
+      <div class="sfield"><label for="su-dp-filter">Trend filter</label>
+        <div class="ctl"><select id="su-dp-filter" style="width:min(100%,420px)">
+          <option value="auto">Automatic: only once the trend test proves it helps</option>
+          <option value="on">On: skip signals against a strong trend</option><option value="off">Off: the trend is shown, never used to skip</option></select></div>
+        <div class="help">Automatic replays the bot's history every night with and without skipping signals against a strong trend, and turns the filter on
+          only if skipping made more with 95% confidence over at least 60 test days.</div></div>
+      <div class="row" style="margin-top:8px"><button class="small primary" id="su-dp-save">Save</button></div>
+      <div class="msg" id="su-dp-msg"></div>
+    </div>
+
     <div class="panel" style="margin-top:14px">
       <h2 class="steptitle">Start with Windows <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
       <label class="checkline" style="margin-top:6px"><input type="checkbox" id="su-auto">
@@ -2063,6 +2155,25 @@ function drawChart(id, chart, levels = [], zones = []) {
   });
   g.globalAlpha = 1;
 
+  // the trend the bot reads (trend.py): its fitted line over the last bars with a band of one spread, and the swing
+  // highs and lows behind it
+  const tr = chart.trend;
+  if (tr && tr.from && tr.to && tr.to[0] >= shown[0][0]) {
+    const tc = col(tr.direction === "up" ? "--pos" : tr.direction === "down" ? "--neg" : "--muted");
+    const t0 = Math.max(tr.from[0], shown[0][0]), k = (tr.to[1] - tr.from[1]) / Math.max(1, tr.to[0] - tr.from[0]);
+    const p0 = tr.from[1] + k * (t0 - tr.from[0]), x1 = xOf(t0), x2 = xOf(tr.to[0]), band = tr.band || 0;
+    g.fillStyle = tc; g.globalAlpha = 0.08; g.beginPath();
+    g.moveTo(x1, y(p0 + band)); g.lineTo(x2, y(tr.to[1] + band)); g.lineTo(x2, y(tr.to[1] - band)); g.lineTo(x1, y(p0 - band));
+    g.closePath(); g.fill(); g.globalAlpha = 0.85;
+    g.strokeStyle = tc; g.lineWidth = 2; g.setLineDash([7, 4]);
+    g.beginPath(); g.moveTo(x1, y(p0)); g.lineTo(x2, y(tr.to[1])); g.stroke(); g.setLineDash([]); g.lineWidth = 1; g.globalAlpha = 1;
+    g.font = `600 9.5px ${css("--font-ui") || "sans-serif"}`; g.textAlign = "center";
+    for (const [ts, price, kind] of tr.swings || []) {
+      if (ts < shown[0][0]) continue;
+      const sx = xOf(ts), sy = y(price) + (kind === "high" ? -9 : 11);
+      g.fillStyle = col("--text2"); g.textBaseline = "middle"; g.fillText(kind === "high" ? "H" : "L", sx, sy);
+    }
+  }
   // today's closed trades: a triangle where each went in, a dot where it came out
   const tri = (x, yy, upward, color) => {
     g.fillStyle = color; g.beginPath();
@@ -2172,6 +2283,8 @@ function renderChart(b) {
     if (levels.some(l => l.label === "First stop")) parts.push(legendItem("--muted", `First stop ${px(t.initial_stop)}`, true));
   } else if (c) parts.push(`<span class="muted">No open trade.</span>`);
   if (c && (c.fills || []).length) parts.push(`<span class="muted">▲▼ where today's trades went in, ● where they came out</span>`);
+  if (c && c.trend) parts.push(legendItem(c.trend.direction === "up" ? "--pos" : c.trend.direction === "down" ? "--neg" : "--muted",
+    `Trend: ${c.trend.label.toLowerCase()} (H / L = swing highs and lows)`, true));
   $("chart-legend").innerHTML = parts.join("");
 }
 function renderTicketChart(b) {
@@ -2372,6 +2485,116 @@ $("ai-manage").addEventListener("change", e => switchAssistant("manage", e.targe
 $("ai-trade").addEventListener("change", e => switchAssistant("trade", e.target.checked));
 
 // ---- next trade (Overview): when the bot expects to trade, and what that is based on
+// ---- today's plan: the goal (asked each morning), the route through the day, its odds and stops (day_plan.py)
+let GOALS = null, GOALS_AT = 0;
+async function loadGoals() {  // the bot isn't running: the goal and suggestions straight from the controller
+  if (Date.now() - GOALS_AT < 15000) return;
+  GOALS_AT = Date.now();
+  const d = await post("goals", {});
+  if (d && d.goals) { GOALS = d.goals; renderPlan(S && S.bot); }
+}
+async function setGoal(goal) {
+  const btns = ["goal-set", "goal-none"].map($); btns.forEach(x => x.disabled = true);
+  try {
+    const d = await post("goal", {goal});
+    if (d.message) toast(d.message, d.ok === false);
+    if (d.ok !== false) { $("goal-in").value = ""; GOALS_AT = 0; }
+  } finally { btns.forEach(x => x.disabled = false); refresh(); }
+}
+$("goal-set").onclick = () => {
+  const v = parseFloat(String($("goal-in").value).replace(/[$,]/g, ""));
+  if (!(v > 0)) { toast("Type today's goal in dollars, e.g. 400 - or press No goal today.", true); return; }
+  setGoal(v);
+};
+$("goal-in").addEventListener("keydown", e => { if (e.key === "Enter") $("goal-set").click(); });
+$("goal-none").onclick = () => setGoal("none");
+function goalChips(goal, sug) {
+  const opts = (sug && sug.options) || [];
+  $("goal-chips").innerHTML = opts.map(o => `<button class="${goal.amount === o ? "on" : ""}" data-goal="${o}">${money0(o)}${
+    sug.suggested === o ? " · suggested" : ""}</button>`).join("");
+  $("goal-chips").querySelectorAll("[data-goal]").forEach(b => b.onclick = () => setGoal(+b.dataset.goal));
+  const cap = sug && sug.cap != null ? ` At most ${money0(sug.cap)} today (${sug.cap_why || "your daily cap"}).` : "";
+  $("goal-why").textContent = (sug && sug.suggested ? `Suggested ${money0(sug.suggested)}: ${sug.why}.` : (sug && sug.why) || "") + cap
+    + " The goal never makes a trade bigger: it only tells the bot when the day is done.";
+}
+function renderPlan(b) {
+  const p = b && b.day_plan;
+  const state = $("plan-state"), multi = S && S.multi;
+  $("goal-for").textContent = multi ? ` · ${accName()}` : "";
+  if (!p) {
+    if (!b) loadGoals();
+    const e = (GOALS || []).find(x => x.account === accName()) || (GOALS || [])[0];
+    $("plan-route").hidden = true; $("plan-meter").hidden = true; $("plan-stats").innerHTML = "";
+    state.textContent = e ? (e.kind === "set" ? "goal set" : e.kind === "off" ? "no goal" : "not answered") : "";
+    state.className = "firststate" + (e && e.kind === "set" ? " done" : "");
+    $("plan-day").textContent = "";
+    if (e) {
+      $("plan-head").textContent = e.goal != null ? `Goal ${money0(e.goal)} (${e.text}). The route through the day is planned once the bot is running.`
+        : `${e.text[0].toUpperCase() + e.text.slice(1)}. Start the bot to see the plan.`;
+      goalChips({amount: e.goal}, {options: e.options, suggested: e.suggested, cap: e.cap, why: e.why});
+    } else { $("plan-head").textContent = b ? "The day plan runs with the paper or live bot." : "Start the bot to see today's plan."; $("goal-chips").innerHTML = ""; $("goal-why").textContent = ""; }
+    $("plan-caveat").textContent = "";
+    return;
+  }
+  const g = p.goal, pr = p.progress;
+  $("plan-day").textContent = `for ${p.day}` + (p.ask && p.ask.enabled ? ` · asked at ${p.ask.at} CT` : "");
+  const st = {"goal reached": ["goal reached", " done"], "stopped": ["stopped", " blocked"], "after hours": ["day over", ""],
+    "before the open": [p.answered ? "ready" : "waiting for your goal", p.answered ? " waiting" : " blocked"], "on the way": ["on the way", " watching"]}[pr.state] || [pr.state, ""];
+  state.textContent = st[0]; state.className = "firststate" + st[1];
+  goalChips(g, p.suggest);
+  if (document.activeElement !== $("goal-in")) $("goal-in").placeholder = g.amount != null ? String(g.amount) : "e.g. 400";
+  $("plan-meter").hidden = g.amount == null;
+  if (g.amount != null) meter("plan", Math.max(0, pr.made) / g.amount, `${money(pr.made)} of ${money0(g.amount)}`,
+    pr.made >= g.amount ? css("--good") : pr.made < 0 ? css("--warn") : css("--accent"));
+  $("plan-head").textContent = p.headline;
+  const stat = (label, value, small) => `<div class="stat"><div class="label">${esc(label)}</div><div class="sv">${esc(value)}</div><div class="ss">${esc(small || "")}</div></div>`;
+  const o = p.odds, f = p.from_now, stats = [];
+  if (o) {
+    if (g.amount != null && o.reach != null) stats.push(stat("Goal reached", pct(o.reach), `on ${o.reach_n} of ${o.days} past days`));
+    if (f && f.reach != null && pr.state === "on the way" && g.amount != null) stats.push(stat("From here", pct(f.reach), "past days from the same spot"));
+    stats.push(stat("Green days", pct(o.green), "ended in profit"));
+    if (o.red != null) stats.push(stat("Red days", pct(o.red), "ended in a loss"));
+    if (o.median_r != null) stats.push(stat("Typical day", money0(o.median_r * p.risk_usd), "the middle past day"));
+    if (o.half_r != null && o.half_r > 0 && g.amount != null) stats.push(stat("Even-odds goal", money0(o.half_r * p.risk_usd), "reached on about half the days"));
+  }
+  stats.push(stat("Risk a trade", money0(p.risk_usd), p.goal_r != null ? `the goal is ${p.goal_r.toFixed(1)}R` : "your risk settings"));
+  stats.push(stat("Trades today", `${pr.trades} of ${pr.max_trades}`, `${pr.losses_in_row} loss${pr.losses_in_row === 1 ? "" : "es"} in a row (stops at ${pr.max_losses})`));
+  $("plan-stats").innerHTML = stats.join("");
+  $("plan-route").hidden = false;
+  $("plan-steps").innerHTML = (p.steps || []).map(x => `<li class="${esc(x.state)}"><b>${esc(x.title)}</b><span>${esc(x.detail)}</span></li>`).join("");
+  $("plan-stops").innerHTML = (p.stops || []).map(x => `<li>${esc(x)}</li>`).join("");
+  $("plan-caveat").textContent = p.caveat + (p.history ? ` Based on ${p.history.days} past trading days (${p.history.what}).` : "");
+}
+
+// ---- the trend on the chart (trend.py): direction, how strong, how its calls held up, the filter
+function renderTrend(b) {
+  const v = b && b.trend, r = v && v.reading;
+  $("trend-panel").hidden = !b;
+  if (!b) return;
+  const tag = $("trend-tag");
+  if (!r) {
+    tag.textContent = "reading…"; tag.className = "trendtag"; $("trend-pt").style.left = "50%"; $("trend-since").textContent = "";
+    $("trend-words").innerHTML = `<li>Not enough bars yet to read the chart - it needs about two hours of price bars.</li>`;
+    $("trend-stats").innerHTML = ""; $("trend-filter").textContent = ""; return;
+  }
+  tag.textContent = r.label; tag.className = "trendtag " + r.direction;
+  $("trend-pt").style.left = (50 + 50 * Math.max(-1, Math.min(1, r.score))) + "%";
+  $("trend-since").textContent = r.since_local && r.direction !== "sideways" ? `since ${r.since_local} CT` : (r.at_local ? `at ${r.at_local} CT` : "");
+  $("trend-words").innerHTML = (r.words || []).slice(1).map(x => `<li>${esc(x)}</li>`).join("");
+  const stat = (label, value, small) => `<div class="stat"><div class="label">${esc(label)}</div><div class="sv">${esc(value)}</div><div class="ss">${esc(small || "")}</div></div>`;
+  const stats = [stat("Score", signed(r.score), "-1 down … +1 up")];
+  if (r.strength != null) stats.push(stat("Strength (ADX)", r.strength.toFixed(0), r.strength >= 25 ? "trending" : r.strength < 20 ? "weak / ranging" : "building"));
+  const c = v.calls && v.calls.all;
+  if (c) stats.push(stat("Calls that held", pct(c.followed), `of ${c.n} up/down calls, an hour on`));
+  const h = v.history || {}, w = h.with || {}, a = h.against || {};
+  if (w.n && a.n) stats.push(stat("With / against", `${signed(w.avg_r)} / ${signed(a.avg_r)}R`, `the bot's signals (${w.n} / ${a.n})`));
+  $("trend-stats").innerHTML = stats.join("");
+  const fl = v.filter || {}, t = v.test;
+  $("trend-filter").textContent = `Trend filter: ${fl.on ? "ON - signals against a strong trend are skipped" : "off"} (${fl.why || ""}).`
+    + (t && t.comparison && t.comparison.diff_r != null ? ` Last test: ${signed(t.comparison.diff_r)}R in total with the filter over ${t.test_days} test days.` : "")
+    + " A trend describes the last hours; it does not promise where price goes next.";
+}
+
 function renderNext(b) {
   const f = b && b.forecast;
   $("next-panel").hidden = !b;
@@ -3272,7 +3495,7 @@ function fillSetup() {
   SU_SUG = suSuggestion();
   su("path").textContent = SU.exists ? `Saved in ${SU.path}` : `Creates ${SU.path}`;
   suMsg("save-msg", "");
-  renderAccounts(); renderAlerts(); renderAutostart(); renderAI(); renderAssistantSetup(); suRender(); renderAccountPanel();
+  renderAccounts(); renderAlerts(); renderAutostart(); renderAI(); renderAssistantSetup(); renderDayPlanSetup(); suRender(); renderAccountPanel();
   if (SU.login.api_key_saved && (!SU.report || SU.report_age > 300)) checkAccounts(false);
 }
 
@@ -3744,6 +3967,29 @@ su("as-save").onclick = async () => {
   if (d.ok !== false) loadSetup(true);
 };
 
+function dayPlanValues() {
+  const p = SU.multi ? (SU.profiles || []).find(x => x.name === accName()) : null;
+  return {plan: (p && p.day_plan) || (SU.values && SU.values.day_plan) || {}, trend: (p && p.trend) || (SU.values && SU.values.trend) || {}};
+}
+function renderDayPlanSetup() {
+  const {plan, trend} = dayPlanValues();
+  su("dp-who").textContent = SU.multi ? `for account ${accName()}` : "";
+  su("dp-ask").checked = plan.ask !== false; su("dp-at").value = plan.ask_at || "08:00";
+  su("dp-unanswered").value = plan.unanswered || "last"; su("dp-stop").checked = plan.stop_at_goal !== false;
+  su("dp-days").value = plan.days_to_target || 10; su("dp-filter").value = trend.filter || "auto";
+}
+su("dp-save").onclick = async () => {
+  const body = {ask: su("dp-ask").checked, ask_at: su("dp-at").value || "08:00", unanswered: su("dp-unanswered").value,
+    stop_at_goal: su("dp-stop").checked, days_to_target: Number(su("dp-days").value), trend_filter: su("dp-filter").value};
+  if (body.trend_filter === "on" && dayPlanValues().trend.filter !== "on"
+      && !await ask(`Always skip signals against a strong trend${on()}? Automatic turns it on only once the trend test shows it helps; `
+        + "forcing it on changes which trades are taken before there is evidence for it.")) return;
+  su("dp-save").disabled = true;
+  const d = await post("setup/day_plan", body);
+  su("dp-save").disabled = false; suMsg("dp-msg", d.message, d.ok !== false);
+  if (d.ok !== false) { loadSetup(true); GOALS_AT = 0; }
+};
+
 function renderAutostart() {
   const a = SU.autostart; su("auto").checked = a.enabled; su("auto").disabled = !a.supported;
   if (!a.supported) suMsg("auto-msg", "Only available on Windows.");
@@ -4082,6 +4328,7 @@ function render(s) {
   shown("phone access", () => renderPhone(s.phone, s.viewer)); shown("market clock", () => renderClock(s.clock));
   shown("overview", () => renderOverview(s.bot)); shown("account goal", () => renderFunded(s.bot));
   shown("market", () => renderMarket(s.bot)); shown("research", () => renderResearch(s.research)); shown("next trade", () => renderNext(s.bot));
+  shown("day plan", () => renderPlan(s.bot)); shown("trend", () => renderTrend(s.bot));
   shown("first trade", () => renderFirst(s.bot)); shown("setups", () => renderSetups(s.bot));
   shown("AI assistant", () => renderAssistant(s.bot));
   shown("long-run memory", () => renderMemory(s.bot)); shown("ideas", () => renderIdeas(s.bot));

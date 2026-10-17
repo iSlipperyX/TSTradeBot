@@ -68,6 +68,12 @@ TOOLS: dict[str, tuple[str, dict]] = {
                 "together, markets moving against their peers, risk appetite, the next 24 hours' reports and headlines, "
                 "and each market's jump allowance (the sudden gap the risk manager budgets for).",
                 {"symbol": {"type": "string", "description": "a market to describe in detail, e.g. MNQ, CL, ZC (optional)"}}),
+    "trend": ("The chart's trend now: up, down or sideways, how clear (score -1..+1) and how strong (ADX), since when, "
+              "how often price kept going the called way, how the bot's signals did with and against the trend, and "
+              "whether the trend filter is on (and what the trend test found).", {}),
+    "day_plan": ("Today's plan for this account: the profit goal (yours, your last one or the suggestion; capped by what "
+                 "one day may make), the route through the day (which part of the day usually brings trades), the odds "
+                 "from the bot's own past days, progress so far and when the day stops.", {}),
     "rules": ("The Topstep rules for this account and what the bot does about each.", {}),
     "markets": ("The markets the bot trades on this account right now (it can trade several at once and add, drop or "
                 "switch them without a restart): each one's position, open trade and trades today, and the account's "
@@ -359,6 +365,26 @@ class Facts:
         if self.actions is None:
             return {"text": "The next-trade forecast needs the bot running."}
         return {"text": self.actions.next_text()}
+
+    def fact_trend(self) -> dict[str, Any]:
+        if self.core is None:
+            return {"text": (self.offline or "The bot is not running.") + " The trend is read from the live chart: start the "
+                            "bot to see it."}
+        view = self.core.trend_view()
+        return {"reading": view["reading"], "calls": view["calls"], "filter": view["filter"], "history": view["history"],
+                "test": view["test"], "text": self.actions.trend_text() if self.actions else ""}
+
+    def fact_day_plan(self) -> dict[str, Any]:
+        from topstep_bot.day_plan import goal_day, offline_text, plan_text
+
+        if self.core is None:
+            return {"text": (self.offline + " " if self.offline else "") + offline_text(self.cfg, "", goal_day(self.cfg))}
+        plan = self.core.plan_view()
+        if plan is None:
+            return {"text": "The day plan runs with the paper or live bot."}
+        keep = ("day", "goal", "suggest", "odds", "from_now", "windows", "progress", "stops", "steps", "headline", "risk_usd",
+                "goal_r", "stop_at_goal", "caveat")
+        return {**{k: plan.get(k) for k in keep}, "text": plan_text(plan)}
 
     def fact_market(self) -> dict[str, Any]:
         if self.actions is None:

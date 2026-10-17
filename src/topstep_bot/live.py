@@ -48,6 +48,7 @@ from topstep_bot.broker.paper import PaperBroker, PaperWallet
 from topstep_bot.broker.shared import BrokerHub
 from topstep_bot.config import MAX_MARKETS, BotConfig, Secrets
 from topstep_bot.crossaccount import PositionBook
+from topstep_bot.day_plan import DayPlanner
 from topstep_bot.engine import TradingCore
 from topstep_bot.factory import build_core, fees_for, starting_balance
 from topstep_bot.journal import Journal
@@ -273,6 +274,7 @@ class Lane:
             self._setup_first_trade()
         self._setup_assistant()
         self._setup_hedge_guard()
+        core.planner, core.plan_cores = desk.planner, desk.cores  # the day plan is the account's (day_plan.py)
         return core
 
     async def start(self) -> None:
@@ -373,6 +375,7 @@ class Lane:
                 log.warning("Training failed: %s", exc)
                 core.event("warning", f"Could not retrain the knowledge base: {exc}")
         self.refresh_policy()
+        self.refresh_trend_filter()
         core.event("info", self._knowledge_ready_text(kb))
 
     @staticmethod
@@ -494,6 +497,31 @@ class Lane:
         text = result_text(result)
         log.info(text)
         self.refresh_policy(result)
+        trend = await self.run_trend_test()
+        return text + ("\n" + trend if trend else "")
+
+    async def run_trend_test(self) -> str | None:
+        """Replay the trend filter over the long-run memory (trend_lab.py) and switch it the way the evidence says."""
+        from topstep_bot.trend_lab import result_text, run_test
+
+        core = self.core
+        if core is None or core.memory is None:
+            return None
+        observations = list(core.memory.knowledge.obs)
+        policy = core.judge.policy if core.judge is not None else "classic"
+        memory = core.memory
+
+        def work() -> dict:
+            return run_test(self.cfg, observations, policy, bars=memory.library.bars(memory.symbol, memory.tf))
+
+        try:
+            result = await asyncio.to_thread(work)
+        except Exception as exc:  # noqa: BLE001 - the bot keeps the filter as it is
+            log.warning("The trend test failed: %s", exc)
+            return None
+        text = result_text(result)
+        log.info(text)
+        self.refresh_trend_filter(result)
         return text
 
     def refresh_policy(self, result: dict | None = None) -> None:
@@ -503,6 +531,17 @@ class Lane:
         if self.core is not None:
             self.core.set_policy(*resolve_policy(self.cfg, result))
 
+    def refresh_trend_filter(self, result: dict | None = None) -> None:
+        """Switch the trend filter as config.yaml (or, on auto, the trend test) says; never in the middle of a trade."""
+        from topstep_bot.trend_lab import load_result, resolve_filter
+
+        core = self.core
+        if core is None:
+            return
+        result = result if result is not None else load_result(self.cfg)
+        core.trend_test = result
+        core.set_trend_filter(*resolve_filter(self.cfg, result))
+
     async def learn_step(self, now: datetime) -> None:
         """Outside the entry window and while flat: retrain once each session has finished, and grow the long-run
         memory daily (the desk's learning loop calls this for every market)."""
@@ -511,6 +550,7 @@ class Lane:
             return  # inside the entry window or in a trade: learn later, so trading never waits on it
         await self._retrain_if_due(now)
         self.refresh_policy()  # another account may have rerun the decision lab; never switches mid-session
+        self.refresh_trend_filter()  # ... or the trend test
         memory = core.memory
         if memory is None or memory.running or (self._learn_after and now < self._learn_after):
             return
@@ -801,6 +841,7 @@ class LiveRunner:
         self.label = ""
         self.lanes: dict[str, Lane] = {}
         self.assistant: AssistantDesk | None = None  # the AI trading assistant's switches and spending (assistant.py)
+        self.planner: DayPlanner | None = None  # today's profit goal and the route to it (day_plan.py)
         self.focus: str | None = None  # the market the dashboard and Telegram show (and act on) by default
         self.book: AccountBook | None = None
         self.tracker: LossLimitTracker | None = None
@@ -934,6 +975,7 @@ class LiveRunner:
         if "already in config.yaml" in note or "LOWERED" in note:
             self._floor_warning = f"Maximum Loss Limit floor {fmt.money(self.tracker.floor)}: {note}"
         self.book = AccountBook(shared=True)
+        self.planner = DayPlanner(cfg, label)
 
         # Today's closed trades so far, so a mid-day restart keeps the day's P&L, trade count,
         # losing streak and cooldown. Live: from TopstepX (includes anything traded by hand).
@@ -976,6 +1018,7 @@ class LiveRunner:
             self.core.event("warning", self._floor_warning)
         self._report_damaged_journal()
         self._apply_ramp_up()
+        self._plan_tick()
         return self.core
 
     async def _open_lane(self, symbol: str, *, primary: bool, balance: float, today: date) -> Lane:
@@ -1583,6 +1626,8 @@ class LiveRunner:
                     self._apply_ramp_up()
                 if now.second % 10 == 0:
                     self._beat()
+                if now.second % 5 == 0:
+                    self._plan_tick()
                 self._maybe_check_in(now)
                 self._maybe_daily_restart(now)
                 await self._drop_closed_markets()
@@ -1737,6 +1782,17 @@ class LiveRunner:
                 )
             else:
                 core.event("info", "Ramp-up complete: trading at full configured risk")
+
+    def _plan_tick(self) -> None:
+        """Today's goal onto the account book: re-read when the dashboard or Telegram changed it (day_plan.py)."""
+        keeper = self.keeper
+        if self.planner is None or keeper is None or keeper.core is None or self.book is None:
+            return
+        try:
+            self.planner.reload()
+            self.planner.apply(keeper.core, self.book)
+        except Exception:  # noqa: BLE001 - without a goal the bot trades by its usual limits
+            log.exception("Could not apply today's goal")
 
     def _beat(self) -> None:
         """Tell the controller we're alive (it restarts the bot if this goes stale)."""
