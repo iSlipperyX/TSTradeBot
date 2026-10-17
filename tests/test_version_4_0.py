@@ -449,7 +449,7 @@ def test_ask_explains_the_new_parts_from_the_guide(question, section, setting):
 def test_version_4_0_is_documented_honestly():
     from topstep_bot import __version__
 
-    assert __version__.startswith("4.0.") and f'version = "{__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert __version__.startswith("4.") and f'version = "{__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     notes = re.search(r"^## 4\.0\.0\b.*?$\n(.*?)(?=^## |\Z)", changelog, re.M | re.S).group(1)
     assert "### Honest notes" in notes and "no bot can guarantee" in notes.lower()

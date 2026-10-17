@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 event_log = logging.getLogger("topstep_bot.events")
 
 if TYPE_CHECKING:
+    from topstep_bot.assistant import Assistant
     from topstep_bot.first_trade import FirstTradePlanner
     from topstep_bot.knowledge import KnowledgeBase
     from topstep_bot.market_intel import MarketTracker
@@ -141,6 +142,7 @@ class TradingCore:
         self.manual = ManualTrading(self)  # trades you open yourself from the dashboard's trade ticket
         self.setups = SetupTracker(self)  # the trades every strategy is building toward (dashboard)
         self.first_trade: FirstTradePlanner | None = None  # an educated trade soon after starting (first_trade.py)
+        self.assistant: Assistant | None = None  # the AI trading assistant (assistant.py, live only)
         self._insights: dict[bool, tuple[tuple, dict]] = {}  # cached "What the bot learned" reports (recent / long-run)
         self.memory: LongRunMemory | None = None  # every bar seen + what every strategy did on all of it (memory.py)
         # Cross-account check before any entry: side (+1/-1) -> reason it's not allowed, or None (crossaccount.py).
@@ -397,6 +399,8 @@ class TradingCore:
         self.setups.on_bar_closed(bar.ts + self.tf, bar.close)
         if self.first_trade:
             await self.first_trade.on_bar_closed(bar.ts + self.tf)
+        if self.assistant:
+            await self.assistant.on_bar_closed(bar.ts + self.tf)
         if self.remote:
             self.remote.on_flat()
 
@@ -786,6 +790,8 @@ class TradingCore:
             self.manual.trade_closed(t)
         elif t.strategy == FIRST_TRADE and self.first_trade:
             self.first_trade.trade_closed(t)
+        if self.assistant:
+            self.assistant.trade_closed(t)
         self.closed_trades.append(t)
         if self.journal and self.current_day:
             self.journal.record_trade(t, self.current_day, self.account_label, self.contract.name, self.trade_facts(t))
@@ -796,6 +802,15 @@ class TradingCore:
             f"net ${t.net_pnl:,.2f}" + (f" ({r:+.2f}R)" if r is not None else ""),
             "exit",
         )
+
+    def _assistant_view(self) -> dict | None:
+        if self.assistant is None:
+            return None
+        try:
+            return self.assistant.view()
+        except Exception:  # noqa: BLE001 - a dashboard panel must never break the snapshot
+            log.exception("AI assistant view failed")
+            return None
 
     def knowledge_summary(self) -> dict | None:
         if self.knowledge is None:
@@ -860,6 +875,7 @@ class TradingCore:
             d["open_pnl"] = round(self.orders.open_pnl(price), 2)
             d["r_now"] = round((price - t.entry_price) * t.side.sign / t.risk_points, 2) if t.risk_points else None
         d["odds"] = t.odds  # the probability calculator's view when it was taken
+        d["assisted"] = list(t.assisted)  # what the AI assistant changed on it
         d["breakeven_ok"] = (t.entry_price is not None and t.stop_order_id is not None and price is not None
                              and (t.stop_price - t.entry_price) * t.side.sign < 0
                              and (price - t.entry_price) * t.side.sign >= self.contract.price_offset(2))
@@ -929,6 +945,7 @@ class TradingCore:
             "regime": self.regime.value,
             "knowledge": self.knowledge_summary(),
             "first_trade": self.first_trade.view() if self.first_trade else None,
+            "assistant": self._assistant_view(),
             "forecast": self.forecast(),
             "memory": self.memory.status() if self.memory else None,
             "intel": self.intel.brief(self.clock()) if self.intel else None,

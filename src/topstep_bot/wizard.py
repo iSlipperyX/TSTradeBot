@@ -169,6 +169,10 @@ knowledge:                      # what the bot learns while it runs (drives the 
   deep_learning: true           # long-run memory: keep every bar, backfill history, replay it all daily (reports only)
   deep_history_days: {deep_days}        # how far back the long-run memory reaches (up to 3650)
 {first_trade}{aggressive}
+assistant:                      # the AI trading assistant: off until you switch it on (Setup tab, Overview, /assistant)
+  manage: false                 # watch and manage open trades: tighten the stop, breakeven, close early
+  trade: false                  # place its own small trades (every risk rule and Topstep rule still applies)
+
 risk:
   risk_per_trade: {risk_per_trade:g}          # $ lost if a trade hits its stop (position size is calculated from this)
   personal_daily_loss_limit: {daily_loss:g} # stop trading for the day after losing this much (incl. open P&L)

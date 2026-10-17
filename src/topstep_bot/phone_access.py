@@ -97,6 +97,7 @@ REMOTE_ROUTES = {
     ("POST", "/api/lab/download"),  # keeps the price history fresh; saves nothing in config.yaml
     ("POST", "/api/markets"),  # the market list (Trade tab, Simulations)
     ("POST", "/api/market/switch"),  # today's market, as Telegram's /switch allows
+    ("POST", "/api/assistant"),  # the AI assistant's switches and limits, as Telegram's /assistant allows
     ("POST", "/api/coach/state"),
     ("POST", "/api/coach/run"),  # the API key, budgets and applying proposals stay on the PC
     ("POST", "/api/coach/cancel"),

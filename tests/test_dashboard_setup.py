@@ -272,3 +272,27 @@ def test_saving_over_a_locked_config_says_not_saved(tmp_path, clean_env, monkeyp
         assert r["message"].startswith("Not saved: config.yaml is read-only or open in another program")
         assert path.read_text(encoding="utf-8") == "mode: paper\n"
     setup_scenario(tmp_path, body, config_text="mode: paper\n")
+
+
+def test_the_ai_assistant_is_switched_per_account_and_needs_the_claude_key(tmp_path, clean_env):
+    async def body(ctl, http, path):
+        assert "\nassistant:" in path.read_text() and "  manage: false" in path.read_text()  # in every new config.yaml, off
+        r = (await http.post("/api/assistant", json={"manage": True})).json()
+        assert not r["ok"] and "Claude API key" in r["message"] and not load_config(path).assistant.manage
+        ctl.secrets.anthropic_api_key = "sk-ant-test"
+        r = (await http.post("/api/assistant", json={"manage": True, "max_contracts": 2})).json()
+        assert r["ok"] and "managing open trades ON" in r["message"] and "own trades off" in r["message"]
+        cfg = load_config(path)
+        assert cfg.assistant.manage and not cfg.assistant.trade and cfg.assistant.max_contracts == 2
+        assert (await http.post("/api/setup/state")).json()["values"]["assistant"]["manage"] is True
+        r = (await http.post("/api/assistant", json={"max_contracts": 50})).json()
+        assert not r["ok"] and "max_contracts" in r["message"] and load_config(path).assistant.max_contracts == 2
+
+        await http.post("/api/setup/login", json={"username": "me", "api_key": "secret-key"})
+        assert (await http.post("/api/setup/save", json={**FORM, "account_id": 101})).json()["ok"]
+        assert load_config(path).assistant.manage  # saving the Setup form keeps the assistant's settings
+        await http.post("/api/bot/start")
+        await until(lambda: ctl.bot.state == "running")
+        r = (await http.post("/api/assistant", json={"trade": True})).json()
+        assert r["ok"] and "The running bot uses it now" in r["message"] and load_config(path).assistant.trade
+    setup_scenario(tmp_path, body, config_text=render_config())

@@ -40,6 +40,7 @@ import httpx
 from topstep_bot import fmt
 from topstep_bot.api.realtime import MarketStream
 from topstep_bot.api.rest import ProjectXClient, ProjectXError
+from topstep_bot.assistant import AssistantDesk
 from topstep_bot.bars import floor_time
 from topstep_bot.broker.base import Broker
 from topstep_bot.broker.paper import PaperBroker, PaperWallet
@@ -269,6 +270,7 @@ class Lane:
         await self._setup_news()
         if self.primary:
             self._setup_first_trade()
+        self._setup_assistant()
         self._setup_hedge_guard()
         return core
 
@@ -295,6 +297,8 @@ class Lane:
         core = self.core
         if core and core.memory:
             core.memory.close()
+        if core and core.assistant:
+            core.assistant.close()
         if self.positions and core and core.orders.is_flat:
             self.positions.release()
 
@@ -414,6 +418,19 @@ class Lane:
         core.first_trade = planner
         planner.request(self.desk.started_at, restart=self.desk.quiet_start)
         core.event("info", f"First trade after starting: {planner.message}")
+
+    def _setup_assistant(self) -> None:
+        """The AI trading assistant (assistant.py): on every market, switched per account (off by default)."""
+        from topstep_bot.assistant import Assistant
+
+        desk, core = self.desk, self.core
+        if core is None:
+            return
+        if desk.assistant is None:
+            desk.assistant = AssistantDesk(desk.cfg, self.journal, desk.label)
+        core.assistant = Assistant(core, desk.assistant)
+        if desk.assistant.on and self.primary:
+            core.event("info", f"{desk.assistant.describe()}. Every action goes through the bot's risk rules.")
 
     def _setup_memory(self) -> None:
         """Open the long-run memory (memory.py): the bars downloaded so far go straight into its library."""
@@ -781,6 +798,7 @@ class LiveRunner:
         self.account: Account | None = None
         self.label = ""
         self.lanes: dict[str, Lane] = {}
+        self.assistant: AssistantDesk | None = None  # the AI trading assistant's switches and spending (assistant.py)
         self.focus: str | None = None  # the market the dashboard and Telegram show (and act on) by default
         self.book: AccountBook | None = None
         self.tracker: LossLimitTracker | None = None

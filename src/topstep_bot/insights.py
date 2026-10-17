@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from topstep_bot import fmt
-from topstep_bot.knowledge import FIRST_TRADE, MANUAL, KnowledgeBase, Observation
+from topstep_bot.knowledge import ASSISTANT, FIRST_TRADE, MANUAL, KnowledgeBase, Observation
 from topstep_bot.market_context import FEATURES, SIGNED, orient
 
 MIN_BUCKET = 15  # observations a condition bucket needs before it can be called a hint
@@ -123,6 +123,8 @@ def build_report(kb: KnowledgeBase, strategies: list[tuple[str, str]], *, slippa
     manual = _strategy_row(MANUAL, "Your manual trades", by_strategy[MANUAL]) if by_strategy.get(MANUAL) else None
     first = (_strategy_row(FIRST_TRADE, "First trades after starting", by_strategy[FIRST_TRADE])
              if by_strategy.get(FIRST_TRADE) else None)
+    helper = (_strategy_row(ASSISTANT, "AI assistant's own trades", by_strategy[ASSISTANT])
+              if by_strategy.get(ASSISTANT) else None)
 
     fills = [o for o in obs if o.source in FILLED]
     slip_in = [o.slip_in for o in fills if o.slip_in is not None]
@@ -174,6 +176,7 @@ def build_report(kb: KnowledgeBase, strategies: list[tuple[str, str]], *, slippa
         "strategies": rows,
         "manual": manual,
         "first_trade": first,
+        "assistant": helper,
         "execution": execution,
         "conditions": conditions,
         "hints": hints[:max_hints],
@@ -233,6 +236,9 @@ def report_text(rep: dict[str, Any], *, compact: bool = False) -> str:
     f = rep.get("first_trade")
     if f and f["n"]:
         lines.append(f"First trades after starting: {fmt.r(f['net_r'])} over {f['n']} ({round(100 * (f['win_rate'] or 0))}% won).")
+    a = rep.get("assistant")
+    if a and a["n"]:
+        lines.append(f"AI assistant's own trades: {fmt.r(a['net_r'])} over {a['n']} ({round(100 * (a['win_rate'] or 0))}% won).")
     ex = execution_line(rep["execution"])
     if ex:
         lines.append(ex)
