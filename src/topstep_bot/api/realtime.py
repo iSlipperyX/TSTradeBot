@@ -28,9 +28,10 @@ async def _call(cb: Callback | None, value: Any) -> None:
 class UserStream:
     """Account, order, position and fill updates for one account."""
 
-    def __init__(self, url: str, token_provider: Callable[[], Awaitable[str]], account_id: int):
+    def __init__(self, url: str, token_provider: Callable[[], Awaitable[str]], account_id: int,
+                 token_renewer: Callable[[str], Awaitable[str]] | None = None):
         self.account_id = account_id
-        self.hub = HubConnection(url, token_provider, name="user")
+        self.hub = HubConnection(url, token_provider, name="user", token_renewer=token_renewer)
         self.on_account: Callback | None = None
         self.on_order: Callback | None = None
         self.on_position: Callback | None = None
@@ -72,9 +73,10 @@ class UserStream:
 class MarketStream:
     """Quotes and trade prints for one contract. Quote updates may be partial, so they are merged."""
 
-    def __init__(self, url: str, token_provider: Callable[[], Awaitable[str]], contract_id: str):
+    def __init__(self, url: str, token_provider: Callable[[], Awaitable[str]], contract_id: str,
+                 token_renewer: Callable[[str], Awaitable[str]] | None = None):
         self.contract_id = contract_id
-        self.hub = HubConnection(url, token_provider, name="market")
+        self.hub = HubConnection(url, token_provider, name="market", token_renewer=token_renewer)
         self.on_quote: Callback | None = None
         self.on_tick: Callback | None = None
         self.quote = Quote(contract_id, datetime.now(UTC))

@@ -150,6 +150,16 @@ class ProjectXClient:
                     await self._login_locked()
             return self._token
 
+    async def renew_token(self, refused: str) -> str:
+        """Sign in again because the realtime hubs keep refusing ``refused`` (signalr.py).
+
+        Both hubs may ask at once: only the first signs in, the other gets the new token."""
+        async with self._auth_lock:
+            if self._token is not None and self._token != refused:
+                return self._token
+            log.info("Signing in again for a fresh session token (the realtime connection kept being closed)")
+            return await self._login_locked()
+
     # --------------------------------------------------------------- transport
 
     async def _post(self, path: str, body: dict, *, idempotent: bool = True, bars: bool = False,

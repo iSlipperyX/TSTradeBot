@@ -3,6 +3,33 @@
 Every version of the bot, newest first. The release workflow publishes each version's section as its
 GitHub release notes.
 
+## Unreleased — fixes from the first live week
+
+Found by reading the first live week's journals, knowledge files and logs (two Combine accounts,
+Oct 9–16). Nothing about how the bot picks or sizes trades changed.
+
+- **Realtime connection stuck for hours.** With two accounts signed in with the same API key, a
+  network blip left the account that signed in first unable to reconnect: TopstepX closed every new
+  connection right after it opened, every 30 seconds, until a restart (seen all night on one account
+  and for four hours on the other). The bot now signs in again for a fresh token after two quick
+  closes in a row. The reconnect delay also starts again from one second after a connection that
+  worked for a while, instead of staying at 30 seconds for the rest of the day.
+- **Days not recorded when the bot was stopped before the end of day.** The day's result is saved,
+  and the trailing MLL floor raised, at the bot's end of day. Stopped before that, the day had no
+  record, so the Consistency Target's best day and the Combine progress missed its profit, and the
+  floor never saw its close. On the next start the bot now records those days from TopstepX's fills
+  (paper: the journal) and runs their closes through the floor in order.
+- **An idea whose stop the price had already passed counted as a +1R win** (and went into the
+  knowledge ledger). It is now marked "not scored" and nothing is learned from it.
+- **The bot's own trade and the idea that followed the same signal shared one journal row**, so
+  whichever finished last overwrote the other. They now have separate rows.
+- **New: Your hand against the plan** (Knowledge → What works, and `/knowledge`): the bot's trades
+  left alone, the ones you closed by hand against what their plans went on to do, and how your own
+  trades end. A score only.
+- A Telegram alert that fails with an empty error message now names the error.
+
+One week of live trades is far too little to judge any strategy, and no bot can guarantee passing the
+Combine or making a profit.
 ## 4.1.0 — the AI trading assistant
 
 ### An AI trading assistant, off until you switch it on

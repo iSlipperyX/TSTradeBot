@@ -339,6 +339,8 @@ class KnowledgeBase:
                         continue  # a line cut short by a crash or power cut
                     if o.source not in KEPT_SOURCES and o.day <= cut:
                         continue
+                    if o.source == "shadow" and o.why == "stop hit" and o.r > 0:
+                        continue  # an idea whose stop was already passed (recommendations.py scorable): not a win
                     if not self._duplicate(o):
                         self._add(o)
                         added.append(o)

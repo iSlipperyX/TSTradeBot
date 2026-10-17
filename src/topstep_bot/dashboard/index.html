@@ -1017,6 +1017,7 @@ button.src:hover:not(:disabled) { border-color:var(--accent); background:var(--s
       <p class="hint">After costs removes fees and, for ideas that weren't traded, the slippage your backtests assume. Best and worst point: how far a
         signal went for and against it on average. Losers up 1R first: losing signals that were 1R in profit on the way.</p>
       <div id="ins-fills" class="summary" hidden></div>
+      <div id="ins-hands" class="summary" hidden></div>
       <h3>Conditions worth testing</h3>
       <ul id="ins-hints" class="hints"></ul>
       <div class="row" style="margin-top:14px"><h3 style="margin:0">Compare by</h3><select id="ins-feature" class="picker"></select></div>
@@ -2701,7 +2702,7 @@ function renderIdeas(b) {
   $("scoreboard").innerHTML = (recs.summary || []).map(x => `${x.active ? "Auto · " : ""}${esc(x.title)}: ${plural(x.ideas, "idea")}, ${x.wins}/${x.closed} won,
     <span class="${x.pnl < 0 ? "neg" : x.pnl > 0 ? "pos" : ""}">${money0(x.pnl)}</span>`).join(" &nbsp;·&nbsp; ");
   $("recs").innerHTML = (recs.items || []).map(r => {
-    const res = r.result ? `<span class="${r.result === "won" ? "pos" : r.result === "lost" ? "neg" : ""}">${r.outcome_usd != null ? money0(r.outcome_usd) : (r.outcome_r ?? 0) + "R"}${r.hypothetical ? "*" : ""}</span>` : "–";
+    const res = r.result === "void" ? "not scored" : r.result ? `<span class="${r.result === "won" ? "pos" : r.result === "lost" ? "neg" : ""}">${r.outcome_usd != null ? money0(r.outcome_usd) : (r.outcome_r ?? 0) + "R"}${r.hypothetical ? "*" : ""}</span>` : "–";
     const tag = r.strategy === "manual" ? `<span class="tag manual">you</span> ` : r.active ? `<span class="tag auto">auto</span> ` : "";
     return `<tr><td>${esc(r.time)}</td><td>${tag}${esc(r.title)}</td><td class="side-${esc(r.side)}">${esc(r.side)}</td>
       <td class="num">${r.size || "–"}</td><td class="num">${px(r.entry)}</td><td class="num">${px(r.stop)}</td><td class="num">${px(r.target)}</td>
@@ -3013,6 +3014,7 @@ function showScope() { document.querySelectorAll("#ins-scope button").forEach(x 
 document.querySelectorAll("#ins-scope button").forEach(x => x.onclick = () => {
   INS_SCOPE = x.dataset.scope; store.set("tsb-ins-scope", INS_SCOPE); showScope(); loadInsights(true); });
 showScope();
+let HANDS = null;  // the hand review that came with the last insights report
 async function loadInsights(force) {
   const k = S && S.bot && S.bot.knowledge, m = S && S.bot && S.bot.memory;
   $("ins-scope").hidden = !m;
@@ -3024,9 +3026,33 @@ async function loadInsights(force) {
   insBusy = true;
   try {
     const d = await post("action/insights", {scope: INS_SCOPE});
-    if (d.ok !== false) { INS = d.report; insKey = key; }
+    if (d.ok !== false) { INS = d.report; insKey = key; HANDS = d.hands || null; }
   } finally { insBusy = false; }
   renderInsights();
+  renderHands();
+}
+function renderHands() {
+  // Trades closed or opened by hand against the bot's own plans (hand_review.py).
+  const h = HANDS, box = $("ins-hands");
+  box.hidden = !h;
+  if (!h) return;
+  const a = h.bot_alone, o = h.own, line = (label, v) => `<div class="line"><span>${label}</span><span>${v}</span></div>`;
+  const grp = g => `${g.n} · ${money0(g.net_usd)}${g.n ? ` · ${g.wins} won` : ""}`;
+  let html = `<b>Your hand against the plan</b> <span class="muted">(${esc(h.first_day)} to ${esc(h.last_day)}, after costs)</span>` +
+    line("Bot trades left alone", grp(a));
+  if (h.stepped_in.length) {
+    const d = h.stepped_in_diff_r;
+    html += line("Bot trades you closed by hand", `${h.stepped_in.length}` + (d == null ? " · no plan to compare yet"
+      : ` · ${d >= 0 ? "made" : "cost"} <span class="${d >= 0 ? "pos" : "neg"}">${Math.abs(d).toFixed(1)}R</span>` +
+        (h.stepped_in_diff_usd != null ? ` (about ${money0(Math.abs(h.stepped_in_diff_usd))})` : "") + " against their own plans"));
+  }
+  if (o.n) {
+    html += line("Your own trades (ticket and ideas)", `${grp(o)} · fees ${money0(o.fees_usd)}`);
+    if (o.avg_win_r != null && o.avg_loss_r != null) html += line("Your average win / loss", `${signed(o.avg_win_r)}R / ${signed(o.avg_loss_r)}R`);
+    if (o.hand_wins && o.hand_win_best_r != null)
+      html += line("Your winners closed by hand", `closed at ${signed(o.hand_win_closed_r)}R after reaching ${signed(o.hand_win_best_r)}R`);
+  }
+  box.innerHTML = html;
 }
 const rcell = (v, n, min) => v == null ? `<td class="num dim">–</td>`
   : `<td class="num ${n != null && n < min ? "dim" : v > 0 ? "pos" : v < 0 ? "neg" : ""}">${signed(v)}${n != null ? ` <span class="muted">(${n})</span>` : ""}</td>`;

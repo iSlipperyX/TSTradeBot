@@ -223,7 +223,7 @@ class BotActions:
 
     def insights(self, scope: str = "recent") -> dict:
         """The "What the bot learned" report for the dashboard's Knowledge tab (``scope`` recent or longrun)."""
-        return {"report": self.core.insights(longrun=scope == "longrun"), "scope": scope}
+        return {"report": self.core.insights(longrun=scope == "longrun"), "scope": scope, "hands": self.core.hand_review()}
 
     def brief(self) -> dict:
         """What the bot knows, in plain sentences, ending with its next-trade forecast (the Knowledge tab)."""

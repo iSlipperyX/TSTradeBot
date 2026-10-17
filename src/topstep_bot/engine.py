@@ -831,7 +831,23 @@ class TradingCore:
         table = self.knowledge.text(names, today=self.schedule.trading_day(self.clock()), slot=self.slot(),
                                     regime=self.regime.value)
         report = self.insights()
-        return table if not report or not report["coverage"]["total"] else table + "\n\n" + report_text(report, compact=True)
+        text = table if not report or not report["coverage"]["total"] else table + "\n\n" + report_text(report, compact=True)
+        from topstep_bot.hand_review import text as hand_text
+
+        hands = hand_text(self.hand_review())
+        return text + "\n\n" + hands if hands else text
+
+    def hand_review(self) -> dict | None:
+        """Trades closed or opened by hand against the bot's plans (hand_review.py), from this account's journal."""
+        if self.journal is None:
+            return None
+        from topstep_bot.hand_review import review
+
+        try:
+            return review(self.journal, self.account_label)
+        except Exception:  # noqa: BLE001 - a report must never break the Knowledge tab
+            log.exception("Hand review failed")
+            return None
 
     def insights(self, longrun: bool = False) -> dict | None:
         """The "What the bot learned" report (insights.py), rebuilt only when its knowledge base changes.

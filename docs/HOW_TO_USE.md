@@ -1472,6 +1472,11 @@ The report built from it:
   **Download CSV** saves every observation for Excel.
 - **Telegram:** `/knowledge` ends with a short version.
 - **Menu 17** or **`topstep-bot insights`** prints it; `topstep-bot insights --csv knowledge.csv` exports.
+- **Your hand against the plan** (same panel, and the end of `/knowledge`): from this account's journal,
+  what the bot's trades made when left alone, what closing them by hand made or cost against what
+  their own plan (stop and target) went on to do, and how your own trades end: average win and loss,
+  fees, and where you closed winners compared with the best point they had reached. It is a score,
+  not a rule: nothing in it changes how the bot trades.
 
 Read the conditions as **hints, not rules.** The bot compares 7 strategies on 10 measurements, so
 some differences are luck. A hint is only listed when both sides have at least 15 observations and
@@ -2244,6 +2249,19 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 ---
 
 ## 27. Troubleshooting
+
+**The log keeps saying "hub connection lost: server closed connection" every few seconds.** TopstepX
+is closing new realtime connections made with an older session token. Seen when two accounts (two
+bots) sign in with the same API key: after a network blip, the bot that signed in first could not
+reconnect until it was restarted. The bot now signs in again by itself after two quick closes in a
+row ("signing in again for a fresh session token" in the log). If the lines keep coming after that,
+restart that account.
+
+**Lots of "getaddrinfo failed" lines.** The PC could not look up TopstepX's address: the internet or
+its DNS dropped. Orders already at TopstepX (your stop and target) keep working; the bot carries on
+when the connection is back. If it happens often, a wired connection or another DNS server (your
+router's settings, or 1.1.1.1) usually helps. A debugging proxy such as Fiddler left running routes
+all of the PC's traffic through itself: close it while the bot trades.
 
 **Phone access: the Open dashboard button doesn't appear.** Look at **Settings → Phone access** on
 the PC dashboard: it says what the link is doing. "Cloudflare did not answer in time" or

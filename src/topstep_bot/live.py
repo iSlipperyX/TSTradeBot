@@ -34,6 +34,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -277,7 +278,8 @@ class Lane:
     async def start(self) -> None:
         """Start this market's price stream and bar loop."""
         assert self.contract is not None
-        self.market = MarketStream(self.desk.cfg.api.market_hub_url, self.client.get_token, self.contract.id)
+        self.market = MarketStream(self.desk.cfg.api.market_hub_url, self.client.get_token, self.contract.id,
+                                   getattr(self.client, "renew_token", None))
         self.market.on_quote = self._on_quote
         self._tasks = [
             spawn(self.market.hub.run(), name=f"market-hub {self.symbol}"),
@@ -948,6 +950,9 @@ class LiveRunner:
         if closed_today:
             log.info("Restoring today's %d closed trade(s), net $%.2f", len(closed_today), realized)
         last_eod = self.journal.get_state(f"last_eod:{label}")
+        if last_eod is not None and last_eod < today.isoformat():
+            await self._record_missed_days(label, date.fromisoformat(last_eod), today, schedule,
+                                           acct.balance - realized)
         if last_eod is None or last_eod < today.isoformat():
             self.tracker.end_of_day(acct.balance - realized)  # yesterday's close balance
         self.book.start_day(today, acct.balance, realized, closed_today)
@@ -1110,6 +1115,62 @@ class LiveRunner:
             core.risk.paused = True
             text += " New trades are paused until you resume them."
         core.event("critical", text, "error")
+
+    async def _record_missed_days(self, label: str, last_eod: date, today: date, schedule: Any,
+                                  close_balance: float) -> None:
+        """Write the day records the bot missed because it wasn't running at the end of those days.
+
+        The end of day is when the bot saves the day's result and raises the trailing MLL floor. If it was
+        stopped before then (a common way to run it: start for the session, stop after), those days had no
+        record: the Consistency Target and the Combine progress missed their profit, and the floor never
+        saw their closing balance. Each missed day's result comes from TopstepX's fills (paper: the journal),
+        walked back from yesterday's close, and its close goes through the floor in order like a normal
+        end of day would have."""
+        days: dict[date, list[float]] = {}
+        try:
+            if self.cfg.mode == "live" and self._shared_broker is not None:
+                start = session_open_for(last_eod + timedelta(days=1), schedule.tz)
+                closes: dict[int, tuple[date, float]] = {}
+                for f in await self._shared_broker.fills_since(start):
+                    if f.voided:
+                        continue
+                    day = schedule.trading_day(f.ts)
+                    if not last_eod < day < today:
+                        continue
+                    days.setdefault(day, [0.0, 0])[0] += (f.pnl or 0.0) - f.fees
+                    if f.pnl is not None:
+                        closes[f.order_id] = (day, 0.0)  # one closing order = one trade
+                for day, _ in closes.values():
+                    days[day][1] += 1
+            else:
+                for row in self.journal.trades(limit=1000, account=label):
+                    day = date.fromisoformat(row["trading_day"])
+                    if last_eod < day < today and row["exit_time"]:
+                        entry = days.setdefault(day, [0.0, 0])
+                        entry[0] += row["net_pnl"] or 0.0
+                        entry[1] += 1
+        except Exception as exc:  # noqa: BLE001 - a missing history must not stop the bot from starting
+            log.warning("Could not look up the results of days the bot wasn't running at the close: %s", exc)
+            return
+        recorded = {r["trading_day"] for r in self.journal.daily(label)}
+        missed = sorted(d for d in days if d.isoformat() not in recorded)
+        if not missed:
+            return
+        ends: dict[date, float] = {}
+        balance = close_balance
+        for day in sorted(days, reverse=True):  # yesterday's close, minus each later day's result
+            ends[day] = balance
+            balance -= days[day][0]
+        for day in missed:
+            pnl, trades = days[day]
+            end = round(ends[day], 2)
+            floor = self.tracker.end_of_day(end)
+            self.journal.record_day(day, label, round(end - pnl, 2), end, int(trades), floor)
+            self.journal.set_state(f"mll_floor:{label}", floor)
+        self.journal.set_state(f"last_eod:{label}", missed[-1].isoformat())
+        listed = ", ".join(f"{d.isoformat()} {fmt.money(days[d][0])}" for d in missed)
+        log.info("Recorded %d day(s) the bot wasn't running at the close: %s (MLL floor %s)",
+                 len(missed), listed, fmt.money(self.tracker.floor))
 
     def _best_prior_day(self, label: str, today: date, start: float) -> float:
         """Best finished day since the account started (or was last reset), for the Consistency Target."""
