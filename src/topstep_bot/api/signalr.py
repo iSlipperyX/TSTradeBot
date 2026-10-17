@@ -53,6 +53,17 @@ class HubClosedError(Exception):
     pass
 
 
+# A connection the server closes this soon after it opened never really worked; one that stayed up this
+# long did, so the next drop starts the reconnect delays from the beginning again.
+QUICK_CLOSE_SECONDS = 15.0
+HEALTHY_SECONDS = 60.0
+# After this many quick closes in a row the hub signs in again for a fresh session token before the next try.
+# Seen live: when a second bot signs in with the same API key, TopstepX keeps accepting the first bot's old
+# token for its open connections but closes every new one right after the handshake, for hours, until a
+# restart signs in again.
+QUICK_CLOSES_BEFORE_NEW_TOKEN = 2
+
+
 class HubConnection:
     def __init__(
         self,
@@ -63,10 +74,15 @@ class HubConnection:
         ping_interval: float = 10.0,
         connect_timeout: float = 15.0,
         reconnect_delays: tuple[float, ...] = (1, 2, 5, 10, 20, 30),
+        token_renewer: Callable[[str], Awaitable[str]] | None = None,
     ):
         self.url = url
         self.name = name
         self._token_provider = token_provider
+        self._token_renewer = token_renewer  # signs in again, given the token the server keeps refusing
+        self._token: str | None = None  # the token of the last connection attempt
+        self._renew = False
+        self._opened_at: float | None = None  # loop time the current/last connection completed its handshake
         self._ping_interval = ping_interval
         self._connect_timeout = connect_timeout
         self._reconnect_delays = reconnect_delays
@@ -135,8 +151,11 @@ class HubConnection:
         """Connect and keep the connection alive until stop() is called."""
         dispatcher = asyncio.create_task(self._dispatch_loop(), name=f"{self.name}-dispatch")
         failures = 0
+        quick_closes = 0
+        loop = asyncio.get_running_loop()
         try:
             while not self._stopping.is_set():
+                self._opened_at = None
                 try:
                     await self._session()
                     failures = 0
@@ -148,6 +167,19 @@ class HubConnection:
                     log.warning("%s hub connection lost: %s", self.name, exc)
                 if self._stopping.is_set():
                     break
+                lasted = None if self._opened_at is None else loop.time() - self._opened_at
+                if lasted is not None and lasted >= HEALTHY_SECONDS:
+                    failures = quick_closes = 0  # it worked for a while: a fresh drop, not a run of failures
+                elif lasted is not None and lasted < QUICK_CLOSE_SECONDS:
+                    quick_closes += 1  # the handshake worked and the server closed it straight away
+                    if quick_closes >= QUICK_CLOSES_BEFORE_NEW_TOKEN and self._token_renewer is not None:
+                        if not self._renew:
+                            log.warning("%s hub: TopstepX keeps closing new connections right after they open - "
+                                        "signing in again for a fresh session token", self.name)
+                        self._renew = True
+                        quick_closes = 0
+                else:
+                    quick_closes = 0
                 delay = self._reconnect_delays[min(failures, len(self._reconnect_delays) - 1)]
                 failures += 1
                 log.info("%s hub reconnecting in %ss", self.name, delay)
@@ -164,7 +196,12 @@ class HubConnection:
         await self._ws.send(text)
 
     async def _session(self) -> None:
-        token = await self._token_provider()
+        if self._renew and self._token_renewer is not None and self._token is not None:
+            token = await self._token_renewer(self._token)
+            self._renew = False
+        else:
+            token = await self._token_provider()
+        self._token = token
         ws_url = hub_ws_url(self.url, token)
         async with connect(
             ws_url, open_timeout=self._connect_timeout, ping_interval=None, max_size=None
@@ -179,6 +216,7 @@ class HubConnection:
                 self._handle(rec)
 
             self._connected.set()
+            self._opened_at = asyncio.get_running_loop().time()
             log.info("%s hub connected", self.name)
             for method, args in self._subscriptions:
                 await self.send(method, *args)

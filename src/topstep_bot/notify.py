@@ -85,7 +85,8 @@ class Notifier:
                     try:
                         await self._post(url, body)
                     except Exception as exc:  # noqa: BLE001 - alerts are best effort
-                        log.warning("%s alert failed: %s", name, redact(exc))
+                        # Some network errors (timeouts) have no text: name the error so the log says something.
+                        log.warning("%s alert failed: %s", name, redact(exc) or type(exc).__name__)
             finally:
                 self._queue.task_done()
 

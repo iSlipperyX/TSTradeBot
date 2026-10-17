@@ -90,6 +90,16 @@ class Recommendation:
         return self.result == ""
 
     @property
+    def scorable(self) -> bool:
+        """False when its stop is on the wrong side of (or at) its entry: price is already past the stop, so
+        following it would score an instant +1R "win" (or nothing) for a trade that could never have been placed.
+        Seen live after a fast opening move: an ORB long signalled at 7836 but was checked at 7821.5, below its
+        7826.75 stop, and was counted as a winner and saved in the knowledge ledger."""
+        if self.initial_stop is None:
+            return True
+        return (self.entry - self.initial_stop) * self.side.sign > 0
+
+    @property
     def reward_usd(self) -> float | None:
         if self.target is None or self.risk_usd is None or self.stop is None or self.entry == self.stop:
             return None
@@ -295,6 +305,9 @@ class RecommendationBook:
                 if rec.trade_tag != live_tag:  # the entry was cancelled before it filled
                     self._close(rec, rec.entry, "entry not filled (price moved away)", outcome=0.0)
                 continue
+            if not rec.scorable:
+                self._void(rec, "not scored: its stop was already on the wrong side of the price")
+                continue
             if rec.status == "idea":
                 rec.status = "tracking"
             long = rec.side == OrderSide.BUY
@@ -332,6 +345,16 @@ class RecommendationBook:
         self._learn(rec, why)
         if self.core.reasoner is not None and not self.quiet:
             self.core.reasoner.on_outcome(rec, why)
+
+    def _void(self, rec: Recommendation, why: str) -> None:
+        """End an idea without a result: nothing is learned from it and it counts as neither won nor lost."""
+        rec.result = "void"
+        rec.exit_price = rec.outcome_r = rec.outcome_usd = None
+        rec.note = f"{rec.note}; {why}" if rec.note else why
+        if rec.status in ("idea", "tracking"):
+            rec.status = "closed"
+        rec.closed_at = self.core.clock()
+        self._store(rec)
 
     def _learn(self, rec: Recommendation, why: str) -> None:
         """Hand a finished recommendation to the knowledge base (if its ending says something)."""
@@ -396,7 +419,9 @@ class RecommendationBook:
         if self.core.journal:
             # Keyed by the signal, not the R-number (which restarts at R1 every run): a restart neither
             # overwrites earlier rows nor adds the morning's ideas a second time when it replays them.
-            key = f"{rec.created:%Y%m%d-%H%M}-{rec.strategy}-{rec.side.label}"
+            # The bot's own trade gets its own key: with the adaptive strategy the same signal is also followed
+            # as an idea, and one shared key let whichever finished last overwrite the other's row.
+            key = f"{rec.created:%Y%m%d-%H%M}-{rec.strategy}-{rec.side.label}" + ("-bot" if rec.active else "")
             self.core.journal.record_recommendation({**data, "id": key})
 
     def to_dict(self, rec: Recommendation) -> dict[str, Any]:
@@ -438,7 +463,7 @@ class RecommendationBook:
         for strat in [self.core.strategy, *self.shadows]:
             active = strat is self.core.strategy
             mine = [r for r in todays if (r.active if active else (r.strategy == strat.name and not r.active))]
-            closed = [r for r in mine if r.result]
+            closed = [r for r in mine if r.result and r.result != "void"]
             summary.append({
                 "strategy": strat.name, "title": strat.title, "active": active,
                 "ideas": len(mine), "closed": len(closed), "wins": sum(1 for r in closed if r.result == "won"),
@@ -464,7 +489,9 @@ class RecommendationBook:
             head = f"{d['time']} {'★' if r.active else '•'} {r.title}: {r.side.label} {r.size or '-'} @ {r.entry} stop {r.stop}"
             if r.target is not None:
                 head += f" tgt {r.target}"
-            if r.result:
+            if r.result == "void" or (r.result and r.outcome_usd is None and r.outcome_r is None):
+                tail = " -> not scored" + (f" ({r.note})" if r.note else "")
+            elif r.result:
                 money = f"{r.outcome_usd:+,.0f}$" if r.outcome_usd is not None else f"{r.outcome_r:+.1f}R"
                 tail = f" -> {r.result.upper()} {money}" + (" (hypothetical)" if r.hypothetical else "")
             else:

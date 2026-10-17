@@ -25,7 +25,7 @@ class ProjectXBroker(Broker):
     def __init__(self, client: ProjectXClient, account_id: int, user_hub_url: str):
         super().__init__(account_id)
         self.client = client
-        self.stream = UserStream(user_hub_url, client.get_token, account_id)
+        self.stream = UserStream(user_hub_url, client.get_token, account_id, getattr(client, "renew_token", None))
         self.stream.on_order = lambda o: self._emit(self.on_order, o)
         self.stream.on_position = lambda p: self._emit(self.on_position, p)
         self.stream.on_fill = lambda f: self._emit(self.on_fill, f)
