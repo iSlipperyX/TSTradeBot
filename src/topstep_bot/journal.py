@@ -92,6 +92,15 @@ CREATE TABLE IF NOT EXISTS decisions (
     data TEXT
 );
 CREATE INDEX IF NOT EXISTS decisions_day ON decisions (day, created);
+CREATE TABLE IF NOT EXISTS assistant_decisions (
+    id TEXT PRIMARY KEY,
+    day TEXT,
+    created TEXT,
+    kind TEXT,
+    action TEXT,
+    data TEXT
+);
+CREATE INDEX IF NOT EXISTS assistant_day ON assistant_decisions (day, created);
 CREATE TABLE IF NOT EXISTS state (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -206,6 +215,12 @@ class Journal:
                           (d["id"], d["day"], d["created"], d["status"], d.get("strategy"), json.dumps(d, default=str)))
         self.conn.commit()
 
+    def record_assistant(self, d: dict) -> None:
+        """Save one of the AI trading assistant's decisions (assistant.py); the same id updates it with the result."""
+        self.conn.execute("INSERT OR REPLACE INTO assistant_decisions VALUES (?,?,?,?,?,?)",
+                          (d["id"], d["day"], d["created"], d["kind"], d.get("action"), json.dumps(d, default=str)))
+        self.conn.commit()
+
     def log_event(self, level: str, message: str) -> None:
         self.conn.execute(
             "INSERT INTO events VALUES (?,?,?)", (datetime.now(UTC).isoformat(timespec="seconds"), level, message)
@@ -270,6 +285,19 @@ class Journal:
         sql = "SELECT data FROM decisions" + (" WHERE " + " AND ".join(where) if where else "")
         rows = self.conn.execute(sql + " ORDER BY created DESC LIMIT ?", (*args, limit))
         return [json.loads(r["data"]) for r in rows]
+
+    def assistant_decisions(self, limit: int = 20, day: str | None = None) -> list[dict]:
+        """The AI trading assistant's decisions, newest first (``day``: one trading day, ISO date)."""
+        sql, args = "SELECT data FROM assistant_decisions", []
+        if day:
+            sql += " WHERE day = ?"
+            args.append(day)
+        rows = self.conn.execute(sql + " ORDER BY created DESC LIMIT ?", (*args, limit))
+        return [json.loads(r["data"]) for r in rows]
+
+    def assistant_decision(self, decision_id: str) -> dict | None:
+        row = self.conn.execute("SELECT data FROM assistant_decisions WHERE id = ?", (decision_id,)).fetchone()
+        return json.loads(row["data"]) if row else None
 
     def decision(self, decision_id: str) -> dict | None:
         row = self.conn.execute("SELECT data FROM decisions WHERE id = ?", (decision_id,)).fetchone()

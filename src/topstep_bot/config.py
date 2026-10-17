@@ -427,6 +427,44 @@ class FirstTradeConfig(_Section):
     contracts: int = Field(default=1, ge=1, le=5, description="Size of that trade (1 = the smallest).")
 
 
+class AssistantConfig(_Section):
+    """The AI trading assistant (assistant.py): a Claude model that watches the market with the bot.
+
+    Two switches, both off unless you turn them on (Setup tab, the Overview's AI assistant panel, or
+    Telegram /assistant), each per account:
+
+    * ``manage``: watch the open trades and manage them - tighten the stop, move it to breakeven or
+      close early. It can never widen a stop, add contracts or remove the protection.
+    * ``trade``: place its own trades. Each one goes through every rule the bot's own trades obey
+      (loss limits, the Maximum Loss Limit, the consistency line, trade counts, news, the entry
+      window, Topstep's size caps) and is filed in the journal and the knowledge base as the
+      assistant's, with a record of why.
+
+    It needs the Claude API key saved on the Setup tab (shared with the Ask answers and the AI coach)
+    and counts toward the same monthly Claude budget. Without a key, with the budget spent or the
+    connection down, it does nothing and the bot trades exactly as it would without it."""
+
+    manage: bool = Field(default=False, description="Watch the open trades and manage them (tighten stops, breakeven, close early).")
+    trade: bool = Field(default=False, description="Place its own trades (every risk rule and Topstep rule still applies).")
+    include_manual: bool = Field(default=False, description="Also manage trades you opened yourself from the trade ticket.")
+    model: ClaudeModel = Field(default="claude-opus-5-5", description="The Claude model that makes the decisions.")
+    effort: Literal["low", "medium", "high"] = Field(default="medium", description="How hard the model thinks per decision.")
+    max_contracts: int = Field(default=1, ge=1, le=10, description="Largest size of one of its own trades (risk rules may allow less).")
+    max_trades_per_day: int = Field(default=2, ge=1, le=10, description="Its own trades per day at most (the bot's daily trade limit counts them too).")
+    min_confidence: float = Field(
+        default=0.65, ge=0.5, le=0.95,
+        description="It only acts (enters, or closes a trade early) when it is at least this sure; otherwise it waits.")
+    think_every_minutes: int = Field(
+        default=15, ge=5, le=120,
+        description="While flat, it looks for a trade when a strategy signals or a setup is nearly ready, and otherwise at most "
+                    "this often.")
+    manage_every_minutes: int = Field(
+        default=10, ge=5, le=60,
+        description="While a trade is open, it reviews it at most this often (sooner when the trade reaches +1R, nears its "
+                    "stop or news is close).")
+    daily_budget_usd: float = Field(default=2.0, gt=0, le=50, description="Claude spending per account per day at most.")
+
+
 class AggressiveConfig(_Section):
     """Aggressive daily profit (the Setup tab's "Make money every day" goal).
 
@@ -605,7 +643,7 @@ class BacktestConfig(_Section):
 
 # Sections an account may override. Anything not overridden is inherited from the shared settings.
 ACCOUNT_SECTIONS = ("account", "instrument", "strategy", "risk", "session", "execution", "data",
-                    "notifications", "news", "recommendations", "knowledge", "funded", "aggressive")
+                    "notifications", "news", "recommendations", "knowledge", "funded", "aggressive", "assistant")
 # What 'follow' copies from the leader, so both accounts get the same trade calls.
 CALL_SECTIONS = ("instrument", "strategy", "session", "knowledge", "news", "recommendations")
 # Account names must not be confused with Telegram words (/pause all, /set risk 150, ...).
@@ -656,6 +694,7 @@ class AccountProfile(_Section):
     knowledge: dict[str, Any] = Field(default_factory=dict)
     funded: dict[str, Any] = Field(default_factory=dict)
     aggressive: dict[str, Any] = Field(default_factory=dict)
+    assistant: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -714,6 +753,7 @@ class BotConfig(_Section):
     recommendations: RecommendationsConfig = Field(default_factory=RecommendationsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     first_trade: FirstTradeConfig = Field(default_factory=FirstTradeConfig)
+    assistant: AssistantConfig = Field(default_factory=AssistantConfig)
     aggressive: AggressiveConfig = Field(default_factory=AggressiveConfig)
     probability: ProbabilityConfig = Field(default_factory=ProbabilityConfig)
     brain: BrainConfig = Field(default_factory=BrainConfig)

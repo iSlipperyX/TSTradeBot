@@ -24,6 +24,16 @@ Other systems: `pip install -e .` then run `topstep-bot` (it starts the dashboar
 
 No bot can guarantee passing the Combine or making a profit, and this one doesn't either.
 
+## New in 4.1
+
+- **An AI trading assistant** — a Claude model watches the market with the bot. Switch on **watch and
+  manage open trades** (tighter stop, breakeven, early close; never wider or bigger) and **place its
+  own trades** (small and few) separately, per account, from the Overview, the Setup tab or Telegram
+  (`/assistant`). Both start off. Every action goes through the same risk rules and Topstep rules as the
+  bot's own trades, every decision is recorded with why, its trades are tagged AI and kept out of the
+  strategies' evidence, and without a Claude key or budget the bot trades as usual.
+  ([guide](docs/HOW_TO_USE.md#46-the-ai-trading-assistant))
+
 ## New in 4.0
 
 - **Several markets at once** — one account trades up to six markets side by side. Add, drop or switch
@@ -116,6 +126,9 @@ Aggressive means bigger swings both ways. It can't break a Topstep rule by itsel
 
 ## Features
 
+- **AI trading assistant** (new in 4.1) — optional, per account: manages open trades and places a few
+  small trades of its own through every risk rule, with a recorded reason for every decision
+  ([how](docs/HOW_TO_USE.md#46-the-ai-trading-assistant)).
 - **Several markets at once** (new in 4.0) — up to six per account, added, dropped or switched while the
   bot runs without a restart, with every Topstep limit counted across all of them
   ([how](docs/HOW_TO_USE.md#41-several-markets-at-once)).
@@ -326,6 +339,7 @@ src/topstep_bot/
   risk/book.py    one account's shared risk across every market it trades;  broker/shared.py  one connection, many markets
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram
   manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
+  assistant.py    the AI trading assistant: when it thinks, what it sees, its guardrails and its records
   setups.py       the trades each strategy is building toward (dashboard's Getting ready to trade)
   telegram_control.py  Telegram bot remote control
   phone_access.py the dashboard inside Telegram on your phone (Telegram sign-in + Cloudflare tunnel)

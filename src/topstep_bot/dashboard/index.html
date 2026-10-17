@@ -195,6 +195,7 @@ tr.on td { background:var(--accent-soft); }
 .tag.auto { border-color:var(--accent); color:var(--accent); }
 .tag.manual { border-color:var(--warn); color:var(--warn); }
 .tag.first { border-color:var(--good); color:var(--good); }
+.tag.ai { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
 .tag.blocked { border-color:var(--warn); color:var(--warn); }
 .side-LONG { color:var(--pos); } .side-SHORT { color:var(--neg); }
 
@@ -218,6 +219,28 @@ tr.on td { background:var(--accent-soft); }
 .firststate.watching, .firststate.waiting { border-color:var(--accent); color:var(--accent); }
 .firststate.blocked { border-color:var(--warn); color:var(--warn); }
 .firststate.done { border-color:var(--good); color:var(--good); }
+
+/* AI assistant (Overview) */
+.aiswitches { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); margin:12px 0 4px; }
+.aiswitch { display:flex; gap:10px; align-items:flex-start; border:1px solid var(--border); border-radius:var(--r); padding:10px 12px;
+  background:var(--surface2); cursor:pointer; }
+.aiswitch.on { border-color:var(--accent); background:var(--accent-soft); }
+.aiswitch input { margin-top:3px; flex:none; }
+.aiswitch b { display:block; font-size:13px; }
+.aiswitch small { display:block; color:var(--text2); font-size:12px; margin-top:2px; line-height:1.4; }
+.aistate.thinking { border-color:var(--accent); color:var(--accent); }
+.aistate.ready { border-color:var(--good); color:var(--good); }
+.aistate.unavailable, .aistate.waiting { border-color:var(--warn); color:var(--warn); }
+.aifeed { max-height:340px; overflow:auto; }
+.aidec { border-bottom:1px solid var(--border); padding:8px 0; font-size:12.5px; }
+.aidec:last-child { border-bottom:0; }
+.aidec .dtop { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+.aidec time { color:var(--muted); font-family:var(--font-num); font-size:12px; }
+.aidec .act { font-weight:600; }
+.aidec .why { color:var(--text2); margin-top:3px; }
+.aidec .ev { margin:3px 0 0; padding-left:16px; color:var(--muted); }
+.aidec .res { margin-top:3px; }
+.aidec .res.refused, .aidec .res.held, .aidec .res.unavailable, .aidec .res.failed, .aidec .res.late { color:var(--warn); }
 
 /* knowledge cells */
 .kb { display:inline-flex; align-items:center; gap:6px; font:12px var(--font-num); padding:2px 7px; border-radius:3px; border:1px solid var(--border);
@@ -671,6 +694,24 @@ button.src:hover:not(:disabled) { border-color:var(--accent); background:var(--s
           <div id="trade"></div>
           <h3>Strategy</h3>
           <dl id="strategy"></dl>
+        </div>
+        <div class="panel" id="ai-panel" hidden>
+          <div class="firsthead"><h2 style="margin:0">AI assistant</h2><span class="firststate aistate" id="ai-state"></span>
+            <span class="spacer"></span><span class="meta" id="ai-cost"></span></div>
+          <div class="aiswitches">
+            <label class="aiswitch" id="ai-manage-box"><input type="checkbox" id="ai-manage">
+              <span><b>Watch and manage open trades</b><small>It may tighten the stop, move it to breakeven or close a trade early.
+                It never widens a stop, adds contracts or moves the target.</small></span></label>
+            <label class="aiswitch" id="ai-trade-box"><input type="checkbox" id="ai-trade">
+              <span><b>Place its own trades</b><small id="ai-trade-sub">Small and few, sized and checked by every risk rule and Topstep rule.</small></span></label>
+          </div>
+          <p id="ai-msg" style="margin:8px 0 0"></p>
+          <h3>Today's decisions</h3>
+          <div id="ai-decisions" class="aifeed"></div>
+          <p class="hint" id="ai-record"></p>
+          <p class="hint">Every decision is recorded with why, and its own trades are tagged <span class="tag ai">AI</span> in the journal and the
+            knowledge base. It uses your Claude API key and the shared monthly Claude budget; without them, or if the AI can't be reached,
+            the bot simply trades as usual. No AI can promise a winning trade or a Combine pass.</p>
         </div>
         <div class="panel" id="next-panel">
           <div class="head"><h2>Next trade</h2><span class="spacer"></span><span class="meta">Estimate from past signals</span></div>
@@ -1422,6 +1463,35 @@ button.src:hover:not(:disabled) { border-color:var(--accent); background:var(--s
       <div class="msg" id="su-ai-msg"></div>
     </div>
 
+    <div class="panel" style="margin-top:14px" id="su-as-panel">
+      <h2 class="steptitle">AI trading assistant <span class="meta" style="margin-left:8px;font-weight:500" id="su-as-who">optional, off by default</span></h2>
+      <p class="hint" style="margin-top:2px">A Claude model that watches the market with the bot. It sees what the bot sees: the price, the
+        strategies' records at this time of day, the probability calculator, live ideas and setups, the news and the account's limits.
+        Each part has its own switch, and both can also be switched on the Overview tab or with /assistant in Telegram. Every action
+        goes through the same risk rules and Topstep rules as the bot's own trades, and every decision is recorded with why.
+        It uses the Claude API key above and the shared monthly Claude budget, with a daily cap of its own. Without a key, with the
+        budget used or with Claude unreachable, the bot trades as usual. No AI can promise a winning trade or a Combine pass.</p>
+      <div class="sfield"><span class="lbl">Open trades</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-as-manage"><span>Watch and manage open trades: tighten the
+          stop, move it to breakeven or close a trade early (never wider, never bigger)</span></label></div></div>
+      <div class="sfield"><span class="lbl">Its own trades</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-as-trade"><span>Place its own trades when it sees an edge</span></label></div></div>
+      <div class="sfield"><span class="lbl">Your trades</span>
+        <div class="ctl"><label class="checkline"><input type="checkbox" id="su-as-manual"><span>Also manage the trades I open myself
+          (off: it leaves your manual trades alone)</span></label></div></div>
+      <div class="sfield"><label for="su-as-size">Largest size</label>
+        <div class="ctl"><input type="number" id="su-as-size" min="1" max="10" step="1" style="width:90px"> <span class="meta">contracts per own trade (the risk rules may allow fewer)</span></div></div>
+      <div class="sfield"><label for="su-as-trades">Own trades per day</label>
+        <div class="ctl"><input type="number" id="su-as-trades" min="1" max="10" step="1" style="width:90px"> <span class="meta">at most (the account's daily trade limit counts them too)</span></div></div>
+      <div class="sfield"><label for="su-as-conf">How sure it must be</label>
+        <div class="ctl"><input type="number" id="su-as-conf" min="50" max="95" step="5" style="width:90px"> <span class="meta">% before it enters or closes a trade early</span></div></div>
+      <div class="sfield"><label for="su-as-budget">Daily spending cap</label>
+        <div class="ctl"><input type="number" id="su-as-budget" min="0.1" max="50" step="0.5" style="width:90px"> <span class="meta">$ of Claude usage per day (each decision costs a few cents)</span></div>
+        <div class="help" id="su-as-help"></div></div>
+      <div class="row" style="margin-top:8px"><button class="small primary" id="su-as-save">Save</button></div>
+      <div class="msg" id="su-as-msg"></div>
+    </div>
+
     <div class="panel" style="margin-top:14px">
       <h2 class="steptitle">Start with Windows <span class="meta" style="margin-left:8px;font-weight:500">optional</span></h2>
       <label class="checkline" style="margin-top:6px"><input type="checkbox" id="su-auto">
@@ -1692,6 +1762,7 @@ const STATES = {running:["--good","Running"], starting:["--warn","Starting…"],
 function who(strategy, reason) {
   if (strategy === "manual") return `<span class="tag manual">you</span>`;
   if (strategy === "first_trade") return `<span class="tag first">first trade</span>`;
+  if (strategy === "assistant") return `<span class="tag ai">AI</span>`;
   if ((reason || "").startsWith("taken from")) return `<span class="tag">idea</span>`;
   return `<span class="tag auto">bot</span>`;
 }
@@ -1808,7 +1879,10 @@ function renderTrade(b) {
     return;
   }
   const pnl = t.open_pnl, r = t.r_now;
-  const bySrc = t.strategy === "manual" ? "Your manual trade" : (t.reason || "").startsWith("taken from") ? "Idea you took" : "Bot trade";
+  const bySrc = t.strategy === "manual" ? "Your manual trade" : t.strategy === "assistant" ? "AI assistant's trade"
+    : (t.reason || "").startsWith("taken from") ? "Idea you took" : "Bot trade";
+  const AI_DID = {tighten_stop: "tightened the stop", breakeven: "moved the stop to breakeven", close: "closed it"};
+  const assisted = (t.assisted || []).map(a => AI_DID[a] || a);
   $("trade").innerHTML = `<div class="tradehead"><span class="big side-${esc(t.side)}">${esc(t.side)} ${t.size}</span>
       ${who(t.strategy, t.reason)}<span class="meta">${esc(bySrc)} · ${esc(t.state)}</span><span class="spacer"></span>
       ${pnl != null ? `<span class="tradepnl ${pnl < 0 ? "neg" : pnl > 0 ? "pos" : ""}">${money(pnl)}${r != null ? ` <small class="meta">${signed(r)}R</small>` : ""}</span>` : ""}</div>
@@ -1816,7 +1890,8 @@ function renderTrade(b) {
     <dt>Target</dt><dd>${t.target_price != null ? px(t.target_price) : "none (stop, trailing or 15:10 CT)"}</dd>
     ${t.planned_risk != null ? `<dt>Risk</dt><dd>${money0(t.planned_risk)}</dd>` : ""}
     <dt>Why</dt><dd style="white-space:normal">${esc(t.reason)}</dd>
-    ${t.odds ? `<dt>Odds</dt><dd style="white-space:normal">${oddsHtml(t.odds, "when it was taken")}</dd>` : ""}</dl>
+    ${t.odds ? `<dt>Odds</dt><dd style="white-space:normal">${oddsHtml(t.odds, "when it was taken")}</dd>` : ""}
+    ${assisted.length ? `<dt>AI assistant</dt><dd style="white-space:normal">${esc([...new Set(assisted)].join(", "))}</dd>` : ""}</dl>
     <div class="row" style="margin-top:10px">
       <button class="small" id="tr-close">Close trade</button>
       <button class="small" id="tr-be" ${t.breakeven_ok ? "" : "disabled"} title="Move the stop to the entry price (once price is at least 2 ticks beyond it)">Stop to breakeven</button>
@@ -2237,6 +2312,64 @@ function tickFirst() {
   box.textContent = f.state === "blocked" || left <= 0 ? "due" : fmtLeft(left);
   box.title = `By ${f.deadline_local}`;
 }
+
+// ---- AI trading assistant (assistant.py): its two switches, what it is doing, and every decision with why
+const AI_STATES = {off: "Off", ready: "On", thinking: "Thinking…", waiting: "Waiting", unavailable: "Unavailable"};
+const AI_ACTIONS = {hold: "Hold", tighten_stop: "Tighten stop", breakeven: "Stop to breakeven", close: "Close early",
+  wait: "Wait", enter_long: "Buy", enter_short: "Sell"};
+const AI_STATUS = {done: "", held: "not sure enough", refused: "refused by the rules", skipped: "skipped", failed: "failed",
+  unavailable: "AI unavailable", late: "too late to act"};
+let AI_BUSY = false;
+function aiDecision(d) {
+  const act = d.action ? AI_ACTIONS[d.action] || d.action : "No answer";
+  const conf = d.confidence != null ? ` <span class="meta">${Math.round(d.confidence * 100)}% sure</span>` : "";
+  const out = d.outcome && d.outcome.r != null ? ` <span class="${d.outcome.r < 0 ? "neg" : "pos"}">${signed(d.outcome.r)}R</span>` : "";
+  const status = AI_STATUS[d.status] ? `<span class="tag">${esc(AI_STATUS[d.status])}</span>` : "";
+  return `<div class="aidec"><div class="dtop"><time>${esc(d.time || "")}</time><span class="act">${esc(act)}</span>${conf}${status}
+      <span class="meta">${d.kind === "manage" ? "open trade" : "looking for a trade"} · ${esc(d.why_asked || "")}</span></div>
+    ${d.reason ? `<div class="why">${esc(d.reason)}</div>` : ""}
+    ${(d.evidence || []).length ? `<ul class="ev">${d.evidence.map(e => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
+    <div class="res ${esc(d.status || "")}">${esc(d.result || "")}${out}</div></div>`;
+}
+function renderAssistant(b) {
+  const a = b && b.assistant, panel = $("ai-panel");
+  panel.hidden = !a;
+  if (!a) return;
+  const state = a.unavailable && (a.manage || a.trade) ? "unavailable" : a.state;
+  $("ai-state").textContent = AI_STATES[state] || state;
+  $("ai-state").className = "firststate aistate " + state;
+  if (!AI_BUSY) { $("ai-manage").checked = a.manage; $("ai-trade").checked = a.trade; }
+  $("ai-manage-box").classList.toggle("on", a.manage); $("ai-trade-box").classList.toggle("on", a.trade);
+  const st = a.settings, t = a.today;
+  $("ai-trade-sub").textContent = `Up to ${t.max_trades} a day, at most ${st.max_contracts} contract${st.max_contracts > 1 ? "s" : ""}, `
+    + `only when it is at least ${Math.round(st.min_confidence * 100)}% sure. Every risk rule and Topstep rule still applies.`;
+  $("ai-msg").textContent = a.unavailable && (a.manage || a.trade) ? `Can't ask the AI now: ${a.unavailable}. The bot trades as usual.` : a.message;
+  $("ai-cost").textContent = `${t.calls} decision${t.calls === 1 ? "" : "s"} today · $${t.cost.toFixed(2)} of $${t.budget.toFixed(2)}`
+    + (a.trade ? ` · ${t.trades}/${t.max_trades} own trades` : "");
+  $("ai-cost").title = `Model: ${a.model}. The daily cap is assistant.daily_budget_usd; it also counts toward the monthly Claude budget.`;
+  const ds = a.decisions || [];
+  $("ai-decisions").innerHTML = ds.length ? ds.map(aiDecision).join("")
+    : `<div class="empty">${a.manage || a.trade ? "No decisions yet today. It decides after a bar closes, when there is something to decide." : "Switch a part on above to start."}</div>`;
+  const own = a.own, m = a.management, bits = [];
+  if (own && own.n) bits.push(`Its own trades so far: ${own.n}, ${own.wins} won, average ${signed(own.mean_r)}R.`);
+  if (m && m.n) bits.push(`Strategy trades it changed: ${signed(m.r)}R compared with leaving them alone, over ${m.n} (${m.helped} helped, ${m.hurt} cost).`);
+  $("ai-record").textContent = bits.join(" ");
+  $("ai-record").hidden = !bits.length;
+}
+async function switchAssistant(part, value) {
+  const label = part === "manage" ? "watch and manage open trades" : "place its own trades";
+  if (value && !await ask(`Let the AI assistant ${label}${on()}?\n\n${part === "manage"
+      ? "It may tighten the stop, move it to breakeven or close a trade early. It never widens a stop or adds size."
+      : "Its trades are small, sized and checked by every risk rule and Topstep rule."}\n\nEach decision uses your Claude API key and counts toward the Claude budget. No AI can promise a winning trade.`)) {
+    $(part === "manage" ? "ai-manage" : "ai-trade").checked = !value; return; }
+  AI_BUSY = true;
+  const d = await post("assistant", {[part]: value});
+  AI_BUSY = false;
+  if (d.message) toast(d.message, d.ok === false);
+  refresh();
+}
+$("ai-manage").addEventListener("change", e => switchAssistant("manage", e.target.checked));
+$("ai-trade").addEventListener("change", e => switchAssistant("trade", e.target.checked));
 
 // ---- next trade (Overview): when the bot expects to trade, and what that is based on
 function renderNext(b) {
@@ -2941,9 +3074,9 @@ function renderInsights() {
     `${c.with_path.toLocaleString()} with their price path, ${c.with_costs.toLocaleString()} with costs. New ones carry all three.`;
   head.innerHTML = `<tr><th>Strategy</th><th class="num">Signals</th><th class="num">Won</th><th class="num">Before costs</th><th class="num">Costs</th>
     <th class="num">After costs</th><th class="num">Best point</th><th class="num">Worst point</th><th class="num">Losers up 1R first</th><th class="num">Real trades</th><th class="num">Simulated</th></tr>`;
-  const rows = [...r.strategies, ...(r.manual ? [r.manual] : []), ...(r.first_trade ? [r.first_trade] : [])].sort((a, b) => (b.net_r ?? -9) - (a.net_r ?? -9));
+  const rows = [...r.strategies, ...(r.manual ? [r.manual] : []), ...(r.first_trade ? [r.first_trade] : []), ...(r.assistant ? [r.assistant] : [])].sort((a, b) => (b.net_r ?? -9) - (a.net_r ?? -9));
   body.innerHTML = rows.map(x => { const thin = x.n < min;
-    return `<tr class="${thin ? "muted" : ""}"><td>${esc(x.title)}${x.name === "manual" ? ` <span class="tag manual">you</span>` : x.name === "first_trade" ? ` <span class="tag first">first trade</span>` : ""}</td><td class="num">${x.n}</td>
+    return `<tr class="${thin ? "muted" : ""}"><td>${esc(x.title)}${x.name === "manual" ? ` <span class="tag manual">you</span>` : x.name === "first_trade" ? ` <span class="tag first">first trade</span>` : x.name === "assistant" ? ` <span class="tag ai">AI</span>` : ""}</td><td class="num">${x.n}</td>
       <td class="num">${x.win_rate == null ? "–" : Math.round(100 * x.win_rate) + "%"}</td>${rcell(x.gross_r)}
       <td class="num">${x.cost_r == null ? "–" : x.cost_r.toFixed(2)}</td>${rcell(x.net_r, null)}${rcell(x.mfe_r)}${rcell(x.mae_r)}
       <td class="num">${x.gave_back == null ? "–" : `${Math.round(100 * x.gave_back)}% <span class="muted">of ${x.n_losers}</span>`}</td>
@@ -3139,7 +3272,7 @@ function fillSetup() {
   SU_SUG = suSuggestion();
   su("path").textContent = SU.exists ? `Saved in ${SU.path}` : `Creates ${SU.path}`;
   suMsg("save-msg", "");
-  renderAccounts(); renderAlerts(); renderAutostart(); renderAI(); suRender(); renderAccountPanel();
+  renderAccounts(); renderAlerts(); renderAutostart(); renderAI(); renderAssistantSetup(); suRender(); renderAccountPanel();
   if (SU.login.api_key_saved && (!SU.report || SU.report_age > 300)) checkAccounts(false);
 }
 
@@ -3581,6 +3714,36 @@ su("ai-save").onclick = () => saveAI({api_key: su("ai-key").value.trim(), enable
 su("ai-on").onchange = () => saveAI({enabled: su("ai-on").checked});
 su("ai-remove").onclick = async () => { if (await ask("Remove the Claude API key? The bot goes back to its built-in answers, and the AI coach stops until a key is saved again.")) saveAI({remove: true}); };
 
+// ---- setup: the AI trading assistant (per account)
+function assistantValues() {
+  const p = SU.multi ? (SU.profiles || []).find(x => x.name === accName()) : null;
+  return (p && p.assistant) || (SU.values && SU.values.assistant) || {};
+}
+function renderAssistantSetup() {
+  const a = assistantValues();
+  su("as-who").textContent = SU.multi ? `for account ${accName()}` : "optional, off by default";
+  su("as-manage").checked = !!a.manage; su("as-trade").checked = !!a.trade; su("as-manual").checked = !!a.include_manual;
+  su("as-size").value = a.max_contracts || 1; su("as-trades").value = a.max_trades_per_day || 2;
+  su("as-conf").value = Math.round((a.min_confidence || 0.65) * 100); su("as-budget").value = a.daily_budget_usd || 2;
+  const key = SU.ai && SU.ai.key_saved;
+  su("as-help").textContent = key ? `Model: ${a.model || "claude-opus-5-5"}. The switches take effect at once while the bot runs; the limits when it next starts.`
+    : "Save a Claude API key under AI answers above first.";
+  su("as-manage").disabled = su("as-trade").disabled = !key && !a.manage && !a.trade;
+}
+su("as-save").onclick = async () => {
+  const body = {manage: su("as-manage").checked, trade: su("as-trade").checked, include_manual: su("as-manual").checked,
+    max_contracts: Number(su("as-size").value), max_trades_per_day: Number(su("as-trades").value),
+    min_confidence: Number(su("as-conf").value) / 100, daily_budget_usd: Number(su("as-budget").value)};
+  const was = assistantValues();
+  if ((body.manage && !was.manage) || (body.trade && !was.trade)) {
+    if (!await ask(`Turn on the AI assistant${on()}? ${body.trade ? "It may place its own small trades. " : ""}${body.manage ? "It may tighten stops, move them to breakeven or close trades early. " : ""}Every risk rule still applies. Each decision uses your Claude API key. No AI can promise a winning trade.`)) return;
+  }
+  su("as-save").disabled = true;
+  const d = await post("assistant", body);
+  su("as-save").disabled = false; suMsg("as-msg", d.message, d.ok !== false);
+  if (d.ok !== false) loadSetup(true);
+};
+
 function renderAutostart() {
   const a = SU.autostart; su("auto").checked = a.enabled; su("auto").disabled = !a.supported;
   if (!a.supported) suMsg("auto-msg", "Only available on Windows.");
@@ -3920,6 +4083,7 @@ function render(s) {
   shown("overview", () => renderOverview(s.bot)); shown("account goal", () => renderFunded(s.bot));
   shown("market", () => renderMarket(s.bot)); shown("research", () => renderResearch(s.research)); shown("next trade", () => renderNext(s.bot));
   shown("first trade", () => renderFirst(s.bot)); shown("setups", () => renderSetups(s.bot));
+  shown("AI assistant", () => renderAssistant(s.bot));
   shown("long-run memory", () => renderMemory(s.bot)); shown("ideas", () => renderIdeas(s.bot));
   shown("knowledge", () => renderKnowledge(s.bot)); shown("settings", () => renderSettings(s.bot)); shown("events", () => renderLogs(s));
   shown("markets", () => renderMarketsStrip(s.bot));

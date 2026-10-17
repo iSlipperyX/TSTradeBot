@@ -30,6 +30,35 @@ Oct 9–16). Nothing about how the bot picks or sizes trades changed.
 
 One week of live trades is far too little to judge any strategy, and no bot can guarantee passing the
 Combine or making a profit.
+## 4.1.0 — the AI trading assistant
+
+### An AI trading assistant, off until you switch it on
+
+- A Claude model watches the market with the bot. It has two parts with their own switches, per
+  account: **watch and manage open trades** (hold, tighten the stop, move it to breakeven, or close
+  early; never a wider stop, more contracts or a moved target) and **place its own trades** (small
+  and few: `assistant.max_contracts`, 1 by default, and `assistant.max_trades_per_day`, 2).
+- Switch it on the Overview tab's new **AI assistant** panel, the Setup tab's **AI trading assistant**
+  panel (with its limits), or Telegram (`/assistant`, `/assistant manage on|off`,
+  `/assistant trade on|off`, `/assistant off`; turning a part on asks for a tap). The switches are saved
+  in config.yaml and take effect at once while the bot runs.
+- Every action goes through the same code as the bot's own trades: sizing, the daily loss limits,
+  the room above the MLL, the consistency line, trade counts, news blackouts, the entry window,
+  Topstep's position caps, the order guard and the hedge guard. It enters or closes early only when it
+  is at least 65% sure (`assistant.min_confidence`).
+- Every decision, including *wait* and *hold*, is saved in the journal with what it saw, what it
+  chose, how sure it was, why, and what the bot did with it. The panel, `/assistant` and the Ask tab
+  show them.
+- Its own trades are tagged **AI** and filed in the knowledge base as `assistant`, never as a
+  strategy's evidence. When it ends a strategy's trade early, the bot follows the strategy's own plan
+  to its end, so the strategy is judged on its plan, and the difference is the assistant's
+  **management score** (trades it helped and cost, in R).
+- It uses the shared Claude API key and monthly budget, with a daily cap of its own
+  (`assistant.daily_budget_usd`, $2). Without a key, with a budget used or with Claude unreachable, it
+  does nothing and says why, and the bot trades exactly as before. A key saved or a budget raised on
+  the dashboard reaches the running bot without a restart.
+
+Nothing changes for anyone who leaves it off. No AI can promise a winning trade or a Combine pass.
 
 ## 4.0.1 — safer under a bad connection, with several markets and with several accounts
 

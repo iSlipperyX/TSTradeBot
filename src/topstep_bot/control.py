@@ -8,6 +8,7 @@ trading within the limits already in config.yaml.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 
@@ -294,6 +295,59 @@ class BotActions:
             self._facts = (self.core, Facts(self.core.cfg, core=self.core, actions=self))
         return {"data": self._facts[1].call(name, args if isinstance(args, dict) else {})}
 
+    # ------------------------------------------------------------------ the AI trading assistant (assistant.py)
+
+    def assistant(self, payload: dict, source: str) -> str:
+        """Switch its two parts on or off for this account (``manage`` / ``trade``: true, false or left out)."""
+        a = self.core.assistant
+        if a is None:
+            return "The AI assistant isn't running here (it runs with the live or paper bot)."
+
+        def flag(key: str) -> bool | None:
+            v = payload.get(key)
+            if v is None or v == "":
+                return None
+            if isinstance(v, str):
+                return v.strip().lower() in ("1", "true", "on", "yes")
+            return bool(v)
+
+        return a.desk.switch(flag("manage"), flag("trade"), source)
+
+    def assistant_text(self) -> str:
+        a = self.core.assistant
+        if a is None:
+            return "The AI assistant isn't running here (it runs with the live or paper bot)."
+        return a.text()
+
+    def assistant_retry(self, payload: dict) -> str:
+        """The controller saved or removed the Claude key (``key``) or changed the monthly budget
+        (``monthly_budget``): use it at once and try again at the next chance."""
+        if "key" in payload:
+            from topstep_bot import claude
+            from topstep_bot.logging_setup import add_secret
+
+            key = str(payload.get("key") or "").strip()
+            if key:
+                os.environ[claude.KEY_ENV] = key
+                add_secret(key)
+            else:
+                os.environ.pop(claude.KEY_ENV, None)
+        desks = {id(c.assistant.desk): c.assistant.desk for c in self.all_cores() if c.assistant is not None}
+        for desk in desks.values():
+            if payload.get("monthly_budget"):
+                desk.cfg.coach.monthly_budget_usd = float(payload["monthly_budget"])
+            desk.key_changed()
+        return "The AI assistant will try again at the next bar." if desks else "The AI assistant isn't running here."
+
+    def assistant_decisions(self, limit: int = 30) -> dict:
+        """Today's decisions on this market in full (with the situation it saw)."""
+        core = self.core
+        if core.journal is None:
+            return {"items": []}
+        day = core.schedule.trading_day(core.clock()).isoformat()
+        rows = [r for r in core.journal.assistant_decisions(limit=200, day=day) if r.get("symbol") == core.contract.name]
+        return {"items": rows[:max(1, min(100, limit))]}
+
     # ------------------------------------------------------------------ markets (several at once)
 
     def _desk(self) -> LiveRunner:
@@ -376,10 +430,17 @@ class BotActions:
         if name == "take_idea":
             size = payload.get("size")
             return await self.take_idea(str(payload.get("id", "")), source, int(size) if size else None)
+        if name == "assistant":
+            return self.assistant(payload, source)
+        if name == "assistant_retry":
+            return self.assistant_retry(payload)
+        if name == "assistant_decisions":
+            return self.assistant_decisions(int(payload.get("limit") or 30))
         texts = {"status_text": self.status_text, "ideas_text": self.ideas_text, "trades_text": self.trades_text,
                  "log_text": self.log_text, "settings_text": self.settings_text, "knowledge_text": self.knowledge_text,
                  "brief_text": self.brief_text, "next_text": self.next_text, "market_text": self.market_text,
-                 "funded_text": self.funded_text, "rules_text": self.rules_text, "markets_text": self.markets_text}
+                 "funded_text": self.funded_text, "rules_text": self.rules_text, "markets_text": self.markets_text,
+                 "assistant_text": self.assistant_text}
         if name in texts:
             return {"text": texts[name]()}
         if name == "insights":

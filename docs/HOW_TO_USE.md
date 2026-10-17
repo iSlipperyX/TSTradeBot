@@ -83,6 +83,12 @@ coach and the Ask tab's optional AI answers now share one Claude API key and one
   **Knowledge** puts real trades, simulations and market data in one place
   ([section 45](#45-the-simpler-dashboard)).
 
+**New in 4.1:** an **AI trading assistant**. A Claude model watches the market with the bot and, if you
+switch it on, manages open trades (tighter stop, breakeven, early close) and places a few small trades
+of its own. Each part has its own switch per account, both start off, every action goes through the
+same risk rules and Topstep rules as the bot's own trades, and every decision is recorded with why
+([section 46](#46-the-ai-trading-assistant)).
+
 ---
 
 ## Contents
@@ -132,6 +138,7 @@ coach and the Ask tab's optional AI answers now share one Claude API key and one
 43. [The knowledge network](#43-the-knowledge-network)
 44. [The trade chart](#44-the-trade-chart)
 45. [The simpler dashboard](#45-the-simpler-dashboard)
+46. [The AI trading assistant](#46-the-ai-trading-assistant)
 
 ---
 
@@ -1198,6 +1205,7 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/add MES` | **Trade another market alongside the others**, at once (asks to confirm). Every Topstep limit counts all of them together |
 | `/drop MES` | **Stop trading a market** (asks to confirm). An open trade there keeps its stop and target and finishes first |
 | `/coach` | The AI coach: latest lessons, proposals waiting for you, and this month's spending ([section 35](#35-the-ai-coach-claude-teaches-the-bot)) |
+| `/assistant` | **The AI trading assistant**: its switches, today's decisions with why, and its spending. `/assistant manage on`, `/assistant trade on` (each asks to confirm), `/assistant off` ([section 46](#46-the-ai-trading-assistant)) |
 | `/accounts` | All your accounts at a glance ([section 29](#29-trading-several-accounts)) |
 | `/next` | **When the next trade is likely**, and what that estimate is based on (also a button under every message) |
 | `/learn` | Grow the long-run memory now: download the history it's missing and replay all of it ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
@@ -1976,6 +1984,19 @@ first_trade:                   # one educated trade soon after starting ("Teach 
   enabled: false
   within_minutes: 15           # 5-120, from the start, or from 08:30 CT if it starts outside hours
   contracts: 1                 # 1-5, and never more than risk_per_trade allows
+
+assistant:                     # the AI trading assistant (section 46); per account in an accounts entry
+  manage: false                # watch and manage open trades: tighten the stop, breakeven, close early
+  trade: false                 # place its own trades
+  include_manual: false        # also manage the trades you open yourself
+  model: claude-opus-5-5
+  effort: medium               # low | medium | high
+  max_contracts: 1             # 1-10: largest size of one of its own trades (the risk rules may allow fewer)
+  max_trades_per_day: 2        # 1-10 of its own trades a day
+  min_confidence: 0.65         # 0.5-0.95: how sure it must be to enter or to close a trade early
+  think_every_minutes: 15      # 5-120: how often it looks for a trade while flat (sooner on a fresh signal)
+  manage_every_minutes: 10     # 5-60: how often it reviews an open trade (sooner at +1R, near the stop, before news)
+  daily_budget_usd: 2.0        # Claude spending per day at most; it also counts toward coach.monthly_budget_usd
 
 risk:
   risk_per_trade: 150
@@ -3495,6 +3516,111 @@ The other Knowledge pages are the ones you know: **What works**
 ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)), **Simulations**
 ([section 34](#34-simulation-lab-hundreds-of-combines-from-history)) and **Market data**
 ([section 31](#31-what-the-bot-knows-about-the-market-and-the-news)).
+
+## 46. The AI trading assistant
+
+A Claude model that watches the market with the bot. It sees what the bot sees and, if you let it,
+acts. It has two parts, each with its own switch, **per account**, and both start **off**:
+
+| Switch | What it may do | What it can never do |
+|---|---|---|
+| **Watch and manage open trades** (`assistant.manage`) | Hold, **tighten the stop**, move the stop **to breakeven**, or **close the trade early** | Widen a stop, add contracts, remove the stop or move the target |
+| **Place its own trades** (`assistant.trade`) | Buy or sell with its own stop and target, at most `max_contracts` and `max_trades_per_day` | Skip any risk rule or Topstep rule |
+
+### Switch it on
+
+1. Save a Claude API key on the **Setup** tab under **AI answers** (the same key the Ask answers and
+   the AI coach use; get one at platform.claude.com > API keys).
+2. Switch it on in any of three places:
+   - the **Overview** tab's **AI assistant** panel (while the bot runs);
+   - the **Setup** tab's **AI trading assistant** panel, which also has its limits;
+   - Telegram: `/assistant manage on`, `/assistant trade on`, `/assistant off` (turning a part on asks
+     for a confirmation tap). `/assistant` alone shows what it is doing.
+
+The switches are saved in `config.yaml` (in the account's own entry when you trade several accounts)
+and take effect at once while the bot runs. The limits on the Setup tab apply the next time the bot starts.
+
+### What it sees
+
+Each decision gets one picture of the situation: the price and the last 30 bars, the ATR, the time of
+day and the market's mood (calm or volatile), the market picture, the strategies' records at this time
+of day, the **probability calculator** for both sides ([section 42](#42-the-probability-calculator)),
+live ideas and setups that are nearly ready, the bot's own ranking of what it would trade, today's
+reports and how far away they are, and the account's limits (daily loss room, room above the Maximum
+Loss Limit, the room left under the consistency line, trades today). For an open trade it also sees
+the entry, stop, target, open profit in R, the best and worst it has been, and why it was opened.
+
+### When it thinks
+
+It never slows the bot down: it thinks in the background after a bar closes and only acts if the
+answer is still valid when it arrives (an answer that takes more than two minutes is not acted on).
+
+- **An open trade** is reviewed when it opens, every `manage_every_minutes` (10), and sooner when it
+  reaches +1R (+2R, ...), when it comes close to its stop, or when a scheduled report is less than 15
+  minutes away. Trades you opened yourself are left alone unless **Also manage the trades I open
+  myself** is ticked.
+- **While flat**, inside the entry window and only when the rules allow a new trade, it looks for a
+  trade when a strategy signals, when a setup is at least 75% formed, and otherwise every
+  `think_every_minutes` (15). It stops looking once it made `max_trades_per_day` trades.
+
+### Guardrails
+
+- **Its own trades** are sized and checked by exactly the code the bot's own trades go through: risk
+  per trade, the daily loss limits, the room above the MLL, the consistency line, trade counts, news
+  blackouts, the entry window, Topstep's position caps and the hedge guard. Then they are capped at
+  `max_contracts`. The stop must be on the protective side of the price (the bot may widen one closer
+  than its minimum stop, and refuses one wider than its maximum); the target must be at least 1R away
+  (without one it uses 1.5R).
+- **A tightened stop** must improve on the current one and stay at least 2 ticks (and a fifth of an ATR)
+  from the price. **Breakeven** needs the price past the entry by that much.
+- **Entering or closing early** needs it to be at least `min_confidence` (65%) sure. Below that it
+  says what it would have done, and does nothing.
+- It never trades at or after the last entry time, and every trade is flat by the session end like any other.
+
+### Every decision is recorded
+
+Every decision, including *wait* and *hold*, is saved in the journal with the situation it saw, what it
+chose, how sure it was, why, the facts that decided it, and what the bot did with it (done, refused by
+the rules and why, not sure enough, skipped because the trade had already closed). The Overview panel
+lists today's decisions; `/assistant` and the **Ask** tab ("what is the AI assistant doing?") report them too.
+Its actions appear in the activity feed and as Telegram alerts (its trades as entries, its stop moves
+and closes as risk alerts).
+
+### What the bot learns from it
+
+- **Its own trades** are tagged **AI** in the journal and are filed in the knowledge base under the
+  name `assistant`. Like your manual trades, they never count as a strategy's evidence, so they can't
+  switch a strategy on or off. Knowledge → What works shows their record on a row of their own.
+- **A strategy's trade it ended early** (it closed it, or a stop it tightened was hit) does not spoil
+  that strategy's record. The bot keeps following the strategy's original stop and target to their own
+  end, and the strategy is judged on that, as a watched signal. The difference between what the trade
+  really made and what the plan would have made is the assistant's **management score**: the panel and
+  `/assistant` show how many trades it helped and how many it cost, in R. If that number stays negative,
+  switch managing off.
+
+### When the AI isn't there
+
+Without a key, with today's cap (`daily_budget_usd`) or the monthly Claude budget used, or with Claude
+unreachable, it does nothing and says why on the panel; the bot trades exactly as it would without it.
+After a connection problem it tries again five minutes later; saving a key or raising the budget makes
+it try again at once.
+
+### Cost
+
+Each decision is one request to Claude and costs a few cents with Claude Opus 5.5, the default (more on a
+busy market with a large knowledge base, less with a cheaper model chosen in `assistant.model`). A day
+with both parts on can make 20 to 40 decisions. Two limits stop it: `assistant.daily_budget_usd` ($2 a
+day by default) and the monthly Claude budget it shares with the AI coach and the Ask answers
+(`coach.monthly_budget_usd`, $20 by default, changed on Ask > Deep review). If you use it every day,
+raise the monthly budget or it runs out partway through the month.
+
+### Honest expectations
+
+The assistant is a careful second opinion, not an edge by itself. It can't see anything the bot can't,
+its confidence is its own estimate rather than a measured probability, and closing winners early is a
+common way to turn a good strategy into a losing one. Start with **Watch and manage** on Paper, read
+its decisions and its management score for a few weeks, and only then let it place its own trades.
+No bot or AI can guarantee a winning trade, passing the Combine or a profit.
 
 ---
 

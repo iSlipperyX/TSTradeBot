@@ -208,6 +208,7 @@ class SetupService:
                 "max_trades": cfg.risk.max_trades_per_day,
                 "first_trade": cfg.first_trade.enabled, "first_trade_minutes": cfg.first_trade.within_minutes,
                 "daily_goal": cfg.aggressive.daily_goal,
+                "assistant": cfg.assistant.model_dump(),
             },
             "alerts": {
                 "telegram": bool(s.telegram_bot_token and s.telegram_chat_id),
@@ -540,6 +541,68 @@ class SetupService:
         if cfg.telegram.control_enabled != old_telegram:
             asyncio.get_running_loop().create_task(self.ctl.restart_telegram())
 
+    # ---------------------------------------------------------------- the AI trading assistant
+
+    async def assistant(self, body: dict, source: str = "dashboard") -> dict:
+        """Switch the AI trading assistant on or off for one account, or change its limits (assistant.py).
+
+        Saved in config.yaml (the account's own entry when there are several) and, while the bot
+        runs, the switches take effect at once; the limits apply when the bot next starts."""
+        from pydantic import ValidationError
+
+        from topstep_bot.config import AssistantConfig
+
+        original = self._require_file()
+        cfg = self.ctl.cfg
+        values: dict[str, Any] = {}
+        for key in ("manage", "trade", "include_manual"):
+            if key in body and body[key] is not None:
+                values[key] = bool(body[key])
+        for key in ("max_contracts", "max_trades_per_day", "min_confidence", "daily_budget_usd"):
+            if key in body and body[key] not in (None, ""):
+                values[key] = body[key]
+        if not values:
+            raise ValueError("Nothing to change.")
+        try:  # the same limits config.yaml has: a typo never reaches the file
+            checked = AssistantConfig(**{**cfg.assistant.model_dump(), **values})
+        except ValidationError as exc:
+            problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+            raise ValueError(f"Not saved: {problems}") from None
+        values = {k: getattr(checked, k) for k in values}
+        if (values.get("manage") or values.get("trade")) and not self.ctl.secrets.anthropic_api_key:
+            raise ValueError("The AI assistant needs your Claude API key: save it first under 'AI answers' on this tab "
+                             "(platform.claude.com > API keys).")
+        bots = self.ctl.pick(body.get("account"))
+        bot = bots[0]
+        if cfg.multi:
+            entries = self._raw_accounts(original)
+            entry = next((x for x in entries if str(x.get("name", "")).lower() == bot.account), None)
+            if entry is None:
+                raise ValueError(f"No account named {bot.account}.")
+            entry["assistant"] = {**(entry.get("assistant") or {}), **values}
+            self._write(original, set_section(original, "accounts", entries))
+        else:
+            self._set_config({("assistant", k): v for k, v in values.items()})
+        who = f"{bot.account}: " if cfg.multi else ""
+        log.info("Setup: AI assistant for %s changed from %s: %s", bot.account, source, values)
+        acfg = self.ctl.account_cfg(bot.account).assistant
+        state = (f"watching and managing open trades {'ON' if acfg.manage else 'off'}, "
+                 f"placing its own trades {'ON' if acfg.trade else 'off'}")
+        message = f"{who}Saved. AI assistant: {state}."
+        switches = {k: values[k] for k in ("manage", "trade") if k in values}
+        if bot.running and bot.state == "running":
+            if switches:
+                try:
+                    await bot.action("assistant", {"source": source, **switches})
+                    message += " The running bot uses it now."
+                except (RuntimeError, ValueError) as exc:
+                    message += f" The running bot couldn't be told ({exc}): it uses it after a restart."
+            if set(values) - set(switches):
+                message += " The new limits apply when the bot next starts."
+        elif bot.running:
+            message += " It takes effect once the bot has started."
+        return {"message": message, "assistant": acfg.model_dump()}
+
     # ---------------------------------------------------------------- accounts
 
     def _profile_view(self, name: str) -> dict:
@@ -558,7 +621,8 @@ class SetupService:
                 "calls": "follow" if p.follow else ("own" if p.strategy else "shared"), "follow": p.follow or "",
                 "strategy": acfg.strategy.name, "market": market, "shared_market": shared_market,
                 "risk_per_trade": r.risk_per_trade, "daily_loss_limit": r.personal_daily_loss_limit,
-                "max_trades": r.max_trades_per_day, "mode": p.mode or ""}
+                "max_trades": r.max_trades_per_day, "mode": p.mode or "",
+                "assistant": acfg.assistant.model_dump()}
 
     async def check_accounts(self, force: bool = True) -> dict:
         """Ask TopstepX about every account (account_check.py). Concurrent requests share one check."""
@@ -1011,6 +1075,7 @@ class SetupService:
         coach = getattr(self.ctl, "coach", None)
         if coach is not None:
             coach.coach.set_key(key)
+        self.tell_assistant(key=key)
 
     def forget_claude_key(self) -> None:
         """Remove the Claude API key from this PC: the coach stops, and the Ask answers go back to built-in ones."""
@@ -1020,8 +1085,23 @@ class SetupService:
         coach = getattr(self.ctl, "coach", None)
         if coach is not None:
             coach.coach.set_key(None)
+        self.tell_assistant(key="")
         if self.configured and self.ctl.cfg.brain.ai:
             self._set_config({("brain", "ai"): False})
+
+    def tell_assistant(self, **payload: Any) -> None:
+        """Tell the running bots' AI assistants that the Claude key or budget changed (no restart needed)."""
+        from topstep_bot.logging_setup import spawn
+
+        async def tell(bot: Any) -> None:
+            try:
+                await bot.action("assistant_retry", payload)
+            except (RuntimeError, ValueError) as exc:
+                log.info("Could not tell %s's AI assistant about the change: %s", bot.account, exc)
+
+        for bot in list(getattr(self.ctl, "bots", {}).values()):
+            if bot.running:
+                spawn(tell(bot), name=f"assistant-key {bot.account}")
 
     def _set_config(self, values: dict) -> None:
         """Change a few settings in config.yaml (keeping the rest as written) and use them at once."""

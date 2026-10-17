@@ -250,6 +250,9 @@ def test_the_first_trade_planner_starts_with_the_bot(tmp_path):
             assert planner.requested_at == runner.started_at and planner.deadline is not None
             assert any(e["message"].startswith("First trade after starting:") for e in core.events)
             assert core.snapshot()["first_trade"]["state"] == planner.state
+            # the AI assistant is on every market, off until switched on
+            assert core.assistant is not None and core.assistant.desk is runner.assistant
+            assert core.snapshot()["assistant"]["state"] == "off"
             runner.controls.stop.set()
             await asyncio.wait_for(task, 20)
         # signal-ready on the first live bar: the warm-up reached back far enough for the slowest strategy

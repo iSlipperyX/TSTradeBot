@@ -68,6 +68,7 @@ class Recommendation:
     facts: dict = field(default_factory=dict)  # a real trade's TradingCore.trade_facts, once it closes
     p_win: float | None = None  # the probability calculator's view when it was given (probability.py)
     ev_r: float | None = None
+    assistant_real: dict | None = None  # the real result when the AI assistant ended the trade (assistant.py)
 
     def __post_init__(self) -> None:
         if self.initial_stop is None:
@@ -283,8 +284,36 @@ class RecommendationBook:
                     rec.entry = t.entry_price
                 rec.facts = self.core.trade_facts(t)
                 rec.mfe_r, rec.mae_r = rec.facts["mfe_r"], rec.facts["mae_r"]
+                if self._assistant_ended(rec, t):
+                    self._follow_plan(rec, t)
+                    return
                 self._close(rec, t.exit_price or rec.entry, t.exit_reason, outcome=t.net_pnl)
                 return
+
+    def _assistant_ended(self, rec: Recommendation, t: ManagedTrade) -> bool:
+        """True if the AI assistant ended this strategy trade early: it closed it, or a stop it tightened was hit."""
+        from topstep_bot.assistant import EXIT_PREFIX
+
+        if rec.strategy in NOT_STRATEGIES or not t.assisted or rec.initial_stop is None or rec.stop is None:
+            return False
+        if t.exit_reason.startswith(EXIT_PREFIX):
+            return True
+        return t.assistant_stop is not None and t.exit_reason == "stop loss"
+
+    def _follow_plan(self, rec: Recommendation, t: ManagedTrade) -> None:
+        """Keep following the strategy's own plan (its stop and target) as if the trade were still open.
+
+        The strategy's record then shows what its plan would have made, not what the assistant's
+        change made; the difference becomes the assistant's management score when the plan ends.
+        """
+        r = t.r_multiple()
+        rec.assistant_real = {"r": None if r is None else round(r, 2), "usd": round(t.net_pnl, 2),
+                              "changes": list(dict.fromkeys(t.assisted)), "exit": t.exit_reason}
+        rec.hypothetical = True
+        rec.status = "tracking"
+        rec.trade_tag = None
+        rec.note = f"the AI assistant ended the trade ({t.exit_reason}); following the strategy's own plan"
+        self._store(rec)
 
     # ------------------------------------------------------------- outcomes
 
@@ -343,6 +372,8 @@ class RecommendationBook:
         rec.closed_at = self.core.clock()
         self._store(rec)
         self._learn(rec, why)
+        if rec.assistant_real is not None and getattr(self.core, "assistant", None) is not None and not self.quiet:
+            self.core.assistant.plan_resolved(rec)
         if self.core.reasoner is not None and not self.quiet:
             self.core.reasoner.on_outcome(rec, why)
 
@@ -454,6 +485,7 @@ class RecommendationBook:
             "hypothetical": rec.hypothetical,
             "p_win": rec.p_win,
             "ev_r": rec.ev_r,
+            "assistant_real": rec.assistant_real,
         }
 
     def snapshot(self, limit: int = 25) -> dict[str, Any]:
@@ -467,7 +499,8 @@ class RecommendationBook:
             summary.append({
                 "strategy": strat.name, "title": strat.title, "active": active,
                 "ideas": len(mine), "closed": len(closed), "wins": sum(1 for r in closed if r.result == "won"),
-                "pnl": round(sum(r.outcome_usd or 0 for r in closed), 2),
+                # Money actually made: a trade the AI assistant ended early counts at its real result.
+                "pnl": round(sum((r.assistant_real or {}).get("usd", r.outcome_usd) or 0 for r in closed), 2),
             })
         watching = {
             s.title: {k: (round(v, 2) if isinstance(v, float) else v) for k, v in s.state().items()} for s in self.shadows

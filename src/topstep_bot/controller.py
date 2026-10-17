@@ -517,6 +517,22 @@ class ProxyActions:
     async def markets_text(self, account: str | None = None) -> str:
         return await self._text("markets_text", account)
 
+    async def assistant_text(self, account: str | None = None) -> str:
+        """The AI trading assistant: its switches, today's decisions and spending (assistant.py)."""
+        bot = self._one(account)
+        if bot.running and bot.state == "running":
+            return await self._text("assistant_text", account)
+        a = self.ctl.account_cfg(bot.account).assistant
+        return self._tag(bot, f"🤖 AI assistant: managing open trades {'ON' if a.manage else 'off'}, own trades "
+                              f"{'ON' if a.trade else 'off'} (the bot isn't running, so it isn't doing anything now).")
+
+    async def assistant_switch(self, manage: bool | None, trade: bool | None, source: str,
+                               account: str | None = None) -> str:
+        """Turn the AI assistant's parts on or off: saved in config.yaml, and used at once while the bot runs."""
+        bot = self._one(account)
+        body = {"account": bot.account if self.ctl.multi else None, "manage": manage, "trade": trade}
+        return (await self.ctl.setup.assistant(body, source))["message"]
+
     async def _market(self, name: str, symbol: str, source: str, account: str | None) -> str:
         bot = self._one(account)
         if not bot.running or bot.state != "running":
@@ -681,6 +697,7 @@ class Controller:
                 ("POST", "/api/setup/github_token", lambda r: self.setup.github_token(r.json())),
                 ("POST", "/api/setup/autostart", lambda r: self.setup.autostart(r.json())),
                 ("POST", "/api/setup/ai", lambda r: self.setup.ai(r.json())),
+                ("POST", "/api/assistant", lambda r: self.setup.assistant(r.json(), source(r))),
                 ("POST", "/api/setup/accounts/check", lambda r: self.setup.check_accounts(force=bool(r.json().get("force", True)))),
                 ("POST", "/api/setup/accounts/save", lambda r: self.setup.save_account(r.json())),
                 ("POST", "/api/setup/accounts/remove", lambda r: self.setup.remove_account(r.json())),

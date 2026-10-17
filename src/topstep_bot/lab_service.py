@@ -378,6 +378,8 @@ class CoachService:
         original = setup._require_file()
         setup._write(original, set_values(original, changes))  # coach settings don't need a bot restart
         self._sync()
+        if ("coach", "monthly_budget_usd") in changes:  # the AI trading assistant shares this budget
+            setup.tell_assistant(monthly_budget=changes[("coach", "monthly_budget_usd")])
         return "Coach settings saved."
 
     def run(self, body: dict, source: str) -> str:

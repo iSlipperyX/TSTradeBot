@@ -19,7 +19,8 @@ Four sources of observations are kept apart:
 The bot's "first trade after starting" (first_trade.py) is a real trade too, filed under the
 strategy name "first_trade" with ``basis`` naming the setup it followed. Like manual trades it
 never counts as evidence for a strategy, so a trade the bot took early on purpose can't switch
-one on or off.
+one on or off. The AI trading assistant's own trades (assistant.py) are filed the same way, under
+"assistant".
 
 Observations fade with age (half-life ``half_life_days``), so the base keeps adapting as the
 market changes. Retraining replaces the "train" layer and drops shadow observations the new
@@ -84,7 +85,8 @@ SOURCES = ("train", "shadow", "real", "manual")
 KEPT_SOURCES = ("real", "manual")  # actual fills: never pruned or replaced by retraining
 MANUAL = "manual"  # strategy name of trades opened from the dashboard's trade ticket
 FIRST_TRADE = "first_trade"  # strategy name of the first educated trade after the bot starts
-NOT_STRATEGIES = (MANUAL, FIRST_TRADE)  # real trades that are no strategy's own signal
+ASSISTANT = "assistant"  # strategy name of the AI trading assistant's own trades (assistant.py)
+NOT_STRATEGIES = (MANUAL, FIRST_TRADE, ASSISTANT)  # real trades that are no strategy's own signal
 VOLATILE_RATIO = 1.2
 UNINFORMATIVE_EXITS = ("bot shutdown", "halted", "flatten requested", "daily maintenance", "expired", "entry not filled")
 BACKUP_DIR = "knowledge_backups"
@@ -598,6 +600,7 @@ class KnowledgeBase:
         return {
             "trained": self.trained, "counts": self.counts(), "total": len(self.obs), "manual": self.manual_summary(today),
             "first_trade": self.stats(FIRST_TRADE, None, None, today).to_dict(self.min_samples),
+            "assistant": self.stats(ASSISTANT, None, None, today).to_dict(self.min_samples),
             "now": {"slot": slot, "regime": regime}, "slots": list(SLOT_NAMES), "regimes": list(REGIMES),
             "params": {"min_samples": self.min_samples, "min_edge_r": self.min_edge_r, "half_life_days": self.half_life_days},
             "strategies": rows,
@@ -647,6 +650,9 @@ class KnowledgeBase:
         f = s["first_trade"]
         if f["n"]:
             lines.append(f"First trades after starting: {f['n']}, {f['wins']} won, {f['mean_r']:+.2f}R avg.")
+        a = s["assistant"]
+        if a["n"]:
+            lines.append(f"AI assistant's own trades: {a['n']}, {a['wins']} won, {a['mean_r']:+.2f}R avg.")
         lines.append("c = calm, v = volatile. ✅ trades now, ❌ switched off (losing), ❔ not enough evidence yet.")
         return "\n".join(lines)
 
