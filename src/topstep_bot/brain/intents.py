@@ -25,6 +25,7 @@ HELP = """I'm the bot's central intelligence. I answer from its own records. Try
 • what did the simulations find?  • what has the coach learned?
 • how are the markets moving together?  • is gold stressed?
 • which markets are you trading?  • what are the odds on ORB?
+• what is the AI assistant doing?
 • where does your knowledge come from?  • what is the consistency target?
 • explain max_conviction  • how does the knowledge network grow?
 I can explain and report, but I can't place trades or change settings - use the dashboard for that.
@@ -97,6 +98,8 @@ async def answer(question: str, fetch: Fetch) -> str:
     asks_why = _has(q, "why", "explain", "reason", "how did you decide", "what made you")
     if asks_why and (time or _has(q, "last", "latest", "trade", "entry", "position", r"that\b", r"this\b", r"it\b")):
         return await text("explain_decision", args)
+    if _has(q, "assistant"):
+        return await text("assistant")
     if _has(q, "which markets", "what markets", "how many markets", r"markets? (are|is) (you|it|the bot) trad",
             r"trad\w* (several|multiple|many|more|other) markets", r"(add|drop|switch|remove) (a |the )?market"):
         return await text("markets")

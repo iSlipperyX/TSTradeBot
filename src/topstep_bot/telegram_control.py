@@ -58,6 +58,7 @@ COMMANDS = [
     ("add", "Trade another market alongside the others, e.g. /add MES"),
     ("drop", "Stop trading a market, e.g. /drop MES (an open trade finishes first)"),
     ("switch", "Trade another market instead, no restart, e.g. /switch MES (or /switch usual)"),
+    ("assistant", "AI trading assistant: what it is doing; /assistant manage on|off, trade on|off"),
     ("coach", "AI coach: latest lessons, proposals and spending"),
     ("rules", "Topstep rules the bot knows and follows"),
     ("knowledge", "What the bot has learned: which strategy works when"),
@@ -75,7 +76,7 @@ DANGEROUS = {"flatten", "stop", "restart", "startbot"}
 CONTROL = {"pause", "resume", *DANGEROUS}  # may target one account or all
 # One account at a time. /rules, /update and /dashboard aren't about one account's bot.
 PER_ACCOUNT = {"ideas", "trades", "settings", "knowledge", "train", "log", "brief", "next", "learn", "market", "funded",
-               "switch", "markets", "add", "drop"}
+               "switch", "markets", "add", "drop", "assistant"}
 CONFIRM_SECONDS = 60
 MAX_TEXT = 4000
 
@@ -87,7 +88,8 @@ KEYBOARD = {
          {"text": "📏 Rules", "callback_data": "cmd:rules"}],
         [{"text": "💡 Ideas", "callback_data": "cmd:ideas"}, {"text": "📜 Trades", "callback_data": "cmd:trades"},
          {"text": "🧠 Knowledge", "callback_data": "cmd:knowledge"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
-        [{"text": "💬 What I know", "callback_data": "cmd:brief"}, {"text": "⏳ Next trade", "callback_data": "cmd:next"}],
+        [{"text": "💬 What I know", "callback_data": "cmd:brief"}, {"text": "⏳ Next trade", "callback_data": "cmd:next"},
+         {"text": "🤖 AI assistant", "callback_data": "cmd:assistant"}],
         [{"text": "🛑 Flatten & halt", "callback_data": "cmd:flatten"}, {"text": "🔄 Restart bot", "callback_data": "cmd:restart"},
          {"text": "▶️ Start bot", "callback_data": "cmd:startbot"}],
     ]
@@ -380,6 +382,9 @@ class TelegramController:
         if action == "switch":
             symbol, account = payload
             return await self._do("switch_market", symbol, source, account=account)
+        if action == "assistant":
+            manage, trade, account = payload
+            return await self._switch_assistant(manage, trade, source, account)
         if action in ("add", "drop"):
             symbol, account = payload
             return await self._do("add_market" if action == "add" else "remove_market", symbol, source, account=account)
@@ -435,6 +440,46 @@ class TelegramController:
             await self._ask("📱 Turn on phone access? The dashboard opens here in Telegram while you are away from the PC, "
                             "and only your Telegram account can open it. The bot keeps running on the PC. "
                             "Turn it off any time with /dashboard off.", "phone", yes="Yes, turn it on")
+
+    ASSISTANT_USAGE = ("Usage: /assistant shows what the AI assistant is doing. /assistant manage on|off lets it "
+                       "watch and manage open trades; /assistant trade on|off lets it place its own trades; "
+                       "/assistant off switches both off.")
+
+    async def _assistant(self, source: str, args: list[str], account: str | None, where: str) -> None:
+        """/assistant [manage|trade|on|off] [on|off]: show it, or switch it (turning anything on needs a tap)."""
+        words = [a.lower() for a in args]
+        if not words:
+            await self.send(await self._do("assistant_text", account=account))
+            return
+        on_off = {"on": True, "off": False, "yes": True, "no": False, "true": True, "false": False}
+        if words[0] in ("on", "off"):
+            manage = trade = on_off[words[0]]
+        elif words[0] in ("manage", "watch", "trade", "trades") and len(words) > 1 and words[1] in on_off:
+            value = on_off[words[1]]
+            manage, trade = (value, None) if words[0] in ("manage", "watch") else (None, value)
+        else:
+            await self.send(self.ASSISTANT_USAGE)
+            return
+        if not manage and not trade:  # only switching off: no confirmation needed
+            await self.send(await self._switch_assistant(manage, trade, source, account))
+            return
+        parts = []
+        if manage:
+            parts.append("watch and manage open trades (it may tighten stops, move them to breakeven or close a trade "
+                         "early; it never widens a stop or adds size)")
+        if trade:
+            parts.append("place its own trades (sized and checked by every risk rule, small and few per day)")
+        question = (f"🤖 Let the AI assistant {' and '.join(parts)}{where}? Each decision uses your Claude API key and "
+                    "counts toward the Claude budget. No AI can promise a winning trade.")
+        if not self.cfg.confirm_dangerous:
+            await self.send(await self._switch_assistant(manage, trade, source, account))
+            return
+        await self._ask(question, "assistant", (manage, trade, account), yes="Yes, turn it on")
+
+    async def _switch_assistant(self, manage: bool | None, trade: bool | None, source: str, account: str | None) -> str:
+        if hasattr(self.actions, "assistant_switch"):  # the controller: saved in config.yaml and used at once
+            return await self._do("assistant_switch", manage, trade, source, account=account)
+        return self.actions.assistant({"manage": manage, "trade": trade}, source)  # in the bot itself: until it restarts
 
     async def _pick_account(self, command: str, with_all: bool) -> None:
         """Several accounts and none named: one button per account (and 'All' where it makes sense)."""
@@ -560,6 +605,8 @@ class TelegramController:
             await self._ask(question, "switch", ("" if back else symbol, target), yes="Yes, switch")
         elif command == "markets":
             await self.send(await self._do("markets_text", account=target))
+        elif command == "assistant":
+            await self._assistant(source, args, target, where)
         elif command in ("add", "drop"):
             if not hasattr(self.actions, "add_market"):
                 raise RuntimeError(f"/{command} is only available when the controller is running")

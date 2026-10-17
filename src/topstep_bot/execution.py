@@ -106,6 +106,9 @@ class ManagedTrade:
     worst_price: float | None = None
     context: dict = field(default_factory=dict)
     odds: dict | None = None  # the probability calculator's estimate when it was entered (dashboard only)
+    # The AI assistant's changes to this trade (assistant.py): what it did, and the stop it last set.
+    assisted: list[str] = field(default_factory=list)
+    assistant_stop: float | None = None
 
     def __post_init__(self) -> None:
         if not self.initial_stop:

@@ -45,6 +45,13 @@ first_trade:                    # one educated trade soon after the bot starts (
   within_minutes: 15            # due this long after the start, or after entries open if it starts outside hours
   contracts: 1                  # its size: at most this, and never more than the risk rules allow
 
+assistant:                      # the AI trading assistant (needs the Claude API key; Setup tab or Telegram /assistant)
+  manage: false                 # true = it watches open trades and may tighten the stop, move it to breakeven or close early
+  trade: false                  # true = it may place its own trades (every risk rule and Topstep rule still applies)
+  max_contracts: 1              # largest size of one of its own trades
+  max_trades_per_day: 2         # its own trades per day at most
+  daily_budget_usd: 2.0         # Claude spending per day at most (also counts toward coach.monthly_budget_usd)
+
 risk:
   risk_per_trade: 150          # $ lost if a trade hits its stop (position size is calculated from this)
   personal_daily_loss_limit: 500 # stop trading for the day after losing this much (incl. open P&L)

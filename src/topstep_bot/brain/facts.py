@@ -72,6 +72,11 @@ TOOLS: dict[str, tuple[str, dict]] = {
     "markets": ("The markets the bot trades on this account right now (it can trade several at once and add, drop or "
                 "switch them without a restart): each one's position, open trade and trades today, and the account's "
                 "combined open risk.", {}),
+    "assistant": ("The AI trading assistant: whether it may manage open trades and place its own, today's decisions "
+                  "(what it saw, what it chose, how sure it was, why, and what the bot then did), its own trades' record "
+                  "and how the trades it managed did compared with leaving them alone.",
+                  {"day": {"type": "string", "description": "only this trading day, YYYY-MM-DD (default: today)"},
+                   "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LIST}}),
     "probability": ("The probability calculator: for each strategy and side, P(win), average win and loss in R, expected "
                     "value after costs and an 80% range, pooled from this market (its time of day and market mood), the "
                     "long-run memory and related markets; plus how well its past predictions held up (calibration).",
@@ -398,6 +403,28 @@ class Facts:
                 + (f" today (switched by {today.get('source', 'you')})" if today else "")
                 + ". While it runs, markets can be added, dropped or switched without a restart (Trade tab or /markets).")
         return {"markets": markets, "text": text}
+
+    def fact_assistant(self, day: str | None = None, limit: int = 10) -> dict[str, Any]:
+        a = self.core.assistant if self.core is not None else None
+        out: dict[str, Any] = {}
+        if a is not None:
+            out["now"] = {k: v for k, v in a.view().items() if k != "decisions"}
+            text = a.text()
+        else:
+            c = self.cfg.assistant
+            text = (f"AI assistant: managing open trades {'on' if c.manage else 'off'}, own trades "
+                    f"{'on' if c.trade else 'off'}. {self.offline or 'The bot is not running.'}")
+        journal, done = self._journal()
+        try:
+            day = day or self._today().isoformat()
+            rows = journal.assistant_decisions(limit=max(1, min(MAX_LIST, int(limit))), day=day) if journal else []
+        finally:
+            done()
+        out["decisions"] = [{k: v for k, v in r.items() if k != "situation"} for r in rows]
+        if rows and a is None:
+            text += "\n" + "\n".join(f"• {r.get('time')} {r.get('kind')}: {r.get('action') or '-'} - {r.get('result') or ''}"
+                                      for r in rows[:5])
+        return {**out, "text": text}
 
     def fact_probability(self, strategy: str | None = None, market: str | None = None) -> dict[str, Any]:
         from topstep_bot.probability import ProbabilityModel, calibration, calibration_text, outlook, outlook_text

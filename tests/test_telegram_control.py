@@ -222,3 +222,22 @@ def ctl_keyboard():
     from topstep_bot.telegram_control import KEYBOARD
 
     return KEYBOARD["inline_keyboard"]
+
+
+def test_assistant_command_shows_it_and_turning_it_on_needs_a_tap():
+    from topstep_bot.assistant import Assistant, AssistantDesk
+
+    ctl, fake, core, _ = make()
+    desk = AssistantDesk(BotConfig(), None, "PAPER-TEST")
+    core.assistant = Assistant(core, desk)
+    run(ctl.handle_update(msg("/assistant")))
+    assert "managing open trades off, own trades off" in fake.sent[-1]["text"]
+    run(ctl.handle_update(msg("/assistant trade on")))
+    prompt = fake.sent[-1]
+    assert not desk.trade and "place its own trades" in prompt["text"] and "No AI can promise" in prompt["text"]
+    run(ctl.handle_update(button("yes:assistant", prompt["message_id"])))
+    assert desk.trade and not desk.manage
+    run(ctl.handle_update(msg("/assistant off")))  # switching off needs no tap
+    assert not desk.trade and "off" in fake.sent[-1]["text"]
+    run(ctl.handle_update(msg("/assistant sideways")))
+    assert "Usage: /assistant" in fake.sent[-1]["text"]
