@@ -49,6 +49,9 @@ COMMANDS = [
     ("ask", "Ask the bot anything, e.g. /ask why the last trade? (or just type)"),
     ("brief", "What the bot knows right now, in plain words"),
     ("next", "When the bot expects its next trade, and why"),
+    ("goal", "Today's profit goal, e.g. /goal 400, /goal c1 400 c2 1200, /goal none"),
+    ("plan", "Today's plan: the route to the goal, the odds and when the day stops"),
+    ("trend", "What the chart is doing: trending up, down or sideways, and how sure"),
     ("market", "Market brief: key levels, today's reports, headlines"),
     ("funded", "Progress to your Combine pass or next payout"),
     ("research", "What the bot has gathered from the internet"),
@@ -76,7 +79,7 @@ DANGEROUS = {"flatten", "stop", "restart", "startbot"}
 CONTROL = {"pause", "resume", *DANGEROUS}  # may target one account or all
 # One account at a time. /rules, /update and /dashboard aren't about one account's bot.
 PER_ACCOUNT = {"ideas", "trades", "settings", "knowledge", "train", "log", "brief", "next", "learn", "market", "funded",
-               "switch", "markets", "add", "drop", "assistant"}
+               "switch", "markets", "add", "drop", "assistant", "plan", "trend"}
 CONFIRM_SECONDS = 60
 MAX_TEXT = 4000
 
@@ -90,6 +93,8 @@ KEYBOARD = {
          {"text": "🧠 Knowledge", "callback_data": "cmd:knowledge"}, {"text": "⚙️ Settings", "callback_data": "cmd:settings"}],
         [{"text": "💬 What I know", "callback_data": "cmd:brief"}, {"text": "⏳ Next trade", "callback_data": "cmd:next"},
          {"text": "🤖 AI assistant", "callback_data": "cmd:assistant"}],
+        [{"text": "🎯 Today's plan", "callback_data": "cmd:plan"}, {"text": "📐 Trend", "callback_data": "cmd:trend"},
+         {"text": "✏️ Goal", "callback_data": "cmd:goal"}],
         [{"text": "🛑 Flatten & halt", "callback_data": "cmd:flatten"}, {"text": "🔄 Restart bot", "callback_data": "cmd:restart"},
          {"text": "▶️ Start bot", "callback_data": "cmd:startbot"}],
     ]
@@ -295,6 +300,8 @@ class TelegramController:
             return
         text = msg["text"].strip()
         if not text.startswith("/"):
+            if await self._typed_goal(text, self._who(user)):
+                return
             if hasattr(self.actions, "ask"):  # a question for the central intelligence
                 self._in_background(self._answer(text))
             else:
@@ -339,6 +346,9 @@ class TelegramController:
                 await self._edit(message_id, f"❌ {exc}")
                 return
             await self._edit(message_id, f"✅ {result}")
+        elif data.startswith("goal:"):
+            _, account, value = data.split(":", 2)
+            await self._set_goals({None if account == "*" else account: value}, self._who(user), every=account == "*")
         elif data == "no":
             self.pending.pop(message_id, None)
             await self._edit(message_id, "Cancelled - nothing was changed.")
@@ -481,6 +491,63 @@ class TelegramController:
             return await self._do("assistant_switch", manage, trade, source, account=account)
         return self.actions.assistant({"manage": manage, "trade": trade}, source)  # in the bot itself: until it restarts
 
+    GOAL_USAGE = ("Usage: /goal 400 sets today's profit goal; /goal none trades without one today; /goal suggested "
+                  "takes the bot's suggestion.")
+
+    async def _goal(self, source: str, args: list[str], target: str | None) -> None:
+        """/goal [account|all] [dollars|none|suggested] ...: show today's goals (with the question's buttons), or set them."""
+        accounts = self._accounts()
+        if not args:
+            if hasattr(self.actions, "goal_question") and target is None:
+                await self.send(*(await self._do("goal_question")))
+            else:
+                await self.send(await self._do("plan_text", account=target if target != "all" else None))
+            return
+        if [a.lower() for a in args] in (["suggested"], ["suggestion"], ["suggest"]):
+            await self._set_goals({target if target != "all" else None: "suggested"}, source,
+                                  every=target == "all" or (bool(accounts) and target is None))
+            return
+        from topstep_bot.day_plan import parse_goals
+
+        goals = parse_goals(" ".join(([target] if target else []) + args), accounts)  # "/goal c1 400 c2 1200"
+        if goals is None:
+            example = f" With several accounts: /goal {accounts[0]} 400 {accounts[-1]} 300." if len(accounts) > 1 else ""
+            await self.send(self.GOAL_USAGE + example)
+            return
+        every = list(goals) == [None] and (target == "all" or (bool(accounts) and target is None))
+        await self._set_goals(goals, source, every=every)
+
+    async def _typed_goal(self, text: str, source: str) -> bool:
+        """A goal typed in answer to the morning question ("400", "c1 400 c2 1200", "none")."""
+        waiting = getattr(self.actions, "awaiting_goals", None)
+        if waiting is None or not waiting():
+            return False
+        from topstep_bot.day_plan import parse_goals
+
+        accounts = self._accounts()
+        goals = parse_goals(text, accounts)
+        if goals is None:
+            return False
+        await self._set_goals(goals, source, every=list(goals) == [None] and bool(accounts))
+        return True
+
+    async def _set_goals(self, goals: dict[str | None, Any], source: str, every: bool = False) -> None:
+        """Save goals ({account or None: dollars, None or "suggested"}); a goal can only end a day sooner, so no tap
+        to confirm. ``every``: one goal for every account."""
+        lines = []
+        for account, value in goals.items():
+            try:
+                if hasattr(self.actions, "goal_question"):  # the controller: works with the bot stopped too
+                    lines.append(await self._do("set_goal", value, source, account="all" if every else account))
+                else:  # in the bot itself
+                    if value == "suggested":
+                        raise ValueError("Pick an amount, e.g. /goal 400 (suggestions come with the controller)")
+                    lines.append(self.actions.set_goal(float(value) if value not in (None, "none") else None, source))
+            except (ValueError, RuntimeError) as exc:
+                lines.append(f"❌ {account + ': ' if account else ''}{exc}")
+        lines.append("The goal never makes a trade bigger: every risk rule still applies. /plan shows the route.")
+        await self.send("\n".join(lines))
+
     async def _pick_account(self, command: str, with_all: bool) -> None:
         """Several accounts and none named: one button per account (and 'All' where it makes sense)."""
         names = self._accounts() + (["all"] if with_all else [])
@@ -605,6 +672,10 @@ class TelegramController:
             await self._ask(question, "switch", ("" if back else symbol, target), yes="Yes, switch")
         elif command == "markets":
             await self.send(await self._do("markets_text", account=target))
+        elif command == "goal":
+            await self._goal(source, args, target)
+        elif command in ("plan", "trend"):
+            await self.send(await self._do(f"{command}_text", account=target))
         elif command == "assistant":
             await self._assistant(source, args, target, where)
         elif command in ("add", "drop"):

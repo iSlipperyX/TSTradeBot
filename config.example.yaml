@@ -45,6 +45,14 @@ first_trade:                    # one educated trade soon after the bot starts (
   within_minutes: 15            # due this long after the start, or after entries open if it starts outside hours
   contracts: 1                  # its size: at most this, and never more than the risk rules allow
 
+day_plan:                       # each trading morning: the day's profit goal and a route to it (Telegram /goal, Overview tab)
+  ask: true                     # ask for each account's goal every trading morning
+  ask_at: "08:00"               # Chicago time
+  stop_at_goal: true            # no new trades once the goal is reached (a goal never makes a trade bigger)
+
+trend:                          # the chart's trend reading (always on) and the filter that skips signals against a strong trend
+  filter: auto                  # auto = only once the trend test proves it helps; on; off
+
 assistant:                      # the AI trading assistant (needs the Claude API key; Setup tab or Telegram /assistant)
   manage: false                 # true = it watches open trades and may tighten the stop, move it to breakeven or close early
   trade: false                  # true = it may place its own trades (every risk rule and Topstep rule still applies)

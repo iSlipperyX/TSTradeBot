@@ -472,7 +472,7 @@ def test_telegram_set_up_again_signs_everyone_out(tmp_path):
 PC_ONLY = {"setup/accounts/check", "setup/accounts/remove", "setup/accounts/save", "setup/ai", "setup/autostart",
            "setup/discord", "setup/github_token", "setup/keys/add", "setup/keys/remove", "setup/login", "setup/save",
            "setup/state", "setup/telegram/control", "setup/telegram/find", "setup/telegram/remove", "setup/telegram/save",
-           "setup/telegram/test", "phone/on", "lab/apply", "coach/key", "coach/key/remove", "coach/settings",
+           "setup/telegram/test", "setup/day_plan", "phone/on", "lab/apply", "coach/key", "coach/key/remove", "coach/settings",
            "coach/proposal", "coach/lesson/forget"}
 
 

@@ -101,7 +101,7 @@ def training_fingerprint() -> str:
     worked out, the next start retrains, so old and new results are never mixed."""
     root = Path(__file__).parent
     files = sorted((root / "strategies").glob("*.py")) + [root / "recommendations.py", root / "knowledge.py",
-                                                         root / "market_context.py"]
+                                                         root / "market_context.py", root / "trend.py"]
     h = hashlib.sha1()
     for f in files:
         try:

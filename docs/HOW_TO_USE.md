@@ -89,6 +89,14 @@ of its own. Each part has its own switch per account, both start off, every acti
 same risk rules and Topstep rules as the bot's own trades, and every decision is recorded with why
 ([section 46](#46-the-ai-trading-assistant)).
 
+**New in 4.2:** the bot **reads the chart for trends** (up, down or sideways, how clear and how strong,
+drawn on the trade chart) and **plans each day with you**. Each trading morning it asks for every
+account's profit goal on Telegram and on the Overview tab, then lays out a route to it: which part of the
+day usually brings its trades, how often its own past days reached a goal like that, and when the day
+stops. The goal never makes a trade bigger; it only tells the bot when the day is done. A filter that
+skips signals against a strong trend turns on by itself only once a test on the bot's own history shows
+it helps ([section 47](#47-trends-and-the-daily-plan)).
+
 ---
 
 ## Contents
@@ -139,6 +147,7 @@ same risk rules and Topstep rules as the bot's own trades, and every decision is
 44. [The trade chart](#44-the-trade-chart)
 45. [The simpler dashboard](#45-the-simpler-dashboard)
 46. [The AI trading assistant](#46-the-ai-trading-assistant)
+47. [Trends and the daily plan](#47-trends-and-the-daily-plan)
 
 ---
 
@@ -1208,6 +1217,9 @@ Type them, pick them from Telegram's **/** menu, or tap the buttons under the bo
 | `/assistant` | **The AI trading assistant**: its switches, today's decisions with why, and its spending. `/assistant manage on`, `/assistant trade on` (each asks to confirm), `/assistant off` ([section 46](#46-the-ai-trading-assistant)) |
 | `/accounts` | All your accounts at a glance ([section 29](#29-trading-several-accounts)) |
 | `/next` | **When the next trade is likely**, and what that estimate is based on (also a button under every message) |
+| `/goal` | **Today's profit goal**: `/goal 400`, `/goal c1 400 c2 1200` (several accounts), `/goal all 300`, `/goal suggested` or `/goal none`. `/goal` alone shows each account's goal with buttons. No confirmation needed: a goal can only end a day sooner ([section 47](#47-trends-and-the-daily-plan)) |
+| `/plan` | **Today's plan**: the goal, the route through the day, the odds from the bot's past days, progress and when the day stops |
+| `/trend` | **What the chart is doing**: trending up, down or sideways, how clear and how strong, how often its calls held, and the trend filter |
 | `/learn` | Grow the long-run memory now: download the history it's missing and replay all of it ([section 17](#the-long-run-memory-a-much-bigger-knowledge-base)) |
 | `/knowledge` | What the bot has learned: per strategy and time of day, ✅ trades now / ❌ switched off / ❔ unproven, then results after costs, real fill slippage and conditions worth testing ([section 17](#17-training-and-the-knowledge-base-how-the-bot-learns)) |
 | `/train` | Retrain the knowledge base on recent history now (the bot keeps trading meanwhile) |
@@ -1985,6 +1997,18 @@ first_trade:                   # one educated trade soon after starting ("Teach 
   within_minutes: 15           # 5-120, from the start, or from 08:30 CT if it starts outside hours
   contracts: 1                 # 1-5, and never more than risk_per_trade allows
 
+day_plan:                      # the daily plan (section 47); per account in an accounts entry
+  ask: true                    # ask for each account's profit goal every trading morning (Telegram and the Overview tab)
+  ask_at: "08:00"              # Chicago time, when the Telegram question is sent
+  stop_at_goal: true           # no new trades once the day's goal is reached (it never makes a trade bigger)
+  unanswered: last             # no answer: last = your last goal (else the suggestion) | suggested = the bot's suggestion
+  days_to_target: 10           # 3-60: the suggested goal is what is left to the target divided by this
+
+trend:                         # the chart's trend reading and the trend filter (section 47); per account too
+  filter: auto                 # auto = on only once the trend test proves it helps | on | off
+  min_score: 0.6               # 0.35-0.95: how clear a trend must be before the filter skips signals against it
+  min_adx: 25                  # 0-60: and how strong (ADX)
+
 assistant:                     # the AI trading assistant (section 46); per account in an accounts entry
   manage: false                # watch and manage open trades: tighten the stop, breakeven, close early
   trade: false                 # place its own trades
@@ -2227,6 +2251,8 @@ On Windows you can also pass commands through the launcher, e.g. `start.bat menu
 | `data/knowledge_backups/` | A daily copy of the knowledge base (the last `knowledge.backups_kept`) |
 | `data/market_library.sqlite` | The long-run memory's market library: every price bar the bot has downloaded or imported |
 | `data/knowledge_<SYMBOL>_<TF>m_longrun.json` | What every strategy did on the whole library (reports only; rebuilt daily, safe to delete) |
+| `day_goals.json` (in the account's folder) | Each trading day's profit goal, who set it and when (the last 60 days). Delete it to forget them |
+| `data/trend_<SYMBOL>_<TF>m.json` | The trend test's last result: the bot's history replayed with and without the trend filter, and whether `trend.filter: auto` uses it (safe to delete) |
 | `data/lab_<SYMBOL>_<TF>m.json` | The decision lab's last result: both rules' replayed results and which one `policy: auto` uses (safe to delete) |
 | `data/news_cache.json` | This week's economic calendar |
 | `data/research/` | The research library ([section 33](#33-research-knowledge-that-grows-from-the-internet)): `calendar.json` (every calendar seen), `headlines_<ROOT>.jsonl`, `daily_<ROOT>.json` (daily history), `watched_pages.json` (rule pages). Safe to delete |
@@ -3621,6 +3647,131 @@ its confidence is its own estimate rather than a measured probability, and closi
 common way to turn a good strategy into a losing one. Start with **Watch and manage** on Paper, read
 its decisions and its management score for a few weeks, and only then let it place its own trades.
 No bot or AI can guarantee a winning trade, passing the Combine or a profit.
+
+---
+
+## 47. Trends and the daily plan
+
+### The trend on the chart
+
+The bot reads every chart it trades for a trend, bar by bar, from four things a trader looks at:
+
+| Part | Weight | What it looks at |
+|---|---|---|
+| Slope | 35% | The straight line through the last 24 bars (two hours of 5-minute bars): how far it moved, in ATRs, and how cleanly the bars follow it |
+| Averages | 25% | Price against its 20- and 50-bar averages, and which average is on top |
+| Swings | 25% | Higher highs and higher lows (an uptrend), lower highs and lower lows (a downtrend) |
+| Today | 15% | Price against today's VWAP |
+
+Together they make a **trend score** from -1 (a clean downtrend) to +1 (a clean uptrend). Above +0.35 it
+calls the chart **up**, below -0.35 **down**, and in between **sideways** (once it has called a direction it
+keeps it until the score falls back under 0.20, so it doesn't flip on every bar). **ADX** says how strong the
+move is: a trend with a score of 0.6 or more and an ADX of 25 or more is a **strong** trend. It also says
+when price has run far from its 20-bar average (**stretched**) and whether a trend is starting, steady or
+fading.
+
+Where you see it:
+
+- **Overview → Trend**: the direction, a gauge from Down to Up, the reasons in plain words, the score, the
+  ADX, **how often its calls held** (for every up or down call it checks an hour later whether price kept
+  going that way; a coin flip would be about 50%), and how the bot's own signals did **with and against**
+  the trend, after costs.
+- **The trade chart** draws the trend line it fitted, a band around it, and marks the swing highs (H) and
+  lows (L).
+- Telegram `/trend`, the **Ask** tab ("what's the trend?") and the AI trading assistant, which is told the
+  trend and how signals have done with and against it.
+
+Every signal the bot sees is saved with the trend reading at that moment, so the knowledge base learns how
+each strategy does with the trend and against it. A trend describes the last hours; it does not promise
+where price goes next.
+
+### The trend filter, and the test that decides it
+
+The **trend filter** skips signals that go against a strong trend (a buy while the score is -0.6 or lower,
+or a sell at +0.6 or higher, with ADX 25 or more). Because that changes which trades are taken, it follows
+the same evidence rule as the decision lab: with `trend.filter: auto` (the default) it stays **off** until a
+test shows it helps.
+
+The **trend test** runs after the long-run memory learns (daily, and on **Learn from history now** or
+`/learn`). It replays the bot's history twice, once as the bot trades now and once with the filter, and
+compares them day by day. The filter turns on only if:
+
+- at least 60 test days carry the trend reading,
+- it would have skipped at least 15 trades, and
+- the filter made more, with 95% confidence (from resampling the days).
+
+Otherwise it stays off and the Trend panel says why. The result is kept in `data/trend_<SYMBOL>_<TF>m.json`.
+`trend.filter: on` uses the filter now, without evidence (the Setup tab asks you to confirm); `off` never
+uses it. Either way the trend is still read, shown and learned from. Manual trades are never filtered, and
+the AI trading assistant's own trades are refused while the filter is on and a strong trend is against them.
+
+### Today's profit goal
+
+Each trading morning the bot asks for every account's **profit goal for the day**:
+
+- **On Telegram** at `day_plan.ask_at` (08:00 Chicago time by default), with buttons for a steadier goal,
+  the suggested goal and a stretch goal, plus **No goal**, and with several accounts **Use the
+  suggestions**. You can also just type it: `400`, or `c1 400 c2 1200` with several accounts, or `none`.
+  Asked only on trading days, once a day, and only for accounts that don't have a goal yet.
+- **On the Overview tab**, in the **Today's plan** box: type an amount and press **Set goal**, tap one of the
+  suggestions, or press **No goal today**. This works with the bot stopped too.
+- **Any time** with `/goal 400`, `/goal c2 1200`, `/goal all 300`, `/goal suggested` or `/goal none`.
+
+Changing the goal takes effect within seconds, with no restart. After 15:10 CT a goal is for the next
+trading day.
+
+**No answer?** The bot keeps your last goal from the past 30 days (`day_plan.unanswered: last`, the default), or
+uses its suggestion if you haven't given one (`suggested` always uses the suggestion).
+
+**The suggestion** comes from where the account stands:
+
+- **Combine**: what is left to the profit target, spread over `day_plan.days_to_target` trading days (10 by
+  default). With $1,500 left and 10 days, it suggests $150.
+- **Express Funded, standard payout path**: a winning day ($150 or more) with a cushion for fees.
+- **Consistency payout path**: the payout goal spread over the days, under the 40% daily cap.
+
+**What a goal can and can't do.** The goal never makes a trade bigger or riskier: every trade is still sized
+by your risk settings, and every loss limit and Topstep rule still applies. A goal above what one day may
+make (the consistency line, a payout path's daily cap, or your daily profit target) is **capped there**, and
+the plan says so. With `day_plan.stop_at_goal: true` (the default), once the day's P&L reaches the goal the
+bot opens no new trades for the rest of the day, so the profit is kept; an open trade keeps its stop and
+target. Raising the goal later that day lifts that stop. If you use **Teach the bot**, a goal ends some
+learning days early: untick **Stop opening trades once the day's goal is reached** on the Setup tab if you
+want it to keep trading for the lessons.
+
+### The route
+
+The **Today's plan** box (and `/plan`) turns the goal into a plan built from the bot's own record: it replays
+every past day in its knowledge base (the signals it would take, with today's rules: your risk per trade,
+trade limit, losing-streak stop, cooldown, daily loss limit, news blackouts and the profit ceiling, and the
+trend filter when it is on) and reports:
+
+- **The goal in trades**: $400 at $150 a trade is 2.7R, about 2 winning trades more than the losses at
+  the bot's average win.
+- **The route through the day**: the open (08:30-10:00 CT), midday and the close, with how many trades
+  each part usually brings, their average result after costs and the strategies behind them, and the trend
+  on the chart for the part of the day you are in.
+- **The odds**: on how many past days the bot's signals reached a goal like this, how many ended green and
+  how many in a loss, the typical day, a goal reached on about half the days, and, once trading has
+  started, the chance **from where the day stands now**.
+- **When the day stops**: the goal, the losing-streak and daily loss stops, the trade limit and the most
+  one day may make.
+- **Progress**: made so far, left to go, trades taken.
+
+The plan needs at least 10 past days in the knowledge base to put odds on it; before that it shows the goal,
+the stops and the progress. Ask "how is today's plan going?" on the Ask tab for the same plan in words.
+
+### Settings
+
+On the **Setup** tab under **Daily goal and trend** (per account): the morning question and its time, what
+happens with no answer, stopping at the goal, days to the target and the trend filter. In `config.yaml` they
+are the `day_plan:` and `trend:` sections ([section 24](#24-full-configuration-reference)).
+
+### Honest expectations
+
+A plan is not a promise. The odds are how the bot's own past days went under today's rules, not a forecast:
+markets change, and a goal reached on 40% of past days is missed on most days. A goal is most useful as a
+reason to stop on a good day. No bot can guarantee a profit, a winning day or a passed Combine.
 
 ---
 

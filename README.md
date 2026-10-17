@@ -24,6 +24,19 @@ Other systems: `pip install -e .` then run `topstep-bot` (it starts the dashboar
 
 No bot can guarantee passing the Combine or making a profit, and this one doesn't either.
 
+## New in 4.2
+
+- **The bot reads the chart for trends** — up, down or sideways, how clear (a score from -1 to +1) and how
+  strong (ADX), drawn on the trade chart with its swing highs and lows. Every signal is saved with the
+  reading, so the bot learns how each strategy does with and against the trend. A filter that skips
+  signals against a strong trend turns on by itself only once a test on the bot's own history shows it
+  helps. ([guide](docs/HOW_TO_USE.md#47-trends-and-the-daily-plan))
+- **A daily plan for each account** — each trading morning the bot asks for every account's profit goal
+  (Telegram buttons or the Overview tab, or `/goal 400`), then lays out a route: which part of the day
+  usually brings its trades, how often its past days reached a goal like that, and when the day stops.
+  The goal never makes a trade bigger; it only tells the bot when the day is done. A plan, not a promise.
+  ([guide](docs/HOW_TO_USE.md#47-trends-and-the-daily-plan))
+
 ## New in 4.1
 
 - **An AI trading assistant** — a Claude model watches the market with the bot. Switch on **watch and
@@ -126,6 +139,9 @@ Aggressive means bigger swings both ways. It can't break a Topstep rule by itsel
 
 ## Features
 
+- **Trends and a daily plan** (new in 4.2) — the chart's trend read bar by bar and learned from, and a
+  profit goal asked for each morning with a route to it from the bot's own record
+  ([how](docs/HOW_TO_USE.md#47-trends-and-the-daily-plan)).
 - **AI trading assistant** (new in 4.1) — optional, per account: manages open trades and places a few
   small trades of its own through every risk rule, with a recorded reason for every decision
   ([how](docs/HOW_TO_USE.md#46-the-ai-trading-assistant)).
@@ -340,6 +356,8 @@ src/topstep_bot/
   control.py      pause/resume/flatten/stop actions shared by dashboard and Telegram
   manual.py       manual trades from the dashboard: trade ticket, suggestions, rule checks
   assistant.py    the AI trading assistant: when it thinks, what it sees, its guardrails and its records
+  trend.py        the chart's trend reading;  trend_lab.py  the trend test behind the trend filter
+  day_plan.py     the day's goal and its route;  plan_service.py  the morning goal question and /goal
   setups.py       the trades each strategy is building toward (dashboard's Getting ready to trade)
   telegram_control.py  Telegram bot remote control
   phone_access.py the dashboard inside Telegram on your phone (Telegram sign-in + Cloudflare tunnel)

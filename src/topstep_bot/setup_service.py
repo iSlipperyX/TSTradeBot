@@ -209,6 +209,7 @@ class SetupService:
                 "first_trade": cfg.first_trade.enabled, "first_trade_minutes": cfg.first_trade.within_minutes,
                 "daily_goal": cfg.aggressive.daily_goal,
                 "assistant": cfg.assistant.model_dump(),
+                "day_plan": cfg.day_plan.model_dump(), "trend": cfg.trend.model_dump(),
             },
             "alerts": {
                 "telegram": bool(s.telegram_bot_token and s.telegram_chat_id),
@@ -603,6 +604,64 @@ class SetupService:
             message += " It takes effect once the bot has started."
         return {"message": message, "assistant": acfg.model_dump()}
 
+    async def day_plan(self, body: dict, source: str = "dashboard") -> dict:
+        """The day plan and the trend filter for one account (day_plan.py, trend_lab.py): the morning goal question,
+        stopping at the goal, and whether signals against a strong trend are skipped.
+
+        Saved in config.yaml (the account's own entry when there are several). The morning question follows the
+        change at once; the rest applies when the bot next starts."""
+        from pydantic import ValidationError
+
+        from topstep_bot.config import DayPlanConfig, TrendConfig
+
+        original = self._require_file()
+        bots = self.ctl.pick(body.get("account"))
+        bot = bots[0]
+        acfg = self.ctl.account_cfg(bot.account)
+        plan: dict[str, Any] = {}
+        for key in ("ask", "stop_at_goal"):
+            if body.get(key) is not None:
+                plan[key] = bool(body[key])
+        for key in ("ask_at", "unanswered", "days_to_target"):
+            if body.get(key) not in (None, ""):
+                plan[key] = body[key]
+        trend: dict[str, Any] = {}
+        if body.get("trend_filter") not in (None, ""):
+            trend["filter"] = str(body["trend_filter"])
+        if not plan and not trend:
+            raise ValueError("Nothing to change.")
+        try:  # the same checks config.yaml gets: a typo never reaches the file
+            checked = DayPlanConfig(**{**acfg.day_plan.model_dump(), **plan})
+            checked_trend = TrendConfig(**{**acfg.trend.model_dump(), **trend})
+        except ValidationError as exc:
+            problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+            raise ValueError(f"Not saved: {problems}") from None
+        dumped = checked.model_dump()
+        plan = {k: dumped[k] for k in plan}
+        trend = {k: getattr(checked_trend, k) for k in trend}
+        cfg = self.ctl.cfg
+        if cfg.multi:
+            entries = self._raw_accounts(original)
+            entry = next((x for x in entries if str(x.get("name", "")).lower() == bot.account), None)
+            if entry is None:
+                raise ValueError(f"No account named {bot.account}.")
+            if plan:
+                entry["day_plan"] = {**(entry.get("day_plan") or {}), **plan}
+            if trend:
+                entry["trend"] = {**(entry.get("trend") or {}), **trend}
+            self._write(original, set_section(original, "accounts", entries))
+        else:
+            self._set_config({**{("day_plan", k): v for k, v in plan.items()}, **{("trend", k): v for k, v in trend.items()}})
+        log.info("Setup: day plan for %s changed from %s: %s %s", bot.account, source, plan, trend)
+        now = self.ctl.account_cfg(bot.account)
+        who = f"{bot.account}: " if cfg.multi else ""
+        ask = f"asking for the goal at {now.day_plan.ask_at:%H:%M} CT" if now.day_plan.ask else "not asking for a goal"
+        message = (f"{who}Saved: {ask}, {'stopping' if now.day_plan.stop_at_goal else 'not stopping'} at the goal, "
+                   f"trend filter {now.trend.filter}.")
+        if bot.running and set(plan) - {"ask", "ask_at"} | set(trend):
+            message += " Restart the bot to use the rest of it (the morning question follows at once)."
+        return {"message": message, "day_plan": now.day_plan.model_dump(), "trend": now.trend.model_dump()}
+
     # ---------------------------------------------------------------- accounts
 
     def _profile_view(self, name: str) -> dict:
@@ -622,7 +681,8 @@ class SetupService:
                 "strategy": acfg.strategy.name, "market": market, "shared_market": shared_market,
                 "risk_per_trade": r.risk_per_trade, "daily_loss_limit": r.personal_daily_loss_limit,
                 "max_trades": r.max_trades_per_day, "mode": p.mode or "",
-                "assistant": acfg.assistant.model_dump()}
+                "assistant": acfg.assistant.model_dump(), "day_plan": acfg.day_plan.model_dump(),
+                "trend": acfg.trend.model_dump()}
 
     async def check_accounts(self, force: bool = True) -> dict:
         """Ask TopstepX about every account (account_check.py). Concurrent requests share one check."""

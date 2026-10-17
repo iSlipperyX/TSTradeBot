@@ -188,3 +188,61 @@ class RollingExtremes:
     @property
     def lowest(self) -> float | None:
         return min(self._lows) if self._lows else None
+
+
+class ADX:
+    """Average Directional Index with Wilder smoothing: how strongly price is trending, either way.
+
+    ``value`` (0-100) is the strength; ``plus_di`` / ``minus_di`` say which way. Around 20 or below the
+    market is ranging; 25 and up it trends. ``value`` is None until 2 x period bars have been seen."""
+
+    def __init__(self, period: int = 14):
+        self.period = period
+        self.value: float | None = None
+        self.plus_di: float | None = None
+        self.minus_di: float | None = None
+        self._prev: tuple[float, float, float] | None = None  # high, low, close
+        self._seed: list[tuple[float, float, float]] = []  # tr, +dm, -dm until the first smoothing
+        self._tr = self._pdm = self._mdm = 0.0
+        self._dx: list[float] = []
+
+    @property
+    def ready(self) -> bool:
+        return self.value is not None
+
+    def update(self, high: float, low: float, close: float) -> float | None:
+        if self._prev is None:
+            self._prev = (high, low, close)
+            return None
+        ph, pl, pc = self._prev
+        self._prev = (high, low, close)
+        up, down = high - ph, pl - low
+        pdm = up if up > down and up > 0 else 0.0
+        mdm = down if down > up and down > 0 else 0.0
+        tr = max(high - low, abs(high - pc), abs(low - pc))
+        n = self.period
+        if len(self._seed) < n:
+            self._seed.append((tr, pdm, mdm))
+            if len(self._seed) < n:
+                return None
+            self._tr = sum(s[0] for s in self._seed)
+            self._pdm = sum(s[1] for s in self._seed)
+            self._mdm = sum(s[2] for s in self._seed)
+        else:
+            self._tr = self._tr - self._tr / n + tr
+            self._pdm = self._pdm - self._pdm / n + pdm
+            self._mdm = self._mdm - self._mdm / n + mdm
+        if self._tr <= 0:
+            return self.value
+        self.plus_di = 100.0 * self._pdm / self._tr
+        self.minus_di = 100.0 * self._mdm / self._tr
+        total = self.plus_di + self.minus_di
+        dx = 100.0 * abs(self.plus_di - self.minus_di) / total if total > 0 else 0.0
+        if self.value is None:
+            self._dx.append(dx)
+            if len(self._dx) == n:
+                self.value = sum(self._dx) / n
+                self._dx.clear()
+        else:
+            self.value = (self.value * (n - 1) + dx) / n
+        return self.value

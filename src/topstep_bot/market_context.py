@@ -33,10 +33,14 @@ FEATURES: dict[str, tuple[str, str]] = {
     "trend": ("Trend", "price against its 50-bar average, in average day ranges"),
     "volume": ("Volume", "the bar's volume against its normal level"),
     "dow": ("Day of week", "0 = Monday ... 4 = Friday"),
+    # The chart's trend reading (trend.py), saved since version 4.2.
+    "tscore": ("Trend score", "the chart's trend reading, -1 (strong down) to +1 (strong up)"),
+    "tadx": ("Trend strength", "the 14-bar ADX: below 20 ranging, 25 and up trending"),
+    "tstretch": ("Stretch", "price against its 20-bar average, in ATRs"),
 }
 # Features with a direction: the report turns them to "with the trade" (a long above VWAP and a
 # short below it are the same situation), see orient().
-SIGNED = frozenset({"gap", "move", "vwap", "trend"})
+SIGNED = frozenset({"gap", "move", "vwap", "trend", "tscore", "tstretch"})
 MIN_DAYS = 3  # completed days needed before day-range units mean anything
 
 
@@ -91,7 +95,19 @@ def describe(ctx: dict | None, side: str | None = None) -> list[str]:
     volume = ctx.get("volume")
     if volume is not None:
         out.append(f"{'heavy' if volume >= 1.5 else 'light' if volume < 0.6 else 'normal'} volume ({volume:.1f}x)")
-    if side in ("LONG", "SHORT") and trend is not None and abs(trend) >= 0.05:
+    score = ctx.get("tscore")
+    if score is not None:
+        from topstep_bot.trend import ENTER, STRONG_SCORE
+
+        if abs(score) < ENTER:
+            out.append(f"no clear trend on the chart (trend score {score:+.2f})")
+        else:
+            out.append(f"{'strong ' if abs(score) >= STRONG_SCORE else ''}{'up' if score > 0 else 'down'}trend on the chart "
+                       f"(trend score {score:+.2f})")
+            if side in ("LONG", "SHORT"):
+                with_it = (score > 0) == (side == "LONG")
+                out.append(f"a {side.lower()} {'with' if with_it else 'against'} the chart's trend")
+    if side in ("LONG", "SHORT") and trend is not None and abs(trend) >= 0.05 and score is None:
         with_trend = (trend > 0) == (side == "LONG")
         out.append(f"a {side.lower()} {'with' if with_trend else 'against'} the trend")
     return out

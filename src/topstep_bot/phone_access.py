@@ -101,6 +101,8 @@ REMOTE_ROUTES = {
     ("POST", "/api/coach/state"),
     ("POST", "/api/coach/run"),  # the API key, budgets and applying proposals stay on the PC
     ("POST", "/api/coach/cancel"),
+    ("POST", "/api/goal"),  # today's goal, as Telegram's /goal allows (it can only end a day sooner)
+    ("POST", "/api/goals"),
 }
 # The sign-in page, the sign-in itself, and the dashboard page (it holds no token or data: its every request signs in)
 OPEN_ROUTES = {("GET", "/"), ("POST", "/auth"), ("GET", "/app")}

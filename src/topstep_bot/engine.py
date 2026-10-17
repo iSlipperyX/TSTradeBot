@@ -35,12 +35,14 @@ from topstep_bot.risk.topstep import LossLimitTracker
 from topstep_bot.sessions import SessionSchedule
 from topstep_bot.setups import SetupTracker
 from topstep_bot.strategies.base import Strategy, StrategyContext
+from topstep_bot.trend import TrendReader
 
 log = logging.getLogger(__name__)
 event_log = logging.getLogger("topstep_bot.events")
 
 if TYPE_CHECKING:
     from topstep_bot.assistant import Assistant
+    from topstep_bot.day_plan import DayPlanner
     from topstep_bot.first_trade import FirstTradePlanner
     from topstep_bot.knowledge import KnowledgeBase
     from topstep_bot.market_intel import MarketTracker
@@ -134,6 +136,14 @@ class TradingCore:
         self.atr = ATR(14)
         self.regime = RegimeTracker()  # calm / volatile, for the knowledge base
         self.market = MarketContext()  # the market snapshot saved with every observation
+        self.trend = TrendReader()  # the chart's trend: up, down or sideways, how strong, since when (trend.py)
+        self.trend_test: dict | None = None  # the trend test's latest result (trend_lab.py), set by the live bot
+        self._trend_split: tuple[tuple, dict] | None = None
+        # Skip signals against a strong trend? "auto" leaves it off until the live bot reads the trend test (set_trend_filter).
+        on = cfg.trend.filter == "on"
+        self.trend_filter: tuple[bool, str] = (on, "switched on in the settings" if on else
+                                               "automatic: waiting for the trend test" if cfg.trend.filter == "auto"
+                                               else "switched off in the settings")
         self.recommender: RecommendationBook | None = None  # trade ideas for the dashboard (+ what the bot learns from)
         self.knowledge: KnowledgeBase | None = None  # what has worked when; drives the adaptive strategy
         self.judge: Judge | None = None  # the decision rule over the knowledge base (policy.py)
@@ -143,6 +153,8 @@ class TradingCore:
         self.setups = SetupTracker(self)  # the trades every strategy is building toward (dashboard)
         self.first_trade: FirstTradePlanner | None = None  # an educated trade soon after starting (first_trade.py)
         self.assistant: Assistant | None = None  # the AI trading assistant (assistant.py, live only)
+        self.planner: DayPlanner | None = None  # the account's goal for today and the route to it (day_plan.py, live only)
+        self.plan_cores: Callable[[], list[TradingCore]] | None = None  # every market of the account (the plan's history)
         self._insights: dict[bool, tuple[tuple, dict]] = {}  # cached "What the bot learned" reports (recent / long-run)
         self.memory: LongRunMemory | None = None  # every bar seen + what every strategy did on all of it (memory.py)
         # Cross-account check before any entry: side (+1/-1) -> reason it's not allowed, or None (crossaccount.py).
@@ -192,6 +204,66 @@ class TradingCore:
         if changed:
             self.event("info", f"Decision rule: now trading with {self.judge.describe()}")
 
+    def set_trend_filter(self, on: bool, why: str) -> None:
+        """Switch the trend filter (live: from the trend test's latest result, trend_lab.py)."""
+        if self.trend_filter == (on, why):
+            return
+        changed = self.trend_filter[0] != on
+        self.trend_filter = (on, why)
+        if changed:
+            self.event("info", f"Trend filter {'ON: signals against a strong trend are skipped' if on else 'off'} ({why})")
+
+    def trend_view(self) -> dict:
+        """The chart's trend for the dashboard, Telegram, Ask and the assistant: the reading, how its calls held up,
+        how the bot's signals did with and against the trend, and the filter's state."""
+        from topstep_bot.trend import calls_text
+
+        r = self.trend.last
+        calls = self.trend.calls.summary()
+        t = self.cfg.trend
+        out = {"reading": r.to_dict(self.schedule.tz) if r else None, "calls": calls,
+               "calls_text": calls_text(calls, self.trend.calls.horizon * self.cfg.instrument.timeframe_minutes),
+               "filter": {"on": self.trend_filter[0], "why": self.trend_filter[1], "mode": t.filter,
+                          "min_score": t.min_score, "min_adx": t.min_adx},
+               "history": self._trend_history(), "test": None}
+        test = self.trend_test
+        if test and test.get("ok"):
+            out["test"] = {k: test.get(k) for k in ("at", "from", "to", "test_days", "days_with_reading", "skipped", "on",
+                                                     "why", "runs", "split", "comparison")}
+        elif test:
+            out["test"] = {"ok": False, "why": test.get("why")}
+        return out
+
+    def _trend_history(self) -> dict | None:
+        """Every recent signal in the knowledge base with the trend, against it and with none (cached per change)."""
+        kb = self.knowledge
+        if kb is None:
+            return None
+        key = (id(kb), kb.updated, len(kb.obs))
+        if self._trend_split is None or self._trend_split[0] != key:
+            from topstep_bot.knowledge import NOT_STRATEGIES
+            from topstep_bot.trend_lab import split_by_trend
+
+            obs = [o for o in kb.obs if o.strategy not in NOT_STRATEGIES]
+            read = sum(1 for o in obs if (o.ctx or {}).get("tscore") is not None)
+            self._trend_split = (key, {"signals": len(obs), "with_reading": read, **split_by_trend(obs, 0.35)})
+        return self._trend_split[1]
+
+    def trend_block(self, side: OrderSide) -> str | None:
+        """Why the trend filter skips a trade on ``side`` now, or None (filter off, no strong trend against it)."""
+        if not self.trend_filter[0]:
+            return None
+        from topstep_bot.trend import against
+
+        r = self.trend.last
+        t = self.cfg.trend
+        if r is None or (t.min_adx and (r.strength is None or r.strength < t.min_adx)):
+            return None
+        if not against(r.score, side.label, t.min_score):
+            return None
+        return (f"it is against the chart's {r.label.lower()} (trend score {r.score:+.2f}"
+                + (f", ADX {r.strength:.0f}" if r.strength is not None else "") + ") - the trend filter skips those")
+
     def _bind_strategy(self) -> None:
         """Give a strategy that can use them the knowledge base, the live regime and the decision rule."""
         bind = getattr(self.strategy, "bind_knowledge", None)
@@ -210,8 +282,10 @@ class TradingCore:
             price = self.last_price if self.last_price is not None else (self.last_bar.close if self.last_bar else None)
         if price is None:
             return {}
-        return self.market.snapshot(price, self.schedule.local(ts or self.clock()), self.regime.ratio,
+        snap = self.market.snapshot(price, self.schedule.local(ts or self.clock()), self.regime.ratio,
                                     self.strategy.rth_open)
+        snap.update(self.trend.features(price))
+        return snap
 
     def trade_facts(self, t: ManagedTrade) -> dict:
         """What a closed trade teaches beyond its result: price path, costs and fill quality.
@@ -350,6 +424,7 @@ class TradingCore:
         rth = self.schedule.is_rth(bar.ts, self.strategy.rth_open, self.strategy.rth_close)
         self.regime.update(bar.high, bar.low, bar.close, rth=rth)
         self.market.update(bar, self.schedule.trading_day(bar.ts), rth)
+        self.trend.update(bar, bar.ts + self.tf, self.schedule.trading_day(bar.ts), rth)
         t = self.orders.trade
         if t is not None and t.opened_at is not None and bar.ts >= t.opened_at:
             t.note_prices(bar.high, bar.low)
@@ -461,6 +536,8 @@ class TradingCore:
                 and est.confident_loser(self.knowledge.min_samples):
             reason = (f"the probability calculator is at least 90% sure it loses after costs "
                       f"(P(win) {est.p_win:.0%}, expected {est.ev_r:+.2f}R, range up to {est.ev_hi:+.2f}R)")
+        if reason is None:
+            reason = self.trend_block(side)
         if reason:
             self._note_skip(f"Skipped {side.label} signal: {reason}")
             if self.recommender:
@@ -711,7 +788,7 @@ class TradingCore:
                      "symbol": self.contract.name, "decimals": self.contract.price_decimals,
                      "bars": [candle(b.ts, b.open, b.high, b.low, b.close) for b in self.chart_bars],
                      "forming": candle(*self.forming) if self.forming else None, "price": self.last_price,
-                     "trade": None, "fills": []}
+                     "trade": None, "fills": [], "trend": self.trend.chart()}
         t = self.orders.trade
         if t is not None:
             out["trade"] = {"side": t.side.label, "entry": t.entry_price, "stop": t.stop_price, "target": t.target_price,
@@ -877,6 +954,21 @@ class TradingCore:
             log.exception("Next-trade forecast failed")
             return None
 
+    def plan_view(self) -> dict | None:
+        """Today's goal and the route to it (day_plan.py). Never raises: it's informational."""
+        if self.planner is None:
+            return None
+        try:
+            return self.planner.view(self, self.plan_cores() if self.plan_cores else [self])
+        except Exception:  # noqa: BLE001 - a plan must never disturb trading or the dashboard
+            log.exception("Day plan failed")
+            return None
+
+    def plan_brief(self) -> dict | None:
+        from topstep_bot.day_plan import brief
+
+        return brief(self.plan_view())
+
     def brief(self) -> dict:
         """What the bot knows, in plain sentences (briefing.py)."""
         from topstep_bot.briefing import build_brief
@@ -963,6 +1055,8 @@ class TradingCore:
             "first_trade": self.first_trade.view() if self.first_trade else None,
             "assistant": self._assistant_view(),
             "forecast": self.forecast(),
+            "trend": self.trend_view(),
+            "day_plan": self.plan_view(),
             "memory": self.memory.status() if self.memory else None,
             "intel": self.intel.brief(self.clock()) if self.intel else None,
             "funded": self.funded_status(),

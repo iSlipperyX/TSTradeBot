@@ -541,6 +541,55 @@ class ProbabilityConfig(_Section):
     grow_per_day: int = Field(default=3, ge=0, le=20, description="Related markets learned per day at most (0 = none).")
 
 
+class TrendConfig(_Section):
+    """The chart's trend reading (trend.py) and the trend filter (trend_lab.py).
+
+    The bot reads every chart for an up, down or sideways trend, saves the reading with every signal so
+    it learns how each strategy does with and against the trend, and shows it to you, the AI trading
+    assistant and the Ask answers. The filter is the part that can change which trades are taken."""
+
+    filter: Literal["auto", "on", "off"] = Field(
+        default="auto",
+        description="Skip signals against a strong trend. auto = only once the trend test has shown, on replayed history "
+                    "and with 95% confidence, that skipping them made more; on = always; off = never.")
+    min_score: float = Field(
+        default=0.6, ge=0.35, le=0.95,
+        description="How clear a trend must be (trend score, 0-1) before the filter skips signals against it.")
+    min_adx: float = Field(
+        default=25.0, ge=0, le=60,
+        description="...and how strong (ADX). 25 and up is a trending market; 0 = don't require any strength.")
+
+
+class DayPlanConfig(_Section):
+    """The day plan (day_plan.py): each morning the bot asks for each account's profit goal and plans a route to it.
+
+    The goal never raises risk: trades are still sized by the risk settings, every loss limit and Topstep rule
+    still applies, and a goal above what one day may make (the consistency line, a payout path's daily cap, the
+    daily profit target) is capped there. Reaching it ends the day's trading so the profit is kept."""
+
+    ask: bool = Field(default=True, description="Ask for each account's profit goal at the start of each trading day "
+                                                "(Telegram and the dashboard).")
+    ask_at: time = Field(default=time(8, 0), description="When to ask on Telegram (Chicago time), before entries open.")
+    stop_at_goal: bool = Field(default=True, description="Stop opening trades for the day once the day's goal is reached.")
+    unanswered: Literal["last", "suggested"] = Field(
+        default="last",
+        description="With no answer: keep the last goal you gave (last), or use the bot's suggestion (suggested). "
+                    "Either way it is capped by what one day may make.")
+    days_to_target: int = Field(
+        default=10, ge=3, le=60,
+        description="Trading days you want to reach the Combine target (or the payout goal) in: the suggested daily goal "
+                    "is what is left divided by this.")
+
+    @field_validator("ask_at", mode="before")
+    @classmethod
+    def _parse_time(cls, v: Any) -> time:
+        return _parse_hhmm(v)
+
+    @field_serializer("ask_at")
+    def _dump_time(self, v: time) -> str:
+        return v.strftime("%H:%M")
+
+
 class CoachConfig(_Section):
     """The AI coach (coach.py): Claude reviews the bot's evidence, runs simulations and writes lessons.
 
@@ -643,7 +692,8 @@ class BacktestConfig(_Section):
 
 # Sections an account may override. Anything not overridden is inherited from the shared settings.
 ACCOUNT_SECTIONS = ("account", "instrument", "strategy", "risk", "session", "execution", "data",
-                    "notifications", "news", "recommendations", "knowledge", "funded", "aggressive", "assistant")
+                    "notifications", "news", "recommendations", "knowledge", "funded", "aggressive", "assistant",
+                    "trend", "day_plan")
 # What 'follow' copies from the leader, so both accounts get the same trade calls.
 CALL_SECTIONS = ("instrument", "strategy", "session", "knowledge", "news", "recommendations")
 # Account names must not be confused with Telegram words (/pause all, /set risk 150, ...).
@@ -695,6 +745,8 @@ class AccountProfile(_Section):
     funded: dict[str, Any] = Field(default_factory=dict)
     aggressive: dict[str, Any] = Field(default_factory=dict)
     assistant: dict[str, Any] = Field(default_factory=dict)
+    trend: dict[str, Any] = Field(default_factory=dict)
+    day_plan: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -756,6 +808,8 @@ class BotConfig(_Section):
     assistant: AssistantConfig = Field(default_factory=AssistantConfig)
     aggressive: AggressiveConfig = Field(default_factory=AggressiveConfig)
     probability: ProbabilityConfig = Field(default_factory=ProbabilityConfig)
+    trend: TrendConfig = Field(default_factory=TrendConfig)
+    day_plan: DayPlanConfig = Field(default_factory=DayPlanConfig)
     brain: BrainConfig = Field(default_factory=BrainConfig)
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     funded: FundedConfig = Field(default_factory=FundedConfig)

@@ -100,6 +100,11 @@ async def answer(question: str, fetch: Fetch) -> str:
         return await text("explain_decision", args)
     if _has(q, "assistant"):
         return await text("assistant")
+    if _has(q, "goal", r"\bplan\b", "route", "today.s target", "how (much|far) (to|left)", "on track"):
+        return await text("day_plan")
+    if _has(q, "trend", "uptrend", "downtrend", "sideways", "direction", r"going (up|down)", "adx", "higher highs",
+            "lower lows") and not _has(q, "network", "all markets", "across markets", "every market"):
+        return await text("trend")
     if _has(q, "which markets", "what markets", "how many markets", r"markets? (are|is) (you|it|the bot) trad",
             r"trad\w* (several|multiple|many|more|other) markets", r"(add|drop|switch|remove) (a |the )?market"):
         return await text("markets")

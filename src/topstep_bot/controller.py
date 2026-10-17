@@ -514,6 +514,33 @@ class ProxyActions:
     async def switch_market(self, symbol: str, source: str, account: str | None = None) -> str:
         return await self.ctl.switch_market(symbol, source, account)
 
+    async def set_goal(self, goal: float | str | None, source: str, account: str | None = None) -> str:
+        """Today's goal (dollars, None for no goal, "suggested"); ``account`` "all" sets every account."""
+        return (await self.ctl.plans.set_goal({"account": account, "goal": goal}, source))["message"]
+
+    async def goals_text(self) -> str:
+        return await self.ctl.plans.goals_text()
+
+    async def goal_question(self) -> tuple[str, dict]:
+        return await self.ctl.plans.question()
+
+    def awaiting_goals(self) -> bool:
+        return self.ctl.plans.awaiting()
+
+    async def plan_text(self, account: str | None = None) -> str:
+        """Today's plan: the goal, the route through the day, the odds and the stops (day_plan.py)."""
+        bot = self._one(account)
+        if bot.running and bot.state == "running":
+            return await self._text("plan_text", account)
+        from topstep_bot.day_plan import goal_day, offline_text
+
+        cfg = self.ctl.account_cfg(bot.account)
+        return offline_text(cfg, bot.account if self.ctl.multi else "", goal_day(cfg))
+
+    async def trend_text(self, account: str | None = None) -> str:
+        """What the chart is doing now (trend.py)."""
+        return await self._text("trend_text", account)
+
     async def markets_text(self, account: str | None = None) -> str:
         return await self._text("markets_text", account)
 
@@ -698,6 +725,7 @@ class Controller:
                 ("POST", "/api/setup/autostart", lambda r: self.setup.autostart(r.json())),
                 ("POST", "/api/setup/ai", lambda r: self.setup.ai(r.json())),
                 ("POST", "/api/assistant", lambda r: self.setup.assistant(r.json(), source(r))),
+                ("POST", "/api/setup/day_plan", lambda r: self.setup.day_plan(r.json(), source(r))),
                 ("POST", "/api/setup/accounts/check", lambda r: self.setup.check_accounts(force=bool(r.json().get("force", True)))),
                 ("POST", "/api/setup/accounts/save", lambda r: self.setup.save_account(r.json())),
                 ("POST", "/api/setup/accounts/remove", lambda r: self.setup.remove_account(r.json())),
@@ -722,6 +750,8 @@ class Controller:
                 ("POST", "/api/coach/cancel", lambda r: self.coach.cancel()),
                 ("POST", "/api/coach/proposal", lambda r: self.coach.decide(r.json(), source(r))),
                 ("POST", "/api/coach/lesson/forget", lambda r: self.coach.forget(r.json())),
+                ("POST", "/api/goal", lambda r: self.plans.set_goal(r.json(), source(r))),
+                ("POST", "/api/goals", lambda r: self._goals()),
             ],
             token=self.token,
             name="dashboard",
@@ -738,6 +768,9 @@ class Controller:
 
         self.lab = LabService(self)
         self.coach = CoachService(self)
+        from topstep_bot.plan_service import PlanService
+
+        self.plans = PlanService(self)  # the morning goal question and goals set from the dashboard / Telegram
         self.research = self._make_research()
         self._research_task: asyncio.Task | None = None
         self._lab_tasks: list[asyncio.Task] = []  # every market's history refresh and the nightly Simulation Lab
@@ -914,6 +947,10 @@ class Controller:
             "crash": "".join(tail(crashes[-1], 40)) if crashes else "",
             "folder": str(log_dir),
         }
+
+    async def _goals(self) -> dict:
+        """Every account's goal for today, with the suggestions (the dashboard's goal box; works with bots down)."""
+        return {"goals": await self.plans.entries(), "waiting": self.plans.summary()["waiting"]}
 
     async def _lifecycle(self, req: Request, what: str) -> str:
         account = req.json().get("account")
@@ -1194,6 +1231,7 @@ class Controller:
             self._research_task = spawn(self.research.run(), name="research")
         self._lab_tasks = self.lab.start_background()
         self._lab_tasks.append(spawn(self._network_loop(), name="market-network"))
+        self._lab_tasks.append(spawn(self.plans.run(), name="day-plan"))
         if open_browser and self.cfg.dashboard.open_browser:
             webbrowser.open(self.server.url)
         try:

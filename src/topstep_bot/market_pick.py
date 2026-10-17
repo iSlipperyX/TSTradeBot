@@ -126,7 +126,7 @@ def today_path(cfg: BotConfig) -> Path:
     return cfg.account_dir / TODAY_FILE
 
 
-def _switch_day(cfg: BotConfig, now: datetime) -> tuple[str, datetime]:
+def switch_day(cfg: BotConfig, now: datetime) -> tuple[str, datetime]:
     """(trading day, end) a switch made at ``now`` applies to. After 15:10 CT it is the next trading day's."""
     from zoneinfo import ZoneInfo
 
@@ -167,7 +167,7 @@ def set_today(cfg: BotConfig, symbol: str, source: str, now: datetime | None = N
     """Trade ``symbol`` (and, trading several at once, all of ``markets``) for the rest of the trading day.
     ``closing``: markets being dropped that still hold a trade (taken up again by a restart until flat)."""
     now = now or datetime.now(UTC)
-    day, until = _switch_day(cfg, now)
+    day, until = switch_day(cfg, now)
     data = {"symbol": symbol.upper(), "day": day, "until": until.isoformat(), "at": now.isoformat(timespec="minutes"),
             "source": source, "markets": [m.upper() for m in (markets or [symbol])],
             "closing": [m.upper() for m in (closing or [])]}

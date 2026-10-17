@@ -121,6 +121,16 @@ class RiskManager:
 
     @property
     def daily_profit_target(self) -> float | None:
+        """Where the day stops: the settings' daily target, lowered to today's goal from the day plan (never raised)."""
+        base = self.configured_daily_target
+        goal = self.book.goal
+        if goal is None:
+            return base
+        return goal if base is None else min(base, goal)
+
+    @property
+    def configured_daily_target(self) -> float | None:
+        """The daily profit target from the settings alone (the most a day plan's goal may be)."""
         if self.cfg.daily_profit_target is not None:
             return self.cfg.daily_profit_target
         if self.aggressive.enabled:
@@ -128,6 +138,11 @@ class RiskManager:
         if self.stage == "combine":
             return DEFAULT_COMBINE_DAILY_CAP * self.plan.profit_target
         return funded.daily_cap(self.funded, self.plan, self.stage, self.account_cfg.payout_path)
+
+    def day_cap(self) -> float | None:
+        """The most one day may make under the settings and the rules: the daily target or the profit ceiling."""
+        caps = [c for c in (self.configured_daily_target, self.profit_ceiling()) if c is not None]
+        return min(caps) if caps else None
 
     @property
     def aggressive_goal(self) -> float:
@@ -349,6 +364,9 @@ class RiskManager:
         day_pnl = self.day_pnl(balance, open_pnl)
         target = self.daily_profit_target
         if target is not None and day_pnl >= target:
+            if self.book.goal is not None and target == self.book.goal:
+                return self.lock(f"today's goal ${target:,.0f} reached ({self.book.goal_text or 'day plan'}) - done for the "
+                                 "day, keeping it")
             return self.lock(f"daily profit target ${target:,.0f} reached")
         locked = self.locked_floor()
         if locked is not None and day_pnl <= locked:
@@ -416,6 +434,7 @@ class RiskManager:
             "mll_room": round(self.tracker.room(equity), 2),
             "daily_loss_limit": self.cfg.personal_daily_loss_limit,
             "daily_profit_target": self.daily_profit_target,
+            "day_goal": self.book.goal,
             "winning_day_floor": funded.protected_floor(self.funded, self.stage, self.account_cfg.payout_path,
                                                         self.day_pnl(balance)),
             "locked": self.lock_reason,
@@ -426,10 +445,10 @@ class RiskManager:
             "stressed": self.stressed,
             "network": self.network_note,
             "aggressive": None if not self.aggressive.enabled else {
-                "goal": round(self.aggressive_goal, 2), "best_today": round(self.day_peak, 2),
+                "goal": round(self.daily_profit_target or self.aggressive_goal, 2), "best_today": round(self.day_peak, 2),
                 "realized_today": round(self.realized_today, 2),
                 "locked_in": None if self.locked_floor() is None else round(self.locked_floor(), 2),
-                "lock_in_from": round(self.aggressive.lock_in_at * self.aggressive_goal, 2),
+                "lock_in_from": round(self.aggressive.lock_in_at * (self.daily_profit_target or self.aggressive_goal), 2),
                 # a large, well-measured edge may risk this much (probability.sizing); a thin one less than next_trade_risk
                 "strong_trade_risk": round(self.trade_risk(balance, self.aggressive.max_conviction), 2)
                 if self.edge_sizing else None,
